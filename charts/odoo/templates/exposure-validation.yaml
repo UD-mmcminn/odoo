@@ -1,0 +1,3 @@
+{{- if and .Values.exposure.enabled (not (or (eq .Values.exposure.type "ingress") (eq .Values.exposure.type "gateway"))) -}}
+{{- fail "exposure.type must be either 'ingress' or 'gateway'" -}}
+{{- end -}}

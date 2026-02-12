@@ -1,0 +1,124 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "odoo.fullname" . }}
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "odoo.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "odoo.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "odoo.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: odoo
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ default .Chart.AppVersion .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: ODOO_DB_HOST
+              value: {{ required "odoo.config.dbHost is required" .Values.odoo.config.dbHost | quote }}
+            - name: ODOO_DB_PORT
+              value: {{ .Values.odoo.config.dbPort | quote }}
+            - name: ODOO_DB_USER
+              value: {{ required "odoo.config.dbUser is required" .Values.odoo.config.dbUser | quote }}
+            - name: ODOO_DB_NAME
+              value: {{ .Values.odoo.config.dbName | quote }}
+            - name: ODOO_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "odoo.secretName" . }}
+                  key: {{ .Values.odoo.existingSecretKeys.dbPassword }}
+            - name: ODOO_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "odoo.secretName" . }}
+                  key: {{ .Values.odoo.existingSecretKeys.adminPassword }}
+            - name: ODOO_PROXY_MODE
+              value: {{ ternary "True" "False" .Values.odoo.config.proxyMode | quote }}
+            - name: ODOO_WORKERS
+              value: {{ .Values.odoo.config.workers | quote }}
+            - name: ODOO_MAX_CRON_THREADS
+              value: {{ .Values.odoo.config.maxCronThreads | quote }}
+            - name: ODOO_LIST_DB
+              value: {{ ternary "True" "False" .Values.odoo.config.listDb | quote }}
+            - name: ODOO_LOG_LEVEL
+              value: {{ .Values.odoo.config.logLevel | quote }}
+            {{- if .Values.odoo.config.dbFilter }}
+            - name: ODOO_DB_FILTER
+              value: {{ .Values.odoo.config.dbFilter | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+            - name: longpolling
+              containerPort: {{ .Values.service.longpollingPort }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /web/login
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /web/login
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.persistence.mountPath }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "odoo.fullname" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,88 @@
+{{- if and .Values.exposure.enabled (eq .Values.exposure.type "gateway") -}}
+{{- if and (not .Values.gateway.create) (eq (len .Values.gateway.route.parentRefs) 0) -}}
+{{- fail "gateway.route.parentRefs must contain at least one item when gateway.create=false" -}}
+{{- end -}}
+{{- $gatewayName := default (include "odoo.fullname" .) .Values.gateway.name -}}
+{{- $defaultRouteHostname := "" -}}
+{{- if gt (len .Values.gateway.route.hostnames) 0 -}}
+{{- $defaultRouteHostname = index .Values.gateway.route.hostnames 0 -}}
+{{- end -}}
+{{- if .Values.gateway.create }}
+apiVersion: {{ .Values.gateway.apiVersion }}
+kind: Gateway
+metadata:
+  name: {{ $gatewayName }}
+  {{- if .Values.gateway.namespace }}
+  namespace: {{ .Values.gateway.namespace }}
+  {{- end }}
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+  {{- with .Values.gateway.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  gatewayClassName: {{ required "gateway.className is required when gateway.create=true" .Values.gateway.className | quote }}
+  {{- if .Values.gateway.listeners }}
+  listeners:
+    {{- toYaml .Values.gateway.listeners | nindent 4 }}
+  {{- else }}
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      {{- if $defaultRouteHostname }}
+      hostname: {{ $defaultRouteHostname | quote }}
+      {{- end }}
+      allowedRoutes:
+        namespaces:
+          from: Same
+  {{- end }}
+---
+{{- end }}
+apiVersion: {{ .Values.gateway.apiVersion }}
+kind: HTTPRoute
+metadata:
+  name: {{ default (include "odoo.fullname" .) .Values.gateway.route.name }}
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+  {{- with .Values.gateway.route.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs:
+    {{- if .Values.gateway.route.parentRefs }}
+    {{- range .Values.gateway.route.parentRefs }}
+    - name: {{ required "gateway.route.parentRefs[].name is required" .name | quote }}
+      {{- with .namespace }}
+      namespace: {{ . | quote }}
+      {{- end }}
+      {{- with .sectionName }}
+      sectionName: {{ . | quote }}
+      {{- end }}
+    {{- end }}
+    {{- else }}
+    - name: {{ $gatewayName | quote }}
+      {{- if .Values.gateway.namespace }}
+      namespace: {{ .Values.gateway.namespace | quote }}
+      {{- end }}
+      {{- with .Values.gateway.route.sectionName }}
+      sectionName: {{ . | quote }}
+      {{- end }}
+    {{- end }}
+  {{- if gt (len .Values.gateway.route.hostnames) 0 }}
+  hostnames:
+    {{- range .Values.gateway.route.hostnames }}
+    - {{ . | quote }}
+    {{- end }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: {{ .Values.gateway.route.path.type }}
+            value: {{ .Values.gateway.route.path.value | quote }}
+      backendRefs:
+        - name: {{ include "odoo.fullname" . }}
+          port: {{ .Values.service.port }}
+{{- end }}

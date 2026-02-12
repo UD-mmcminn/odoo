@@ -1,0 +1,6 @@
+apiVersion: v2
+name: odoo
+description: Odoo service chart with external PostgreSQL
+type: application
+version: 0.1.0
+appVersion: "19.0"

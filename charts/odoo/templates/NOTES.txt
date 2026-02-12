@@ -1,0 +1,19 @@
+1. Odoo has been deployed as release {{ .Release.Name }}.
+
+2. This chart does not deploy PostgreSQL. Set external database values:
+   - odoo.config.dbHost
+   - odoo.config.dbUser
+   - odoo.config.dbPassword (or odoo.existingSecret)
+
+3. Access the service:
+   kubectl get svc {{ include "odoo.fullname" . }} -n {{ .Release.Namespace }}
+
+4. Route exposure:
+   - Set exposure.enabled=true
+   - Set exposure.type to ingress or gateway
+   - For gateway mode, configure gateway.route.parentRefs or set gateway.create=true
+
+5. Certificate support (optional):
+   - Set certificate.enabled=true
+   - Set certificate.issuerRef.name
+   - Add custom certificate annotations in certificate.annotations

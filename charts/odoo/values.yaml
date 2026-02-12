@@ -1,0 +1,121 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/example/odoo
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  fsGroup: 1000
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+
+service:
+  type: ClusterIP
+  port: 8069
+  longpollingPort: 8072
+
+exposure:
+  enabled: false
+  type: gateway # ingress | gateway
+
+ingress:
+  className: ""
+  annotations: {}
+  hosts:
+    - host: odoo.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+gateway:
+  apiVersion: gateway.networking.k8s.io/v1
+  create: false
+  name: ""
+  namespace: ""
+  className: ""
+  annotations: {}
+  listeners: []
+  route:
+    name: ""
+    annotations: {}
+    parentRefs: []
+    sectionName: ""
+    hostnames:
+      - odoo.local
+    path:
+      type: PathPrefix
+      value: /
+
+certificate:
+  enabled: false
+  secretName: ""
+  annotations: {}
+  labels: {}
+  issuerRef:
+    name: ""
+    kind: ClusterIssuer
+    group: cert-manager.io
+  commonName: ""
+  dnsNames: []
+  duration: ""
+  renewBefore: ""
+
+resources: {}
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+
+persistence:
+  enabled: true
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 10Gi
+  mountPath: /var/lib/odoo
+
+odoo:
+  config:
+    adminPassword: change-me
+    dbHost: ""
+    dbPort: 5432
+    dbUser: ""
+    dbPassword: ""
+    dbName: "False"
+    dbFilter: ""
+    proxyMode: true
+    workers: 2
+    maxCronThreads: 2
+    listDb: false
+    logLevel: info
+  existingSecret: ""
+  existingSecretKeys:
+    adminPassword: ODOO_ADMIN_PASSWORD
+    dbPassword: ODOO_DB_PASSWORD
+
+extraEnv: []
+extraVolumes: []
+extraVolumeMounts: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

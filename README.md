@@ -31,6 +31,80 @@ To learn the software, we recommend the [Odoo eLearning](https://www.odoo.com/sl
 or [Scale-up, the business game](https://www.odoo.com/page/scale-up-business-game).
 Developers can start with [the developer tutorials](https://www.odoo.com/documentation/master/developer/howtos.html).
 
+## Development container
+
+This repository includes a VS Code devcontainer in `.devcontainer/`.
+
+1. Open the repo in VS Code and choose **Reopen in Container**.
+2. Update `.devcontainer/odoo.conf` with your external PostgreSQL settings.
+3. Run Odoo from the workspace:
+
+```bash
+./odoo-bin -c .devcontainer/odoo.conf
+```
+
+The devcontainer does not run PostgreSQL. Use an external database endpoint.
+
+## Container image
+
+This repository includes a production-oriented `Dockerfile` for the Odoo service.
+It expects PostgreSQL to be provided externally.
+
+Build:
+
+```bash
+docker build -t odoo:local .
+```
+
+Run:
+
+```bash
+docker run --rm -p 8069:8069 -p 8072:8072 \
+  -e ODOO_DB_HOST=<postgres-host> \
+  -e ODOO_DB_PORT=5432 \
+  -e ODOO_DB_USER=odoo \
+  -e ODOO_DB_PASSWORD=<postgres-password> \
+  -e ODOO_DB_NAME=False \
+  odoo:local
+```
+
+## CI image builds
+
+- GitHub Actions workflow: `.github/workflows/container-image.yml`
+- GitLab pipeline: `.gitlab-ci.yml`
+
+Both pipelines build the Odoo image. They are configured to push images to their
+native registries (GHCR for GitHub and the project registry for GitLab).
+
+## Helm chart
+
+A Helm chart is provided at `charts/odoo`.
+
+This chart deploys only the Odoo service and requires external PostgreSQL values.
+It supports route exposure via either Kubernetes Ingress or Gateway API.
+
+Example:
+
+```bash
+helm upgrade --install odoo charts/odoo \
+  --set image.repository=ghcr.io/<org>/<image> \
+  --set image.tag=<tag> \
+  --set odoo.config.dbHost=<postgres-host> \
+  --set odoo.config.dbUser=odoo \
+  --set odoo.config.dbPassword=<postgres-password> \
+  --set exposure.enabled=true \
+  --set exposure.type=gateway \
+  --set gateway.route.parentRefs[0].name=<gateway-name>
+```
+
+To use cert-manager certificates:
+
+```bash
+--set certificate.enabled=true \
+--set certificate.issuerRef.name=<issuer-name> \
+--set certificate.annotations.\"example\\.com/team\"=<value>
+```
+
 ## Security
 
 If you believe you have found a security issue, check our [Responsible Disclosure page](https://www.odoo.com/security-report)

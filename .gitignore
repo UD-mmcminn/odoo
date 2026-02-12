@@ -6,6 +6,9 @@ _build/
 !.gitignore
 !.gitkeep
 !.github
+!.gitlab-ci.yml
+!.devcontainer
+!.devcontainer/**
 !.mailmap
 !.weblate.json
 # compiled python files

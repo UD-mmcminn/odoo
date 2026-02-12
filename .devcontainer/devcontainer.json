@@ -1,0 +1,30 @@
+{
+  "name": "Odoo 19 Dev",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "runArgs": ["--add-host=host.docker.internal:host-gateway"],
+  "containerEnv": {
+    "ODOO_RC": "/workspaces/odoo/.devcontainer/odoo.conf"
+  },
+  "postCreateCommand": "python3 -m pip install --user -r requirements.txt",
+  "forwardPorts": [8069, 8072],
+  "portsAttributes": {
+    "8069": {
+      "label": "Odoo HTTP"
+    },
+    "8072": {
+      "label": "Odoo Longpolling"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff"
+      ]
+    }
+  }
+}

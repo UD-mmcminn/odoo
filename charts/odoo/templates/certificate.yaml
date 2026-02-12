@@ -1,0 +1,46 @@
+{{- if .Values.certificate.enabled -}}
+{{- $dnsNames := .Values.certificate.dnsNames -}}
+{{- if and (eq (len $dnsNames) 0) .Values.exposure.enabled (eq .Values.exposure.type "ingress") -}}
+{{- range .Values.ingress.hosts }}
+{{- $dnsNames = append $dnsNames .host -}}
+{{- end -}}
+{{- end -}}
+{{- if and (eq (len $dnsNames) 0) .Values.exposure.enabled (eq .Values.exposure.type "gateway") -}}
+{{- range .Values.gateway.route.hostnames }}
+{{- $dnsNames = append $dnsNames . -}}
+{{- end -}}
+{{- end -}}
+{{- if eq (len $dnsNames) 0 -}}
+{{- fail "certificate.enabled requires certificate.dnsNames or route hostnames" -}}
+{{- end -}}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "odoo.fullname" . }}
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+    {{- with .Values.certificate.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.certificate.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  secretName: {{ include "odoo.certificateSecretName" . }}
+  issuerRef:
+    name: {{ required "certificate.issuerRef.name is required when certificate.enabled=true" .Values.certificate.issuerRef.name | quote }}
+    kind: {{ default "ClusterIssuer" .Values.certificate.issuerRef.kind | quote }}
+    group: {{ default "cert-manager.io" .Values.certificate.issuerRef.group | quote }}
+  commonName: {{ default (first $dnsNames) .Values.certificate.commonName | quote }}
+  dnsNames:
+    {{- range $dnsNames }}
+    - {{ . | quote }}
+    {{- end }}
+  {{- with .Values.certificate.duration }}
+  duration: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.certificate.renewBefore }}
+  renewBefore: {{ . | quote }}
+  {{- end }}
+{{- end }}
