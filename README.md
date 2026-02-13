@@ -76,12 +76,30 @@ docker run --rm -p 8069:8069 -p 8072:8072 \
 Both pipelines build the Odoo image. They are configured to push images to their
 native registries (GHCR for GitHub and the project registry for GitLab).
 
+## CI chart publishing
+
+- GitHub Actions workflow: `.github/workflows/helm-chart.yml`
+- GitLab pipeline job: `helm-chart-publish` in `.gitlab-ci.yml`
+
+The chart in `charts/odoo` is published as an OCI Helm chart.
+- GitHub publishes to: `oci://ghcr.io/<org>/charts/odoo`
+- GitLab publishes to: `oci://<gitlab-registry>/<group>/<project>/charts/odoo`
+
+Branch/default-branch pipelines publish `-dev.*` chart versions.
+Tag pipelines publish the chart version from `charts/odoo/Chart.yaml`.
+
 ## Helm chart
 
 A Helm chart is provided at `charts/odoo`.
 
 This chart deploys only the Odoo service and requires external PostgreSQL values.
 It supports route exposure via either Kubernetes Ingress or Gateway API.
+
+Install from OCI (example using GHCR):
+
+```bash
+helm install odoo oci://ghcr.io/<org>/charts/odoo --version <chart-version>
+```
 
 Example:
 
