@@ -79,6 +79,21 @@ certificate:
 
 resources: {}
 
+databaseMaintenance:
+  enabled: false
+  maintenanceDatabase: postgres
+  initOnInstall: true
+  initModules: base
+  withoutDemo: true
+  migrateOnUpgrade: true
+  migrationModules: all
+  failOnMissingDatabaseOnUpgrade: true
+  backoffLimit: 1
+  activeDeadlineSeconds: 1800
+  ttlSecondsAfterFinished: 300
+  hookDeletePolicy: before-hook-creation,hook-succeeded
+  resources: {}
+
 autoscaling:
   enabled: false
   minReplicas: 1

@@ -101,3 +101,13 @@ jobs:
       - name: Skip existing chart publish
         if: steps.exists.outputs.already_published == 'true'
         run: echo "Chart ${{ steps.meta.outputs.chart_name }}:${{ steps.meta.outputs.package_version }} already exists. Skipping publish."
+
+      - name: Verify published chart is retrievable
+        run: |
+          chart_ref="oci://ghcr.io/${{ steps.meta.outputs.owner }}/charts/${{ steps.meta.outputs.chart_name }}"
+          chart_version="${{ steps.meta.outputs.package_version }}"
+
+          helm show chart "$chart_ref" --version "$chart_version"
+          mkdir -p verify
+          helm pull "$chart_ref" --version "$chart_version" --destination verify
+          ls -l verify

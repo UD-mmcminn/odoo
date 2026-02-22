@@ -1,0 +1,110 @@
+{{- if and .Values.databaseMaintenance.enabled .Release.IsInstall .Values.databaseMaintenance.initOnInstall -}}
+{{- $dbName := toString .Values.odoo.config.dbName -}}
+{{- if eq $dbName "False" -}}
+{{- fail "odoo.config.dbName must be set to a real database name when databaseMaintenance.enabled=true" -}}
+{{- end -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "odoo.fullname" . }}-db-init
+  labels:
+    {{- include "odoo.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install
+    helm.sh/hook-delete-policy: {{ .Values.databaseMaintenance.hookDeletePolicy | quote }}
+spec:
+  backoffLimit: {{ .Values.databaseMaintenance.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.databaseMaintenance.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ .Values.databaseMaintenance.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "odoo.selectorLabels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "odoo.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: db-init
+          image: "{{ .Values.image.repository }}:{{ default .Chart.AppVersion .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          env:
+            - name: ODOO_DB_HOST
+              value: {{ required "odoo.config.dbHost is required" .Values.odoo.config.dbHost | quote }}
+            - name: ODOO_DB_PORT
+              value: {{ .Values.odoo.config.dbPort | quote }}
+            - name: ODOO_DB_USER
+              value: {{ required "odoo.config.dbUser is required" .Values.odoo.config.dbUser | quote }}
+            - name: ODOO_DB_NAME
+              value: {{ $dbName | quote }}
+            - name: ODOO_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "odoo.secretName" . }}
+                  key: {{ .Values.odoo.existingSecretKeys.dbPassword }}
+            - name: ODOO_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "odoo.secretName" . }}
+                  key: {{ .Values.odoo.existingSecretKeys.adminPassword }}
+            - name: ODOO_MAINTENANCE_DB
+              value: {{ .Values.databaseMaintenance.maintenanceDatabase | quote }}
+            - name: ODOO_INIT_MODULES
+              value: {{ .Values.databaseMaintenance.initModules | quote }}
+            - name: ODOO_INIT_WITHOUT_DEMO
+              value: {{ ternary "true" "false" .Values.databaseMaintenance.withoutDemo | quote }}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              DB_EXISTS="$(python3 <<'PY'
+              import os
+              import psycopg2
+
+              conn = psycopg2.connect(
+                  host=os.environ["ODOO_DB_HOST"],
+                  port=os.environ.get("ODOO_DB_PORT", "5432"),
+                  user=os.environ["ODOO_DB_USER"],
+                  password=os.environ.get("ODOO_DB_PASSWORD", ""),
+                  dbname=os.environ.get("ODOO_MAINTENANCE_DB", "postgres"),
+              )
+              cur = conn.cursor()
+              cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (os.environ["ODOO_DB_NAME"],))
+              print("true" if cur.fetchone() else "false")
+              cur.close()
+              conn.close()
+              PY
+              )"
+
+              if [ "$DB_EXISTS" = "true" ]; then
+                echo "Database ${ODOO_DB_NAME} already exists. Skipping initialization."
+                exit 0
+              fi
+
+              if [ "$ODOO_INIT_WITHOUT_DEMO" = "true" ]; then
+                exec /usr/local/bin/odoo-entrypoint.sh --no-http -d "$ODOO_DB_NAME" -i "$ODOO_INIT_MODULES" --without-demo=all --stop-after-init
+              fi
+
+              exec /usr/local/bin/odoo-entrypoint.sh --no-http -d "$ODOO_DB_NAME" -i "$ODOO_INIT_MODULES" --stop-after-init
+          resources:
+            {{- toYaml .Values.databaseMaintenance.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

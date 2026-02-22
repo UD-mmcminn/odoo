@@ -17,3 +17,8 @@
    - Set certificate.enabled=true
    - Set certificate.issuerRef.name
    - Add custom certificate annotations in certificate.annotations
+
+6. Optional DB bootstrap/migration hooks:
+   - Set databaseMaintenance.enabled=true
+   - Set odoo.config.dbName to a concrete database name
+   - Install hook initializes missing DB; upgrade hook runs module migrations

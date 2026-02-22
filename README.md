@@ -94,6 +94,7 @@ A Helm chart is provided at `charts/odoo`.
 
 This chart deploys only the Odoo service and requires external PostgreSQL values.
 It supports route exposure via either Kubernetes Ingress or Gateway API.
+It also supports optional DB bootstrap/migration hooks to avoid first-start crash loops.
 
 Install from OCI (example using GHCR):
 
@@ -122,6 +123,23 @@ To use cert-manager certificates:
 --set certificate.issuerRef.name=<issuer-name> \
 --set certificate.annotations.\"example\\.com/team\"=<value>
 ```
+
+Optional automatic DB bootstrap/migrations:
+
+```yaml
+databaseMaintenance:
+  enabled: true
+  initOnInstall: true
+  initModules: base
+  migrateOnUpgrade: true
+  migrationModules: all
+```
+
+When enabled, the chart runs:
+- A pre-install hook Job that initializes the configured DB if it does not exist.
+- A pre-upgrade hook Job that runs module upgrades (`-u`) on the configured DB.
+
+`odoo.config.dbName` must be set to a concrete database name (not `False`) when using this feature.
 
 ## Security
 
