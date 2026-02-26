@@ -129,6 +129,7 @@ Optional automatic DB bootstrap/migrations:
 ```yaml
 databaseMaintenance:
   enabled: true
+  serviceAccountName: default
   initOnInstall: true
   initModules: base
   migrateOnUpgrade: true
@@ -136,7 +137,7 @@ databaseMaintenance:
 ```
 
 When enabled, the chart runs:
-- A pre-install hook Job that initializes the configured DB if it does not exist.
+- A pre-install hook Job that initializes the configured DB if it does not exist or is uninitialized (for example, an empty pre-created DB).
 - A pre-upgrade hook Job that runs module upgrades (`-u`) on the configured DB.
 
 `odoo.config.dbName` must be set to a concrete database name (not `False`) when using this feature.

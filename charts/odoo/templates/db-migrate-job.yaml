@@ -22,7 +22,7 @@ spec:
         {{- include "odoo.selectorLabels" . | nindent 8 }}
     spec:
       restartPolicy: Never
-      serviceAccountName: {{ include "odoo.serviceAccountName" . }}
+      serviceAccountName: {{ .Values.databaseMaintenance.serviceAccountName | quote }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -64,26 +64,51 @@ spec:
             - /bin/sh
             - -ec
             - |
-              DB_EXISTS="$(python3 <<'PY'
+              DB_STATUS="$(python3 <<'PY'
               import os
               import psycopg2
 
-              conn = psycopg2.connect(
+              mgmt_conn = psycopg2.connect(
                   host=os.environ["ODOO_DB_HOST"],
                   port=os.environ.get("ODOO_DB_PORT", "5432"),
                   user=os.environ["ODOO_DB_USER"],
                   password=os.environ.get("ODOO_DB_PASSWORD", ""),
                   dbname=os.environ.get("ODOO_MAINTENANCE_DB", "postgres"),
               )
-              cur = conn.cursor()
+              cur = mgmt_conn.cursor()
               cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (os.environ["ODOO_DB_NAME"],))
-              print("true" if cur.fetchone() else "false")
+              db_exists = cur.fetchone() is not None
               cur.close()
-              conn.close()
+              mgmt_conn.close()
+
+              if not db_exists:
+                  print("missing")
+                  raise SystemExit(0)
+
+              db_conn = psycopg2.connect(
+                  host=os.environ["ODOO_DB_HOST"],
+                  port=os.environ.get("ODOO_DB_PORT", "5432"),
+                  user=os.environ["ODOO_DB_USER"],
+                  password=os.environ.get("ODOO_DB_PASSWORD", ""),
+                  dbname=os.environ["ODOO_DB_NAME"],
+              )
+              cur = db_conn.cursor()
+              cur.execute("SELECT to_regclass('public.ir_module_module')")
+              has_module_table = cur.fetchone()[0] is not None
+
+              if not has_module_table:
+                  print("uninitialized")
+              else:
+                  cur.execute("SELECT state FROM ir_module_module WHERE name = 'base'")
+                  row = cur.fetchone()
+                  print("initialized" if row and row[0] == "installed" else "uninitialized")
+
+              cur.close()
+              db_conn.close()
               PY
               )"
 
-              if [ "$DB_EXISTS" != "true" ]; then
+              if [ "$DB_STATUS" = "missing" ]; then
                 if [ "$ODOO_FAIL_ON_MISSING_DB" = "true" ]; then
                   echo "Database ${ODOO_DB_NAME} does not exist. Failing upgrade migration hook."
                   exit 1
@@ -91,6 +116,11 @@ spec:
 
                 echo "Database ${ODOO_DB_NAME} does not exist. Skipping migrations."
                 exit 0
+              fi
+
+              if [ "$DB_STATUS" = "uninitialized" ]; then
+                echo "Database ${ODOO_DB_NAME} is not initialized yet. Run install bootstrap first."
+                exit 1
               fi
 
               exec /usr/local/bin/odoo-entrypoint.sh --no-http -d "$ODOO_DB_NAME" -u "$ODOO_MIGRATION_MODULES" --stop-after-init

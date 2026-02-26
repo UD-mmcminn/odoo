@@ -81,6 +81,7 @@ resources: {}
 
 databaseMaintenance:
   enabled: false
+  serviceAccountName: default
   maintenanceDatabase: postgres
   initOnInstall: true
   initModules: base
