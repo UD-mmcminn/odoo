@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="1">
+        <!-- Record rules are introduced with concrete models in follow-up tasks (T11-T19, T113). -->
+    </data>
+</odoo>

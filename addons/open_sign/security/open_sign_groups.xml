@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="1">
+        <record id="module_category_open_sign" model="ir.module.category">
+            <field name="name">Open Sign</field>
+            <field name="description">Document signing and evidence workflows</field>
+            <field name="sequence">40</field>
+        </record>
+
+        <record id="group_open_sign_user" model="res.groups">
+            <field name="name">Open Sign User</field>
+            <field name="category_id" ref="open_sign.module_category_open_sign"/>
+            <field name="implied_ids" eval="[(4, ref('base.group_user'))]"/>
+        </record>
+
+        <record id="group_open_sign_manager" model="res.groups">
+            <field name="name">Open Sign Manager</field>
+            <field name="category_id" ref="open_sign.module_category_open_sign"/>
+            <field name="implied_ids" eval="[(4, ref('open_sign.group_open_sign_user'))]"/>
+        </record>
+
+        <record id="group_open_sign_auditor" model="res.groups">
+            <field name="name">Open Sign Auditor</field>
+            <field name="category_id" ref="open_sign.module_category_open_sign"/>
+            <field name="implied_ids" eval="[(4, ref('base.group_user'))]"/>
+        </record>
+    </data>
+</odoo>

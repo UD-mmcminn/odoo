@@ -1,0 +1,1379 @@
+# Open Sign App Feature Plan and Design Control
+
+## Document Control
+
+| Field | Value |
+|---|---|
+| Document ID | `FEATURE-OPEN-SIGN` |
+| Version | `1.1.0` |
+| Status | `Active (Living Document)` |
+| Created | `2026-02-26` |
+| Last Updated | `2026-02-26` |
+| Product Area | `Open Sign Odoo Addons` |
+| Primary Owner | `Engineering` |
+| Review Cadence | `Weekly or at milestone close` |
+
+## How To Use This Document
+
+- Keep this file in source control and update it for feature-branch implementation PRs.
+- Use task checkboxes as the source of truth for completed and pending work.
+- When scope changes, add a Change Request entry under `Design Control` before implementation.
+- Do not mark a task complete unless its acceptance criteria and tests are complete.
+- Keep requirement, task, and milestone references consistent when adding/removing scope.
+
+## M0 Deliverables Index
+
+These M0 artifacts are now available and linked to `T90`-`T99`:
+
+- [DESIGN_DATA_COLLECTION_NOTES.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/DESIGN_DATA_COLLECTION_NOTES.md) (`T90`)
+- [TASK_CARDS.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/task_cards/TASK_CARDS.md) (`T91`)
+- [PULL_REQUEST_TEMPLATE.md](/home/mmcminn/Projects/src/odoo/.github/PULL_REQUEST_TEMPLATE.md) Open Sign checklist block (`T92`)
+- [DEVELOPER_COMMANDS.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/DEVELOPER_COMMANDS.md) (`T93`)
+- [SECURITY_ACL_POLICY.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/SECURITY_ACL_POLICY.md) (`T94`)
+- [PORTAL_API_CONTRACT.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/PORTAL_API_CONTRACT.md) (`T95`)
+- [LEGAL_CONSENT_STRATEGY.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/LEGAL_CONSENT_STRATEGY.md) (`T96`)
+- [ATTACHMENT_ACCESS_POLICY.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/ATTACHMENT_ACCESS_POLICY.md) (`T97`)
+- [VALIDATION_TEST_VECTORS.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/VALIDATION_TEST_VECTORS.md) (`T98`)
+- [EVIDENCE_SCHEMA_V1.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/EVIDENCE_SCHEMA_V1.md) (`T99`)
+
+Supplemental Phase 0 artifacts:
+
+- [WIREFRAME_APPROVAL.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/WIREFRAME_APPROVAL.md) (`T04`)
+- [OBSERVABILITY_BASELINE_PROPOSAL.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/OBSERVABILITY_BASELINE_PROPOSAL.md) (`T08`)
+- [MERGE_GATE_POLICY_PROPOSAL.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/MERGE_GATE_POLICY_PROPOSAL.md) (`T09`)
+- [PDF_SIGNING_STACK_RECOMMENDATION.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/PDF_SIGNING_STACK_RECOMMENDATION.md) (`T05`)
+- [LEGAL_ACCEPTANCE_CRITERIA.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/LEGAL_ACCEPTANCE_CRITERIA.md) (`T03`)
+- [RETENTION_ARCHIVAL_PURGE_POLICY.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/RETENTION_ARCHIVAL_PURGE_POLICY.md) (`T07`)
+
+## Review Outcomes (2026-02-26)
+
+This revision addresses initial planning gaps found during control review:
+
+- Added missing domain entities for signer roles and selectable field options.
+- Decoupled addon dependencies so core domain logic does not depend on web/portal addons.
+- Added non-functional and control requirements (security boundaries, retention, observability, migration path).
+- Added explicit status transition matrix and security control checklist.
+- Added unresolved design decisions and owners to avoid hidden blockers.
+- Expanded task board and traceability to include control and hardening work.
+- Closed traceability and milestone-gate gaps for new security/API/consent controls.
+- Normalized change history and progress metrics for accurate execution tracking.
+- Added a schema-level storage contract with field types, FK/ondelete policy, constraints, and model interaction notes.
+- Clarified Odoo model-vs-data loading patterns and added manifest `data` load plan per addon.
+- Added control coverage for endpoint idempotency/race safety, timestamp trust policy, validation taxonomy, and immutable PDF digests.
+- Generated the M0 documentation package and linked all deliverables for execution tracking.
+- Added immutable template versioning prior to send (`draft -> versioned -> sent`) to preserve legal document baselines.
+
+## Concept Coverage Re-Review (2026-02-26)
+
+| Area | Coverage Status | Evidence | Remaining Risk / Decision |
+|---|---|---|---|
+| Template-driven PDF signing | Covered | `R-001`, `T11`, `T21`, `T40` | PDF stack final choice (`D-001`) |
+| Full field-type support (signature + form controls) | Covered | Scope + `FieldType` enum + `R-002` | Type-specific validation hardening in implementation |
+| Required/optional and validation behavior | Covered | `R-003`, `T18`, `T24`, `T44` | Regex and length boundary rules must be tested per type |
+| Multi-signer orchestration (sequential/parallel) | Covered | `R-004`, `T15`, `T33` | Final sequencing edge cases in declined/expired flows |
+| Signature adoption + optional certificate signing | Covered | `R-005`, `R-010`, `T25`, `T50`-`T52` | Certificate path remains optional behind milestone gate |
+| Status lifecycle and transition integrity | Covered | status matrix + `R-006`, `R-012`, `T06`, `T14` | Transition guard tests must include invalid state jumps |
+| Immutable template version capture before send | Covered | `T06`, schema contract `open.sign.template.version` + request invariants | Enforce snapshot immutability and no post-send template drift |
+| Audit evidence and consent capture | Covered | `R-007`, `R-022`, `T03`, `T43`, `T46` | Jurisdiction-specific wording still requires Legal signoff workflow |
+| Portal/public signing security posture | Covered | `R-009`, `R-020`, `R-021`, `R-023`, `T31`, `T36`, `T38`, `T39` | Replay/expiry/abuse test depth to be validated in QA |
+| Endpoint idempotency and race safety | Covered (this revision) | `R-024`, `T114`, `T115`, endpoint contract v1 | Retry and parallel-submit edge cases must be regression-tested |
+| Timestamp trust and evidence reproducibility | Covered (this revision) | `R-025`, `R-028`, `T116`, `T117` | NTP and deployment clock-drift controls must be operationalized |
+| Validation and audit taxonomy clarity | Covered (this revision) | `R-026`, `R-027`, validation matrix + audit taxonomy sections | Matrix updates must remain aligned with code and tests |
+| Odoo codebase compliance and module structure | Covered | Odoo alignment principles + `R-017`, `T09`, `T69` | Must be continuously enforced in PR reviews |
+| Data storage and relational design quality | Covered (this revision) | Schema contract section + `T110`, `T112` | Migration evolution discipline required across releases |
+
+## Odoo Codebase Alignment Principles
+
+This section captures conventions observed in this repository (`addons/*`, `odoo/addons/test_lint/*`) and is mandatory for implementation decisions:
+
+1. Reuse Odoo primitives before introducing custom infrastructure:
+- Use `portal.mixin` access tokens and `_document_check_access()` style access checks for portal links.
+- Reuse existing signature UI primitives (`portal.signature_form`, `web.NameAndSignature`) where possible.
+
+2. Keep addon structure Odoo-native:
+- Require `__init__.py` at module root and every Python package used by the module.
+- Keep `tests/__init__.py` with explicit `from . import test_*` imports for all test files.
+- Keep JS tests under `static/tests/**/*`; include through manifest assets.
+
+3. Follow manifest and asset conventions:
+- Use only recognized manifest keys and avoid noise keys set to default values.
+- Define assets in `__manifest__.py` (`assets` section), not `views/assets.xml`.
+- Keep data loading order stable: security, data, views, reports, wizards.
+
+4. Respect ORM and API lint expectations:
+- Do not import `odoo.orm` directly; import from `odoo` (`api`, `fields`, `models`, `_`).
+- Avoid public method argument names `ids` and `context`.
+- Keep method override signatures and API decorators compatible with parent methods.
+- Use `models.Constraint(...)` and explicit field indexes where needed.
+
+5. Follow controller/route patterns:
+- Use `type='jsonrpc'` for RPC-style endpoints; reserve `type='http'` for page rendering/download.
+- Mark read-only routes with `readonly=True` when they do not write.
+- Avoid redundant route parameter redeclarations in inherited routes.
+
+6. Align security, multi-company, and i18n behavior:
+- Enforce multi-company record rules on all business models containing `company_id`.
+- Use `consteq`-safe token comparisons and test replay/expiry paths.
+- Use `_t` for JS translations and `.translate` for user-visible OWL component props.
+
+## Junior Developer Delivery Pack
+
+This section is intentionally explicit to support lower-experience implementers.
+
+### Mandatory Implementation Sequence
+
+1. Build core models and security first (`open_sign`) before any UI/controller work.
+2. Add server-side validation before client-side validation.
+3. Add portal access checks before exposing public routes.
+4. Add tests for each behavior in the same PR that adds the behavior.
+5. Add migration hooks and indexes before declaring backend complete.
+6. Add observability and hardening before UAT/release signoff.
+
+### Definition of Ready (DoR) For Any Task
+
+- Requirement ID(s) linked.
+- Dependencies identified and complete.
+- Target files identified.
+- Impacted schema-contract model rows identified (for any persisted data change).
+- Security implications documented.
+- Test approach identified (unit/integration/http/tour/js).
+- Acceptance criteria written in verifiable form.
+
+### Task Card Template (Use For Every New Task)
+
+```text
+Task ID:
+Goal:
+Requirements:
+Dependencies:
+Target Files:
+Implementation Notes:
+Acceptance Criteria:
+Test Plan:
+Security Notes:
+Rollback/Migration Impact:
+```
+
+### Pull Request Checklist (Junior-Friendly)
+
+- Scope is limited to one coherent slice.
+- Data model changes include constraints + indexes + FK `ondelete` policy + access rules.
+- Controllers include auth mode, access checks, and readonly declaration rationale.
+- Public endpoints include abuse and replay test coverage.
+- New tests are imported in `tests/__init__.py`.
+- Manifest `data` ordering and asset declarations are validated.
+- For feature branches: `FEATURE.md` updated (task status, traceability, and update log).
+
+## Odoo Design Data Collection Map
+
+Use this as mandatory design research before implementation of each subsystem.
+
+| Area | Reference File | What To Extract |
+|---|---|---|
+| Portal token model | `addons/portal/models/portal_mixin.py` | `access_token` lifecycle, URL generation, token semantics |
+| Portal access guard | `addons/portal/controllers/portal.py` | `_document_check_access` and `consteq` usage |
+| Signature portal flow | `addons/sale/controllers/portal.py` | `jsonrpc` accept flow, public token auth, signature write flow |
+| Reusable signature UI | `addons/portal/views/portal_templates.xml` + `addons/portal/static/src/signature_form/signature_form.js` | Existing portal signature component contract and props |
+| Manifest conventions | `odoo/addons/test_lint/tests/test_manifests.py` + `addons/sale/__manifest__.py` | valid keys, defaults, and asset declaration style |
+| Module/test structure | `odoo/addons/test_lint/tests/test_dunderinit.py` + `odoo/addons/test_lint/tests/test_test_holes.py` + `addons/sale/tests/__init__.py` | required `__init__.py` and test import expectations |
+| ACL and record rule patterns | `addons/sale/security/ir.model.access.csv`, `addons/sale/security/ir_rules.xml`, `addons/hr/security/hr_security.xml` | multi-company and group-scoped rule style |
+| Model field conventions | `addons/sale/models/sale_order.py`, `addons/account/models/account_move.py` | `_check_company_auto`, `tracking`, `check_company`, constraints, index patterns |
+| Test style conventions | `addons/sale/tests/test_controllers.py`, `addons/sale/tests/test_access_rights.py` | `HttpCase`/`TransactionCase`, tagging, portal access test style |
+| Binary/tokenized attachment access | `addons/web/controllers/binary.py`, `addons/web/tests/test_image.py`, `addons/mail/models/ir_attachment.py` | limited token scope, expiry behavior, and attachment token usage |
+| Chatter/audit integration patterns | `addons/mail/models/mail_thread.py`, `addons/mail/models/mail_message.py` | message posting patterns and thread-side effects |
+| API/lint constraints | `odoo/addons/test_lint/tests/test_naming.py`, `test_orm_import.py`, `test_override_signatures.py`, `test_onchange_domains.py` | public API naming, imports, override signatures, onchange limits |
+| Index and SQL expectations | `odoo/addons/test_lint/tests/test_index.py` | inverse-field index expectations (`btree`/`btree_not_null`) |
+| i18n rules (JS/XML) | `odoo/addons/test_lint/tests/test_jstranslate.py`, `test_i18n.py` | `_t` usage and translatable prop conventions |
+| Migration conventions | existing `addons/*/migrations/*` and `addons/*/upgrades/*` scripts | script placement and upgrade strategy style |
+| Retry/idempotency behavior patterns | `addons/payment/models/payment_transaction.py`, `addons/portal/tests/test_addresses.py` | duplicate-request handling and safe retry expectations |
+| UTC datetime normalization patterns | `addons/mail/models/mail_mail.py`, `addons/mail/models/mail_template.py` | canonical UTC storage and parsing expectations |
+| PDF cryptographic signing internals | `odoo/tools/pdf/signature.py` | feasibility and constraints for optional certificate addon |
+
+### Design Data Collection Log
+
+| Item | Owner | Status | Notes |
+|---|---|---|---|
+| Portal/token reference notes | Backend | `Completed` | See [DESIGN_DATA_COLLECTION_NOTES.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/DESIGN_DATA_COLLECTION_NOTES.md). |
+| Signature UI reuse decision memo | Web | `Completed` | Reuse decision recorded in design notes and ADRs. |
+| Lint constraints summary | Backend | `Completed` | Lint constraints recorded with reference links. |
+| ACL and record rule pattern notes | Backend/Security | `Completed` | Security matrix and policy finalized in M0 docs. |
+| Model field convention notes | Backend | `Completed` | Schema contract finalized in `FEATURE.md`. |
+| Test style convention notes | QA/Backend | `Completed` | Test strategy references captured in design notes. |
+| Binary and attachment token notes | Backend/Security | `Completed` | Tokenized artifact policy finalized. |
+| Mail thread/chatter integration notes | Backend | `Completed` | Chatter/audit integration notes captured. |
+| Migration pattern summary | Backend | `Completed` | Migration strategy and hooks captured (`T112` linkage). |
+| Retry/idempotency pattern summary | Backend | `Completed` | Idempotency model/policy finalized in M0 docs. |
+| UTC timestamp handling summary | Backend/Ops | `Completed` | UTC trust policy and evidence rules finalized. |
+| Certificate feasibility summary | Backend/Security | `Completed` | Feasibility constraints documented for optional addon. |
+
+## Scope Summary
+
+Build an Odoo Community replacement for the Enterprise Signature app with:
+
+- Template-based document signing.
+- Configurable, editable fields (required/optional): `signature`, `initials`, `name`, `email`, `phone`, `company`, `text`, `multiline`, `checkbox`, `radio`, `selection`, `date`, `strikethrough`, `stamp`.
+- Multi-signer workflows (sequential and parallel).
+- Signature adoption methods (draw, type, upload).
+- Document lifecycle and status tracking.
+- Full audit trail.
+- Optional certificate-based digital signing module.
+
+Out of scope for MVP:
+
+- Third-party trust service integrations requiring paid external services.
+- Jurisdiction-specific legal certification beyond audit/evidence controls.
+- In-person identity validation/KYC integrations.
+
+## Design Control
+
+### Requirements Baseline
+
+| Req ID | Requirement | Priority | Status |
+|---|---|---|---|
+| `R-001` | Upload/use PDF templates and place fields by page coordinates | Must | `Open` |
+| `R-002` | Support all required field types listed in scope | Must | `Open` |
+| `R-003` | Required/optional behavior per field with validation | Must | `Open` |
+| `R-004` | Multi-signer workflows with role assignment | Must | `Open` |
+| `R-005` | Signature adoption: draw/type/upload | Must | `Open` |
+| `R-006` | Document statuses and transition logging | Must | `Open` |
+| `R-007` | Audit trail capturing who/when/how signed | Must | `Open` |
+| `R-008` | Final signed PDF generation and storage | Must | `Open` |
+| `R-009` | Portal/public signing links with secure tokens | Must | `Open` |
+| `R-010` | Optional certificate digital signing at completion | Should | `Open` |
+| `R-011` | Multi-company ACL isolation and least-privilege access model | Must | `Open` |
+| `R-012` | Enforced status transition rules and invalid-transition rejection | Must | `Open` |
+| `R-013` | Evidence retention and export policy support | Must | `Open` |
+| `R-014` | Backward-compatible schema migration strategy across module versions | Must | `Open` |
+| `R-015` | Operational observability (metrics, key events, failure diagnosis) | Should | `Open` |
+| `R-016` | Optional signer identity verification step (email OTP at minimum) | Should | `Open` |
+| `R-017` | Conformance with Odoo lint and addon structure conventions in this repository | Must | `Open` |
+| `R-018` | Task execution must follow documented DoR/Task Card/PR checklist process | Must | `Open` |
+| `R-019` | Design decisions must cite concrete Odoo code references before implementation | Must | `Open` |
+| `R-020` | Security groups and ACL/record-rule matrix explicitly defined and tested | Must | `Open` |
+| `R-021` | Portal `jsonrpc` endpoint contract (payloads, responses, error codes) documented and tested | Must | `Open` |
+| `R-022` | Signer consent/legal disclosure snapshot captured as part of audit evidence | Must | `Open` |
+| `R-023` | Signed artifacts and payload attachments follow tokenized binary access policy | Must | `Open` |
+| `R-024` | Mutating signer endpoints (`save`, `submit`, `decline`) are idempotent and race-safe | Must | `Open` |
+| `R-025` | Evidence timestamps are canonical UTC from trusted server clock policy (drift-controlled) | Must | `Open` |
+| `R-026` | Field-type validation and normalization matrix is documented and enforced client/server | Must | `Open` |
+| `R-027` | Audit event taxonomy and evidence package schema are versioned and backward-compatible | Must | `Open` |
+| `R-028` | Source and final PDF SHA-256 digests are stored immutably for integrity verification | Must | `Open` |
+
+### Design Control Block
+
+| Control Item | Definition |
+|---|---|
+| Architecture Owner | Backend Lead |
+| UX Owner | Frontend/Odoo Web Lead |
+| Security Owner | Platform/Security Lead |
+| Data Classification | Sensitive business documents + PII |
+| Compliance Considerations | IP logging, timestamping, consent evidence, retention policy |
+| Risk Level | High (document integrity, signer identity, legal workflows) |
+| Release Gates | Design Freeze -> MVP QA Pass -> UAT Signoff -> Production |
+
+### Security Control Checklist
+
+| Control ID | Control | Status |
+|---|---|---|
+| `SC-001` | Portal links use `portal.mixin` token lifecycle and constant-time token checks | `Open` |
+| `SC-002` | Token expiry and replay prevention | `Open` |
+| `SC-003` | Multi-company record rules validated with tests | `Open` |
+| `SC-004` | Audit log immutability constraints enforced post-completion | `Open` |
+| `SC-005` | PII minimization and retention enforcement | `Open` |
+| `SC-006` | Rate limit or abuse controls on public signing endpoints | `Open` |
+| `SC-007` | Idempotency keys and duplicate-submit protection on mutating portal endpoints | `Open` |
+| `SC-008` | Concurrency control prevents double-transition races in signer completion/decline | `Open` |
+| `SC-009` | Trusted timestamp source policy (UTC clock, drift alerts) for legal evidence | `Open` |
+
+### Security Roles and ACL Matrix (Baseline)
+
+| Group | Purpose | Key Model Access |
+|---|---|---|
+| `open_sign.group_open_sign_user` | Operational users creating templates/requests | R/W/C on templates, requests, request values in allowed companies |
+| `open_sign.group_open_sign_manager` | Administration and exception handling | Full access to operational models; void/cancel authority |
+| `open_sign.group_open_sign_auditor` | Read-only compliance/audit review | Read-only on requests, signers, values, audit logs |
+| `base.group_portal` (token-scoped) | External signer access | No direct model ACL write; route-mediated token-scoped actions only |
+
+Implementation notes:
+
+- External signers must access data only through token-validated controller flows.
+- Audit models should be non-editable for non-manager roles after completion/void.
+- Multi-company rules must be explicit on every business model with `company_id`.
+
+### Assumptions and Open Decisions
+
+| ID | Decision Needed | Owner | Due | Status |
+|---|---|---|---|---|
+| `D-001` | Select PDF rendering/writing library stack for field flattening | Backend | `M0` | `Resolved (core deterministic flattening path approved in T05)` |
+| `D-002` | Select certificate implementation approach (`pyHanko` vs OpenSSL wrapper) | Backend/Security | `M0` | `Resolved (pyHanko preferred for optional certificate addon)` |
+| `D-003` | Confirm legal baseline for consent language and evidence content | Product/Legal | `M0` | `Resolved (US ESIGN + UETA baseline; Legal wording signoff required)` |
+| `D-004` | Confirm OTP requirement for MVP vs post-MVP | Product/Security | `M0` | `Deferred (post-MVP default; revisit before T37)` |
+| `D-005` | Define retention period and purge schedule by document class | Product/Ops | `M1` | `Resolved (Configurable retention/purge with legal-hold override)` |
+| `D-006` | Finalize signer portal UX reuse level (`portal.signature_form` vs dedicated component) | Web Lead | `M0` | `Resolved (wireframe pack v1 approved)` |
+| `D-007` | Define production clock drift tolerance and monitoring policy for legal timestamps | Platform/Ops | `M0` | `Resolved (Policy v1)` |
+| `D-008` | Approve field-level validation matrix defaults (length/date/format constraints) | Product/Backend | `M0` | `Resolved (Matrix v1)` |
+| `D-009` | Approve evidence package schema v1 and event taxonomy versioning policy | Product/Backend | `M0` | `Resolved (Schema v1)` |
+
+### Phase 0 Decisions Locked (2026-02-26)
+
+- `T01`: Target platform is Odoo `19.0` (repository baseline), with runtime compatibility aligned to repository constraints (`Python 3.10-3.13`, PostgreSQL `>= 13`).
+- `T02`: Addon structure/install order approved: `open_sign` -> `open_sign_web` -> `open_sign_portal` -> optional `open_sign_certificate`.
+- `T03`: Legal baseline set to US `ESIGN` + `UETA`, with ESIGN federal coverage treated as highest priority.
+- `T04`: Wireframe approval pack accepted for editor + portal + immutable versioning UX.
+- `T05`: PDF strategy approved: deterministic flattened final PDF in core; optional digital certificate signing via `pyHanko`.
+- `T06`: Status flow approved with immutable versioning stage: `draft -> versioned -> sent` before signer actions.
+- `T07`: Retention/purge policy approved as configurable; default retention is indefinite; purge can only occur after retention window; legal hold always overrides purge.
+- `T08`: Observability baseline approved (events, metrics, alerts, and dashboard set).
+- `T09`: Merge gates approved with policy change: full `FEATURE.md` updates are required for feature branches.
+
+### Change Control Log
+
+| CR ID | Date | Change | Impact | Decision |
+|---|---|---|---|---|
+| `CR-000` | `2026-02-26` | Initial baseline for Open Sign app | New feature | Approved |
+| `CR-001` | `2026-02-26` | Added missing control requirements, entity fixes, dependency corrections | Plan quality and execution risk | Approved |
+| `CR-002` | `2026-02-26` | Added Odoo codebase alignment controls and module structure adjustments | Conformance and maintainability | Approved |
+| `CR-003` | `2026-02-26` | Added junior-focused delivery controls and Odoo design data collection map | Execution quality and onboarding risk | Approved |
+| `CR-004` | `2026-02-26` | Final comprehensive quality review updates (traceability, milestones, risks, metrics) | Completeness and governance accuracy | Approved |
+| `CR-005` | `2026-02-26` | Added detailed schema storage contract (field types, FK/ondelete, constraints, interactions) | Data model quality and implementation consistency | Approved |
+| `CR-006` | `2026-02-26` | Added explicit Odoo data-loading model, manifest load plan, and missing portal security artifacts | Implementation clarity and Odoo-conformance risk reduction | Approved |
+| `CR-007` | `2026-02-26` | Added idempotency/timestamp/validation-taxonomy/integrity-digest controls and tasks | Legal-evidence robustness and implementation ambiguity reduction | Approved |
+| `CR-008` | `2026-02-26` | Generated M0 documentation deliverables bundle (`T90`-`T99`) and linked artifacts | Execution readiness and junior handoff quality | Approved |
+| `CR-009` | `2026-02-26` | Applied Phase 0 decision updates (`T01/T02/T03/T06/T07`) including immutable template versioning and planning artifacts for `T04/T05/T08/T09` | Design completeness and implementation guardrail quality | Approved |
+| `CR-010` | `2026-02-26` | Applied final Phase 0 approvals (`T04/T05/T08/T09`) and feature-branch-only `FEATURE.md` merge-gate rule | M0 closure and workflow policy refinement | Approved |
+
+### Architecture Decisions (ADRs Summary)
+
+| ADR ID | Decision | Status |
+|---|---|---|
+| `ADR-001` | Split implementation into core + web + portal + certificate addons | Accepted |
+| `ADR-002` | Store field positions normalized by page dimensions | Accepted |
+| `ADR-003` | Use immutable audit log records after completion | Accepted |
+| `ADR-004` | Certificate signing implemented as optional extension addon | Accepted |
+| `ADR-005` | Keep core addon independent of website/portal/web-specific UI concerns | Accepted |
+| `ADR-006` | Implement portal signer access via `portal.mixin` extension on signer model | Accepted |
+| `ADR-007` | Use manifest-declared assets and `static/tests` for JS tests | Accepted |
+| `ADR-008` | Require idempotency keys and row-level locking for mutating portal signer endpoints | Accepted |
+| `ADR-009` | Version audit event taxonomy and evidence package schema from v1 onward | Accepted |
+| `ADR-010` | Require immutable template version snapshots before sending requests (`draft -> versioned -> sent`) | Accepted |
+
+## Addons To Create
+
+| Addon | Purpose | Depends On | DB Entities |
+|---|---|---|---|
+| `open_sign` | Core business domain, workflows, statuses, PDF finalization, audit backbone | `base`, `mail` | Yes |
+| `open_sign_web` | Internal template editor and backend web client components/widgets | `open_sign`, `web` | Optional minimal |
+| `open_sign_portal` | Public/portal signing routes, token validation, signer UX, reminders | `open_sign`, `portal`, `website` | Yes |
+| `open_sign_certificate` | Optional PKI digital signature and certificate verification metadata | `open_sign` | Yes |
+
+Install order (approved):
+
+1. `open_sign`
+2. `open_sign_web`
+3. `open_sign_portal`
+4. `open_sign_certificate` (optional)
+
+---
+
+## Odoo Data Pattern: Models vs XML/CSV Records
+
+This is the core distinction used across official addons and must be followed in this feature:
+
+- `models/*.py` defines schema and behavior (`fields.*`, constraints, business logic). This is where database table/column design lives.
+- XML/CSV files loaded via `__manifest__.py['data']` create/update records in existing models (for example `ir.ui.view`, `ir.actions.*`, `mail.template`, `ir.sequence`, `res.groups`, `ir.rule`, and business seed records).
+- `views/*.xml` are also data records (`ir.ui.view`) even though they are kept in a `views/` directory.
+- `data/*.xml` typically stores seed/config records and automation metadata (cron, mail templates, subtype, defaults, sequences).
+- `security/*.csv` and `security/*.xml` store ACL and record-rule records; they do not define Python model fields.
+- Not every addon requires a `data/` folder; addons that only extend behavior can have model code with minimal or no XML data loading.
+
+### Manifest Data Loading Plan (v1)
+
+Planned `__manifest__.py['data']` loading order by addon:
+
+1. `open_sign`
+- `security/open_sign_groups.xml`
+- `security/ir.model.access.csv`
+- `security/open_sign_security.xml`
+- `data/sequence.xml`
+- `data/mail_templates.xml`
+- `data/ir_cron.xml`
+- `views/sign_template_views.xml`
+- `views/sign_role_views.xml`
+- `views/sign_request_views.xml`
+- `views/sign_audit_views.xml`
+- `views/sign_menus.xml`
+- `report/sign_completion_certificate.xml`
+
+2. `open_sign_web`
+- No required server-side XML records for MVP.
+- Frontend assets are declared in manifest `assets` and loaded from `static/src/**/*`.
+- If server-registered actions/views are later introduced, add `views/*.xml` entries explicitly.
+
+3. `open_sign_portal`
+- `security/ir.model.access.csv`
+- `security/open_sign_portal_security.xml`
+- `data/mail_templates.xml`
+- `views/portal_templates.xml`
+
+4. `open_sign_certificate` (optional)
+- `security/ir.model.access.csv`
+- `views/certificate_profile_views.xml`
+- Add `data/*.xml` only if certificate defaults/system parameters are introduced.
+
+### XML Record Mutability and External ID Policy
+
+Use this baseline to avoid upgrade surprises:
+
+| Record Category | `noupdate` Default | External ID Convention | Notes |
+|---|---|---|---|
+| Security (`res.groups`, `ir.model.access`, `ir.rule`) | `1` | `open_sign.<purpose>_<name>` | Security records should not be silently overwritten on module update. |
+| System behavior (`ir.cron`, `ir.sequence`, config parameters) | `1` | `open_sign.<model_short>_<name>` | Preserve operator adjustments unless intentionally managed by migration scripts. |
+| Notification templates (`mail.template`, `mail.message.subtype`) | `1` | `open_sign.mail_<name>` | Preserve business customizations post-deployment. |
+| Views and actions (`ir.ui.view`, `ir.actions.*`, menus) | `0` | `open_sign.view_<name>`, `open_sign.action_<name>`, `open_sign.menu_<name>` | Must evolve with code and be updated on module upgrade. |
+| Demo data | `1` | `open_sign.demo_<name>` | Isolated under `demo` manifest key; never required for production behavior. |
+
+## Addon Specification: `open_sign`
+
+### Interfaces
+
+- Python model APIs:
+  - `open.sign.template.action_publish()`
+  - `open.sign.template.action_publish_version()`
+  - `open.sign.template.action_archive()`
+  - `open.sign.request.action_version()`
+  - `open.sign.request.action_send()`
+  - `open.sign.request.action_cancel()`
+  - `open.sign.request.action_complete()`
+  - `open.sign.request.action_void(reason=None)`
+  - `open.sign.request._compute_status()`
+  - `open.sign.request._check_transition(target_status)`
+  - `open.sign.request.generate_final_pdf()`
+- Service helpers:
+  - `pdf_field_mapper.apply_values_to_pdf()`
+  - `audit_service.log_event()`
+  - `validation_service.validate_field_value()`
+- XML/UI interfaces:
+  - Menu/actions for templates, requests, and audit logs.
+  - Form/tree/kanban views for operational users.
+
+### Database Entities
+
+1. `open.sign.template`
+- Core fields: `name`, `state`, `source_attachment_id`, `active`, `company_id`, `owner_id`.
+- Relations: `field_ids`, `request_ids`, `role_ids`, `version_ids`.
+
+2. `open.sign.template.version`
+- Core fields: `template_id`, `version_number`, `source_attachment_id`, `source_pdf_sha256`, `field_snapshot_json`, `role_snapshot_json`, `published_at`, `published_by`, `state`.
+- Purpose: immutable sendable snapshot of template structure and source artifact.
+
+3. `open.sign.role`
+- Core fields: `name`, `template_id`, `sequence`, `required`, `color`.
+- Purpose: signer slot abstraction to map fields and request signers reliably.
+
+4. `open.sign.template.field`
+- Core fields: `template_id`, `type`, `label`, `required`, `page`, `x`, `y`, `width`, `height`, `role_id`, `sequence`, `default_value`, `validation_regex`, `max_length`, `min_length`.
+- Constraints: coordinates in normalized range; width/height > 0.
+
+5. `open.sign.template.field.option`
+- Core fields: `field_id`, `value`, `label`, `sequence`, `is_default`.
+- Scope: radio and selection field option definitions.
+
+6. `open.sign.request`
+- Core fields: `name`, `template_id`, `template_version_id`, `status`, `sent_at`, `completed_at`, `expires_at`, `final_attachment_id`, `source_pdf_sha256`, `final_pdf_sha256`, `owner_id`, `company_id`, `ordered_signing`, `evidence_schema_version`, `lock_version`.
+- Computed/counters: `signed_count`, `pending_count`, `declined_count`, `last_event_at`.
+
+7. `open.sign.request.signer`
+- Core fields: `request_id`, `partner_id`, `email`, `role_id`, `sequence`, `state`, `signed_at`, `declined_reason`, `last_opened_at`, `ip_last`, `consent_accepted_at`, `consent_text_hash`, `signer_timezone`.
+- Constraints: unique per `(request_id, role_id)`.
+
+8. `open.sign.request.value`
+- Core fields: `request_id`, `template_field_id`, `signer_id`, `value_text`, `value_json`, `signed_payload_attachment_id`, `is_valid`.
+- Constraints: unique per `(request_id, template_field_id, signer_id)`.
+
+9. `open.sign.audit.log`
+- Core fields: `request_id`, `signer_id`, `event_type`, `event_sequence`, `event_at`, `ip`, `user_agent`, `metadata_json`, `hash_chain`, `previous_hash`, `consent_text_hash`.
+- Constraints: append-only after completion/void.
+
+### Status Transition Matrix
+
+| From | Allowed To |
+|---|---|
+| `draft` | `versioned`, `cancelled` |
+| `versioned` | `sent`, `cancelled` |
+| `sent` | `opened`, `in_progress`, `declined`, `expired`, `cancelled` |
+| `opened` | `in_progress`, `declined`, `expired`, `cancelled` |
+| `in_progress` | `partially_signed`, `completed`, `declined`, `expired`, `cancelled` |
+| `partially_signed` | `in_progress`, `completed`, `declined`, `expired`, `cancelled` |
+| `completed` | `voided` |
+| `declined` | `cancelled` |
+| `expired` | `cancelled` |
+| `cancelled` | (terminal) |
+| `voided` | (terminal) |
+
+### Planned Folder Tree
+
+```text
+addons/open_sign/
+  __init__.py                        # Module init
+  __manifest__.py                    # Dependencies, data files
+  security/
+    open_sign_groups.xml            # open_sign user/manager/auditor groups
+    ir.model.access.csv              # ACLs for internal users
+    open_sign_security.xml           # Record rules (owner/company scope)
+  models/
+    __init__.py
+    sign_template.py                 # open.sign.template model + lifecycle methods
+    sign_template_version.py         # immutable template snapshot model used before sending
+    sign_role.py                     # open.sign.role model
+    sign_template_field.py           # open.sign.template.field model + validation
+    sign_template_field_option.py    # option model for radio/selection fields
+    sign_request.py                  # open.sign.request model + state engine
+    sign_request_signer.py           # signer model + sequencing and transitions
+    sign_request_value.py            # per-field captured values and normalization
+    sign_audit_log.py                # immutable audit log model
+  services/
+    __init__.py
+    pdf_field_mapper.py              # apply_values_to_pdf(), flatten_fields()
+    audit_service.py                 # log_event(), compute_hash_chain()
+    validation_service.py            # validate_field_value(type, required, rules)
+    transition_service.py            # _check_transition and transition helpers
+  wizards/
+    __init__.py
+    sign_send_wizard.py              # request send/reminder workflow helper
+  data/
+    mail_templates.xml               # send/reminder/completion notifications
+    ir_cron.xml                      # reminders + expiration jobs
+    sequence.xml                     # document/request sequence definitions
+  views/
+    sign_template_views.xml          # template menu/tree/form
+    sign_role_views.xml              # signer role views
+    sign_request_views.xml           # request menu/tree/form/kanban
+    sign_audit_views.xml             # audit log visibility for admins
+    sign_menus.xml                   # top-level menu/actions
+  report/
+    sign_completion_certificate.xml  # evidence summary page template
+  tests/
+    __init__.py
+    test_sign_request_flow.py        # core lifecycle and status transitions
+    test_field_validation.py         # required/optional + type validation tests
+    test_access_rules.py             # multi-company and ACL checks
+    test_audit_integrity.py          # immutable audit/hash assertions
+```
+
+### Datatypes and Enums
+
+- `FieldType`: `signature`, `initials`, `name`, `email`, `phone`, `company`, `text`, `multiline`, `checkbox`, `radio`, `selection`, `date`, `strikethrough`, `stamp`.
+- `RequestStatus`: `draft`, `versioned`, `sent`, `opened`, `in_progress`, `partially_signed`, `completed`, `declined`, `expired`, `cancelled`, `voided`.
+- `SignerState`: `pending`, `opened`, `signed`, `declined`, `expired`.
+- `SignatureMethod`: `draw`, `type`, `upload`, `certificate`.
+- `AuditEventType`: `request_created`, `template_version_published`, `request_versioned`, `request_sent`, `signer_opened`, `value_saved`, `signer_submitted`, `signer_declined`, `request_completed`, `request_expired`, `request_voided`, `otp_requested`, `otp_verified`, `artifact_generated`, `artifact_downloaded`.
+- JSON payload types:
+  - `value_json` for structured values (checkbox, radio, selection, date metadata).
+  - `metadata_json` for audit details.
+
+### Field Validation and Normalization Matrix (v1)
+
+| Field Type | Expected Input | Normalized Storage | Required Validation Rules |
+|---|---|---|---|
+| `signature` | draw strokes, typed render, or uploaded image payload | `value_json` (`method`, `display_name`, optional stroke metadata) + `signed_payload_attachment_id` when binary payload exists | payload present; allowed mime types; size cap; signer matches role |
+| `initials` | short text or rendered initials payload | `value_text` uppercase (and payload attachment if rendered image) | min 1 char, max 8 chars |
+| `name` | free text | `value_text` trimmed | min/max length; no control chars |
+| `email` | email address | `value_text` lowercase trimmed | strict email regex; length <= 254 |
+| `phone` | phone number string | `value_text` E.164-normalized where possible | digits/`+` validation; length bounds |
+| `company` | free text | `value_text` trimmed | min/max length; no control chars |
+| `text` | single-line text | `value_text` trimmed | no newlines; min/max length |
+| `multiline` | multi-line text | `value_text` normalized line endings (`\n`) | min/max length; newline allowed |
+| `checkbox` | boolean | `value_json` boolean | value must be `true`/`false` |
+| `radio` | single option key | `value_text` option key | must match active option set for field |
+| `selection` | single option key | `value_text` option key | must match active option set for field |
+| `date` | date value | `value_json` (`iso_date`, optional `timezone`) | ISO-8601 date; optional range checks |
+| `strikethrough` | marker acknowledgement | `value_json` (`applied`: true/false) | boolean only; no free text payload |
+| `stamp` | uploaded stamp image/payload | `value_json` (`stamp_type`, optional label) + `signed_payload_attachment_id` | payload required; allowed mime types; size cap |
+
+Normalization rules:
+
+- Server normalization is authoritative; client normalization is best-effort UX.
+- Invalid values must fail with `validation_error` and field-level detail payload.
+- `radio` and `selection` values are persisted as canonical option keys, never labels.
+
+### Audit Event Taxonomy and Evidence Schema (v1)
+
+Audit event taxonomy baseline:
+
+| Event Type | Actor Context | Required Metadata Keys | Transition Impact |
+|---|---|---|---|
+| `request_created` | internal user | `request_id`, `template_id` | sets `draft` |
+| `template_version_published` | internal user | `template_id`, `template_version_id`, `version_number` | none |
+| `request_versioned` | internal user/system | `request_id`, `template_version_id`, `source_pdf_sha256` | `draft` -> `versioned` |
+| `request_sent` | internal user/system | `request_id`, `recipient_count` | `versioned` -> `sent` |
+| `signer_opened` | signer | `request_id`, `signer_id`, `ip`, `user_agent` | `sent`/`pending` visibility updates |
+| `value_saved` | signer | `request_id`, `signer_id`, `field_count` | none |
+| `signer_submitted` | signer | `request_id`, `signer_id`, `signature_method`, `idempotency_key` | signer state -> `signed` |
+| `signer_declined` | signer | `request_id`, `signer_id`, `reason` | request may move to `declined` |
+| `otp_requested` | signer/system | `request_id`, `signer_id` | none |
+| `otp_verified` | signer/system | `request_id`, `signer_id` | unlocks submit when OTP enabled |
+| `artifact_generated` | system | `request_id`, `final_attachment_id`, `final_pdf_sha256` | supports `completed` |
+| `request_completed` | system | `request_id`, `completed_at` | -> `completed` |
+| `request_expired` | system/cron | `request_id`, `expires_at` | -> `expired` |
+| `request_voided` | manager | `request_id`, `reason` | `completed` -> `voided` |
+| `artifact_downloaded` | user/signer | `request_id`, `attachment_id`, `access_mode` | none |
+
+Evidence package schema v1 minimum sections:
+
+- `meta`: `schema_version`, export timestamp UTC, exporter identity.
+- `request`: core request fields, status timeline, digest fields.
+- `signers`: signer states, timestamps, consent evidence.
+- `values`: normalized field captures.
+- `audit`: ordered audit events with hash-chain metadata.
+- `artifacts`: source/final attachment references and SHA-256 digests.
+
+---
+
+## Addon Specification: `open_sign_web`
+
+### Interfaces
+
+- OWL components/services:
+  - `TemplateCanvas` (drag/drop field placement)
+  - `FieldPalette` (field type toolbox)
+  - `SignerPreviewPanel` (role-specific view)
+  - `SignatureAdoptionDialog` (draw/type/upload)
+  - `FieldPropertiesPanel` (required, validation, defaults)
+- JS service contracts:
+  - `serializeFieldGeometry()`
+  - `validateClientFieldValue()`
+  - `normalizeCanvasToPdfCoordinates()`
+
+### Database Entities
+
+- Optional: `open.sign.ui.preset` for reusable style presets.
+
+### Planned Folder Tree
+
+```text
+addons/open_sign_web/
+  __init__.py
+  __manifest__.py
+  static/src/
+    js/
+      template_canvas.js             # place/move/resize field overlays
+      field_palette.js               # field add/edit interactions
+      field_properties_panel.js      # field settings editor
+      signer_preview_panel.js        # role-specific preview in editor
+      signature_adoption_dialog.js   # draw/type/upload signature collection
+      signing_form.js                # client validation + submission payload
+    xml/
+      template_canvas.xml            # OWL templates for editor UI
+      field_properties_panel.xml     # editor side panel template
+      signature_adoption_dialog.xml  # dialog template
+      signing_form.xml               # signer UI template
+    scss/
+      open_sign.scss               # editor and signer styling
+  static/tests/
+    test_template_canvas.test.js          # coordinate and drag/drop behavior
+    test_signing_form.test.js             # client validation and field rendering
+    test_coordinate_normalization.test.js # canvas/pdf mapping checks
+```
+
+### Datatypes
+
+- `FieldGeometry`: `page: int`, `x: float`, `y: float`, `width: float`, `height: float`.
+- `FieldValuePayload`: `field_id: int`, `type: string`, `value: string|bool|object`.
+
+---
+
+## Addon Specification: `open_sign_portal`
+
+### Interfaces
+
+- HTTP routes/controllers:
+  - `GET /my/sign/<int:signer_id>?access_token=...`: open signing page.
+  - `POST /my/sign/<int:signer_id>/save` (`jsonrpc`): save draft values.
+  - `POST /my/sign/<int:signer_id>/submit` (`jsonrpc`): submit signer completion.
+  - `POST /my/sign/<int:signer_id>/decline` (`jsonrpc`): decline with reason.
+  - `POST /my/sign/<int:signer_id>/otp/request` (`jsonrpc`, optional): issue OTP challenge.
+  - `POST /my/sign/<int:signer_id>/otp/verify` (`jsonrpc`, optional): verify signer OTP.
+- Mail integrations:
+  - Invitation, reminder, completion, decline notifications.
+
+### Portal Endpoint Contract (v1)
+
+- `POST /my/sign/<int:signer_id>/save` (`jsonrpc`)
+  - Request: `{"values": [{"field_id": int, "value": any}], "client_ts": iso_datetime, "idempotency_key": "uuid", "request_revision": int}`
+  - Response success: `{"ok": true, "state": "in_progress", "request_revision": int}`
+  - Response error: `{"ok": false, "error_code": "...", "message": "..."}`
+- `POST /my/sign/<int:signer_id>/submit` (`jsonrpc`)
+  - Request: `{"values": [...], "signature_method": "draw|type|upload", "consent": {"accepted": true, "text_hash": "..."}, "idempotency_key": "uuid", "request_revision": int}`
+  - Response success: `{"ok": true, "force_refresh": true, "redirect_url": "..."}`
+  - Response error: `{"ok": false, "error_code": "...", "message": "..."}`
+- `POST /my/sign/<int:signer_id>/decline` (`jsonrpc`)
+  - Request: `{"reason": "...", "idempotency_key": "uuid", "request_revision": int}` (reason non-empty)
+  - Response: same `ok/error_code/message` envelope
+
+Standard `error_code` values:
+
+- `invalid_token`
+- `expired_token`
+- `signing_order_blocked`
+- `validation_error`
+- `consent_required`
+- `request_locked`
+- `idempotency_conflict`
+- `stale_revision`
+
+### Database Entities
+
+1. `open.sign.request.signer` (extension via `_inherit`)
+- Inherits `portal.mixin` in this addon to leverage standard `access_token`, `access_url`, and share URL behavior.
+- Adds portal helpers for URL generation and access checks.
+
+2. `open.sign.signing.session` (optional hardening)
+- Fields: `request_signer_id`, `opened_at`, `last_seen_at`, `ip`, `user_agent`, `state`, `otp_verified`.
+
+3. `open.sign.otp.challenge` (optional)
+- Fields: `request_signer_id`, `code_hash`, `expires_at`, `attempt_count`, `verified_at`.
+
+4. `open.sign.portal.idempotency`
+- Fields: `request_signer_id`, `endpoint`, `idempotency_key`, `request_hash`, `response_json`, `state`, `created_at`, `expires_at`.
+- Purpose: deterministic response replay for duplicate submit/decline attempts and retry safety.
+
+### Planned Folder Tree
+
+```text
+addons/open_sign_portal/
+  __init__.py
+  __manifest__.py
+  security/
+    ir.model.access.csv              # ACLs for optional portal session/OTP models
+    open_sign_portal_security.xml    # Record rules for signer-scoped session/challenge access
+  controllers/
+    __init__.py
+    portal_sign.py                   # signer routes and access-token handlers
+  models/
+    __init__.py
+    sign_request_signer_portal.py    # portal.mixin extension and access URL helpers
+    signing_session.py               # session tracking and replay controls
+    otp_challenge.py                 # optional OTP challenge lifecycle
+    portal_idempotency.py            # idempotency key registry and replay support
+  views/
+    portal_templates.xml             # signer portal pages
+  data/
+    mail_templates.xml               # portal-specific email templates
+  tests/
+    __init__.py
+    test_portal_token_flow.py        # token validity + signer submission
+    test_portal_security.py          # replay/expiry/revocation behavior
+    test_portal_otp.py               # optional OTP verification path
+    test_portal_idempotency.py       # duplicate submit/decline idempotent behavior
+```
+
+### Datatypes
+
+- `TokenState`: `active`, `expired`, `revoked`, `consumed`.
+- `PortalSubmitPayload`: signer values plus submit metadata.
+
+---
+
+## Addon Specification: `open_sign_certificate` (Optional)
+
+### Interfaces
+
+- Service API:
+  - `certificate_service.sign_pdf(final_pdf_attachment_id, certificate_ref)`
+  - `certificate_service.verify_pdf_signature(attachment_id)`
+- Settings UI/API:
+  - Certificate profile selection on request/template/company config.
+
+### Database Entities
+
+1. `open.sign.certificate.profile`
+- Fields: `name`, `provider`, `key_ref`, `cert_ref`, `active`, `company_id`, `signing_algorithm`.
+
+2. `open.sign.certificate.log`
+- Fields: `request_id`, `profile_id`, `signed_attachment_id`, `signed_at`, `verification_status`, `details_json`.
+
+### Planned Folder Tree
+
+```text
+addons/open_sign_certificate/
+  __init__.py
+  __manifest__.py
+  models/
+    __init__.py
+    certificate_profile.py           # certificate profile model
+    certificate_log.py               # signing and verification records
+  services/
+    __init__.py
+    certificate_service.py           # sign_pdf(), verify_pdf_signature()
+  views/
+    certificate_profile_views.xml    # admin config views
+  security/
+    ir.model.access.csv
+  tests/
+    __init__.py
+    test_certificate_signing.py      # optional module functional tests
+```
+
+### Datatypes
+
+- `VerificationStatus`: `valid`, `invalid`, `unknown`, `error`.
+
+---
+
+## Database Storage Contract (Schema v1 Draft)
+
+This section is the implementation baseline for persisted data. It is intentionally explicit for junior developers and must be treated as the source-of-truth contract for model creation, constraints, and migrations.
+
+### Global ORM and SQL Conventions
+
+- Implicit Odoo audit fields (`id`, `create_uid`, `create_date`, `write_uid`, `write_date`) exist on all models and are omitted below unless behavior depends on them.
+- Use `check_company=True` on cross-company `Many2one` relationships where applicable.
+- All `Many2one` foreign keys must declare an explicit `ondelete` policy.
+- All business status fields are `Selection` and indexed.
+- Add indexes for high-frequency lookup columns: `company_id`, `status/state`, `request_id`, `template_id`, `role_id`, `signer_id`, `expires_at`, `event_at`.
+- Use `fields.Json` for structured payloads (`value_json`, `metadata_json`, `details_json`) and validate schema at service-layer boundaries.
+- Model-level integrity that cannot be represented with SQL checks must be enforced with Python constraints and tested.
+- Persist all datetime evidence values in UTC; timezone display conversions are presentation-only.
+- Use SHA-256 hex digests for source/final artifact integrity fields and exported evidence package verification.
+- Mutating portal transitions (`submit`, `decline`) must be protected by locking and idempotency-key checks.
+- Requests must bind to an immutable template version before they can be sent.
+
+### Core Domain Models (`open_sign`)
+
+#### `open.sign.template`
+
+| Field | Odoo Type | Required | FK / On Delete | Constraints and Index | Interaction Notes |
+|---|---|---|---|---|---|
+| `name` | `Char` | Yes | - | non-empty; indexed | Display name in backend, portal notifications |
+| `state` | `Selection(draft,published,archived)` | Yes | - | default `draft`; indexed | Controls template availability in request creation |
+| `source_attachment_id` | `Many2one(ir.attachment)` | Yes | FK, `ondelete='restrict'` | attachment mimetype must be PDF | Source document consumed by web editor and PDF mapper |
+| `active` | `Boolean` | Yes | - | default `True`; indexed | Standard archive behavior |
+| `company_id` | `Many2one(res.company)` | Yes | FK, `ondelete='restrict'` | indexed; company isolation enforced | ACL and record rules boundary |
+| `owner_id` | `Many2one(res.users)` | Yes | FK, `ondelete='restrict'` | indexed | Operational ownership and filtering |
+| `role_ids` | `One2many(open.sign.role, template_id)` | No | relation-only | not stored on this table | Drives signer-role assignment |
+| `field_ids` | `One2many(open.sign.template.field, template_id)` | No | relation-only | not stored on this table | Drives signing payload structure |
+| `version_ids` | `One2many(open.sign.template.version, template_id)` | No | relation-only | not stored on this table | Immutable snapshots available for request versioning |
+| `request_ids` | `One2many(open.sign.request, template_id)` | No | relation-only | not stored on this table | Back-reference for usage and impact analysis |
+
+Model constraints:
+- Template cannot be published without at least one role and one field.
+- Archival of a template referenced by active requests is blocked by business rule.
+
+#### `open.sign.template.version`
+
+| Field | Odoo Type | Required | FK / On Delete | Constraints and Index | Interaction Notes |
+|---|---|---|---|---|---|
+| `template_id` | `Many2one(open.sign.template)` | Yes | FK, `ondelete='cascade'` | indexed | Parent template for lineage |
+| `version_number` | `Integer` | Yes | - | `> 0`; indexed | Monotonic template version identifier |
+| `source_attachment_id` | `Many2one(ir.attachment)` | Yes | FK, `ondelete='restrict'` | indexed | Frozen source document for this version |
+| `source_pdf_sha256` | `Char` | Yes | - | fixed 64-char hex; indexed | Immutable digest for legal evidence |
+| `field_snapshot_json` | `Json` | Yes | - | schema checked by service | Frozen field geometry/type/rule snapshot |
+| `role_snapshot_json` | `Json` | Yes | - | schema checked by service | Frozen signer role snapshot |
+| `published_at` | `Datetime` | Yes | - | indexed | Snapshot creation timestamp |
+| `published_by` | `Many2one(res.users)` | Yes | FK, `ondelete='restrict'` | indexed | Actor who created version |
+| `state` | `Selection(active,superseded)` | Yes | - | default `active`; indexed | Snapshot lifecycle metadata |
+
+Model constraints:
+- Unique template version number (`UNIQUE(template_id, version_number)`).
+- Snapshot rows are immutable after creation (manager-only corrective migration scripts excepted).
+- Snapshot digest and source attachment must remain consistent for the full lifecycle.
+
+#### `open.sign.role`
+
+| Field | Odoo Type | Required | FK / On Delete | Constraints and Index | Interaction Notes |
+|---|---|---|---|---|---|
+| `template_id` | `Many2one(open.sign.template)` | Yes | FK, `ondelete='cascade'` | indexed | Parent template |
+| `name` | `Char` | Yes | - | non-empty | Displayed as signer role label |
+| `sequence` | `Integer` | Yes | - | default `10`; indexed | Used for ordered signing and UI ordering |
+| `required` | `Boolean` | Yes | - | default `True` | Optional signer slots supported when false |
+| `color` | `Integer` | No | - | default `0` | Editor/preview color coding |
+
+Model constraints:
+- Unique role name per template (`UNIQUE(template_id, name)`).
+- Sequence must be non-negative.
+
+#### `open.sign.template.field`
+
+| Field | Odoo Type | Required | FK / On Delete | Constraints and Index | Interaction Notes |
+|---|---|---|---|---|---|
+| `template_id` | `Many2one(open.sign.template)` | Yes | FK, `ondelete='cascade'` | indexed | Parent template |
+| `role_id` | `Many2one(open.sign.role)` | Yes | FK, `ondelete='restrict'` | indexed | Field ownership by signer role |
+| `type` | `Selection(FieldType)` | Yes | - | indexed | Validation and widget rendering branch |
+| `label` | `Char` | Yes | - | non-empty | Display label in editor/portal |
+| `required` | `Boolean` | Yes | - | default `False` | Enforced in client and server validation |
+| `page` | `Integer` | Yes | - | `>= 1`; indexed | PDF page binding |
+| `x` | `Float` | Yes | - | `0 <= x <= 1` | Normalized coordinate for renderer/editor |
+| `y` | `Float` | Yes | - | `0 <= y <= 1` | Normalized coordinate for renderer/editor |
+| `width` | `Float` | Yes | - | `0 < width <= 1` | Overlay size and flattened output size |
+| `height` | `Float` | Yes | - | `0 < height <= 1` | Overlay size and flattened output size |
+| `sequence` | `Integer` | Yes | - | default `10`; indexed | Deterministic presentation order |
+| `default_value` | `Text` | No | - | - | Initial field content |
+| `validation_regex` | `Char` | No | - | valid regex if set | Optional advanced validation |
+| `min_length` | `Integer` | No | - | `>= 0` when set | Text-length lower bound |
+| `max_length` | `Integer` | No | - | `>= min_length` when both set | Text-length upper bound |
+| `option_ids` | `One2many(open.sign.template.field.option, field_id)` | No | relation-only | not stored on this table | Required for `radio` and `selection` types |
+
+Model constraints:
+- `role_id.template_id` must match `template_id`.
+- `radio` and `selection` field types require options.
+- Non-option field types must not have option rows.
+
+#### `open.sign.template.field.option`
+
+| Field | Odoo Type | Required | FK / On Delete | Constraints and Index | Interaction Notes |
+|---|---|---|---|---|---|
+| `field_id` | `Many2one(open.sign.template.field)` | Yes | FK, `ondelete='cascade'` | indexed | Parent field |
+| `value` | `Char` | Yes | - | non-empty | Stored canonical value in submissions |
+| `label` | `Char` | Yes | - | non-empty | UI label for option |
+| `sequence` | `Integer` | Yes | - | default `10`; indexed | Deterministic display ordering |
+| `is_default` | `Boolean` | Yes | - | default `False` | Preselected option in editor/signer UI |
+
+Model constraints:
+- Unique option value per field (`UNIQUE(field_id, value)`).
+- At most one default option per field (Python constraint).
+
+#### `open.sign.request`
+
+| Field | Odoo Type | Required | FK / On Delete | Constraints and Index | Interaction Notes |
+|---|---|---|---|---|---|
+| `name` | `Char` | Yes | - | default from sequence; indexed | Primary human identifier |
+| `template_id` | `Many2one(open.sign.template)` | Yes | FK, `ondelete='restrict'` | indexed | Source template for signer/value expansion |
+| `template_version_id` | `Many2one(open.sign.template.version)` | No | FK, `ondelete='restrict'` | indexed | Immutable template snapshot bound before send |
+| `status` | `Selection(RequestStatus)` | Yes | - | default `draft`; indexed | Workflow engine and UI state |
+| `sent_at` | `Datetime` | No | - | indexed | Transition evidence (`versioned` to `sent`) |
+| `completed_at` | `Datetime` | No | - | indexed | Completion and retention baseline |
+| `expires_at` | `Datetime` | No | - | indexed | Expiration checks by cron and portal |
+| `final_attachment_id` | `Many2one(ir.attachment)` | No | FK, `ondelete='restrict'` | indexed | Final flattened signed artifact |
+| `source_pdf_sha256` | `Char` | No | - | fixed 64-char hex; indexed | Immutable digest of bound template version source PDF |
+| `final_pdf_sha256` | `Char` | No | - | fixed 64-char hex; indexed | Immutable digest of final signed PDF |
+| `owner_id` | `Many2one(res.users)` | Yes | FK, `ondelete='restrict'` | indexed | Operational ownership |
+| `company_id` | `Many2one(res.company)` | Yes | FK, `ondelete='restrict'` | indexed | Multi-company boundary |
+| `ordered_signing` | `Boolean` | Yes | - | default `True` | Controls sequential vs parallel signer gating |
+| `evidence_schema_version` | `Char` | Yes | - | default `v1`; indexed | Export/evidence compatibility marker |
+| `lock_version` | `Integer` | Yes | - | default `0`; indexed | Optimistic concurrency guard for portal writes |
+| `signed_count` | `Integer` (computed, stored) | No | - | indexed | Fast dashboard and state decisions |
+| `pending_count` | `Integer` (computed, stored) | No | - | indexed | Fast dashboard and reminders |
+| `declined_count` | `Integer` (computed, stored) | No | - | indexed | Decline workflow visibility |
+| `last_event_at` | `Datetime` (computed, stored) | No | - | indexed | Activity sorting and monitoring |
+
+Model constraints:
+- Status transitions must follow the approved transition matrix.
+- Any status at or beyond `versioned` requires `template_version_id` and `source_pdf_sha256`.
+- `template_version_id.template_id` must equal `template_id`.
+- `source_pdf_sha256` must equal `template_version_id.source_pdf_sha256` when `template_version_id` is set.
+- `completed` status requires `completed_at` and `final_attachment_id`.
+- `completed` status requires `final_pdf_sha256`.
+- `expires_at` must be greater than or equal to `sent_at` when both exist.
+
+#### `open.sign.request.signer`
+
+| Field | Odoo Type | Required | FK / On Delete | Constraints and Index | Interaction Notes |
+|---|---|---|---|---|---|
+| `request_id` | `Many2one(open.sign.request)` | Yes | FK, `ondelete='cascade'` | indexed | Parent request |
+| `partner_id` | `Many2one(res.partner)` | No | FK, `ondelete='set null'` | indexed | Optional linked contact |
+| `email` | `Char` | Yes | - | normalized email format; indexed | Invitation target and identity anchor |
+| `role_id` | `Many2one(open.sign.role)` | Yes | FK, `ondelete='restrict'` | indexed | Template role resolution |
+| `sequence` | `Integer` | Yes | - | default `10`; indexed | Ordered signing gating |
+| `state` | `Selection(SignerState)` | Yes | - | default `pending`; indexed | Signer lifecycle tracking |
+| `signed_at` | `Datetime` | No | - | indexed | Signature timestamp evidence |
+| `declined_reason` | `Text` | No | - | - | Decline explanation |
+| `last_opened_at` | `Datetime` | No | - | indexed | Portal engagement evidence |
+| `ip_last` | `Char` | No | - | sized for IPv4/IPv6 | Last-seen signer IP snapshot |
+| `consent_accepted_at` | `Datetime` | No | - | indexed | Legal consent timestamp |
+| `consent_text_hash` | `Char` | No | - | hash format and length check | Binds action to presented legal text |
+| `signer_timezone` | `Char` | No | - | valid TZ identifier when set | Evidence rendering and UX |
+| `access_token` | `Char` (from `portal.mixin`) | No | - | indexed | Tokenized portal signer access |
+
+Model constraints:
+- Unique signer role per request (`UNIQUE(request_id, role_id)`).
+- `state='signed'` requires `signed_at`.
+- `role_id.template_id` must equal `request_id.template_id`.
+
+#### `open.sign.request.value`
+
+| Field | Odoo Type | Required | FK / On Delete | Constraints and Index | Interaction Notes |
+|---|---|---|---|---|---|
+| `request_id` | `Many2one(open.sign.request)` | Yes | FK, `ondelete='cascade'` | indexed | Parent request |
+| `template_field_id` | `Many2one(open.sign.template.field)` | Yes | FK, `ondelete='restrict'` | indexed | Field definition source |
+| `signer_id` | `Many2one(open.sign.request.signer)` | Yes | FK, `ondelete='cascade'` | indexed | Signer submitting value |
+| `value_text` | `Text` | No | - | - | Scalar/string representation |
+| `value_json` | `Json` | No | - | schema checked by validator | Structured payload for complex types |
+| `signed_payload_attachment_id` | `Many2one(ir.attachment)` | No | FK, `ondelete='set null'` | indexed | Upload payloads (signature image/stamp) |
+| `is_valid` | `Boolean` | Yes | - | default `False`; indexed | Validation gate for submit/finalize |
+
+Model constraints:
+- Unique value slot per `(request_id, template_field_id, signer_id)`.
+- `template_field_id.template_id` must match `request_id.template_id`.
+- `signer_id.request_id` must match `request_id`.
+- `signer_id.role_id` must match `template_field_id.role_id`.
+
+#### `open.sign.audit.log`
+
+| Field | Odoo Type | Required | FK / On Delete | Constraints and Index | Interaction Notes |
+|---|---|---|---|---|---|
+| `request_id` | `Many2one(open.sign.request)` | Yes | FK, `ondelete='cascade'` | indexed | Parent request |
+| `signer_id` | `Many2one(open.sign.request.signer)` | No | FK, `ondelete='set null'` | indexed | Actor context when signer-driven |
+| `event_type` | `Selection(AuditEventType)` | Yes | - | indexed | Canonical audit event code |
+| `event_sequence` | `Integer` | Yes | - | indexed | Monotonic request-local event ordering |
+| `event_at` | `Datetime` | Yes | - | default now; indexed | Event timestamp |
+| `ip` | `Char` | No | - | sized for IPv4/IPv6 | Network evidence |
+| `user_agent` | `Char` | No | - | - | Device/browser evidence |
+| `metadata_json` | `Json` | No | - | schema checked by audit service | Event metadata payload |
+| `hash_chain` | `Char` | Yes | - | indexed; unique per request | Tamper-evidence hash |
+| `previous_hash` | `Char` | No | - | - | Hash-chain link |
+| `consent_text_hash` | `Char` | No | - | hash format/length check | Legal text evidence linkage |
+
+Model constraints:
+- `UNIQUE(request_id, hash_chain)`.
+- `UNIQUE(request_id, event_sequence)`.
+- Append-only behavior once request is `completed` or `voided` (no update/delete except privileged repair tooling).
+- `previous_hash` continuity enforced by audit service logic.
+
+### Portal Hardening Models (`open_sign_portal`)
+
+#### `open.sign.signing.session` (optional hardening)
+
+| Field | Odoo Type | Required | FK / On Delete | Constraints and Index | Interaction Notes |
+|---|---|---|---|---|---|
+| `request_signer_id` | `Many2one(open.sign.request.signer)` | Yes | FK, `ondelete='cascade'` | indexed | Session owner signer |
+| `opened_at` | `Datetime` | Yes | - | default now; indexed | Session start evidence |
+| `last_seen_at` | `Datetime` | Yes | - | indexed | Idle/replay policy enforcement |
+| `ip` | `Char` | No | - | sized for IPv4/IPv6 | Session context |
+| `user_agent` | `Char` | No | - | - | Session context |
+| `state` | `Selection(open,submitted,expired,revoked)` | Yes | - | default `open`; indexed | Session validity |
+| `otp_verified` | `Boolean` | Yes | - | default `False`; indexed | Optional OTP gate state |
+
+Model constraints:
+- Maximum one active `open` session per signer (Python constraint).
+- Submitted/expired/revoked sessions become read-only.
+
+#### `open.sign.otp.challenge` (optional)
+
+| Field | Odoo Type | Required | FK / On Delete | Constraints and Index | Interaction Notes |
+|---|---|---|---|---|---|
+| `request_signer_id` | `Many2one(open.sign.request.signer)` | Yes | FK, `ondelete='cascade'` | indexed | Challenge owner signer |
+| `code_hash` | `Char` | Yes | - | fixed hash format and length | Never store raw OTP |
+| `expires_at` | `Datetime` | Yes | - | indexed | Challenge expiration gate |
+| `attempt_count` | `Integer` | Yes | - | default `0`; `>= 0` | Brute-force protection counter |
+| `verified_at` | `Datetime` | No | - | indexed | Verification evidence |
+
+Model constraints:
+- One non-expired, non-verified challenge per signer (Python constraint).
+- `attempt_count` hard limit enforced in service/controller layer.
+
+#### `open.sign.portal.idempotency`
+
+| Field | Odoo Type | Required | FK / On Delete | Constraints and Index | Interaction Notes |
+|---|---|---|---|---|---|
+| `request_signer_id` | `Many2one(open.sign.request.signer)` | Yes | FK, `ondelete='cascade'` | indexed | Idempotency scope owner |
+| `endpoint` | `Selection(save,submit,decline)` | Yes | - | indexed | Endpoint-specific key scope |
+| `idempotency_key` | `Char` | Yes | - | non-empty; indexed | Client-provided retry key (UUID expected) |
+| `request_hash` | `Char` | Yes | - | fixed hash format | Payload fingerprint for conflict detection |
+| `response_json` | `Json` | No | - | - | Stored deterministic response payload |
+| `state` | `Selection(in_progress,completed,failed)` | Yes | - | default `in_progress`; indexed | Lifecycle of key processing |
+| `created_at` | `Datetime` | Yes | - | default now; indexed | Creation timestamp |
+| `expires_at` | `Datetime` | Yes | - | indexed | Cleanup and replay window control |
+
+Model constraints:
+- Unique key per signer endpoint (`UNIQUE(request_signer_id, endpoint, idempotency_key)`).
+- Same key with different `request_hash` must return `idempotency_conflict`.
+
+### Certificate Models (`open_sign_certificate`, optional)
+
+#### `open.sign.certificate.profile`
+
+| Field | Odoo Type | Required | FK / On Delete | Constraints and Index | Interaction Notes |
+|---|---|---|---|---|---|
+| `name` | `Char` | Yes | - | non-empty; indexed | Admin-facing profile identifier |
+| `provider` | `Selection` | Yes | - | indexed | Controls signing backend implementation |
+| `key_ref` | `Char` | Yes | - | non-empty | Key material reference (not raw key) |
+| `cert_ref` | `Char` | Yes | - | non-empty | Certificate reference |
+| `active` | `Boolean` | Yes | - | default `True`; indexed | Operational toggle |
+| `company_id` | `Many2one(res.company)` | Yes | FK, `ondelete='restrict'` | indexed | Company isolation |
+| `signing_algorithm` | `Selection` | Yes | - | indexed | Algorithm policy enforcement |
+
+Model constraints:
+- Unique profile name per company.
+- Secret values are references only; private keys must never be stored inline in this model.
+
+#### `open.sign.certificate.log`
+
+| Field | Odoo Type | Required | FK / On Delete | Constraints and Index | Interaction Notes |
+|---|---|---|---|---|---|
+| `request_id` | `Many2one(open.sign.request)` | Yes | FK, `ondelete='cascade'` | indexed | Signed request context |
+| `profile_id` | `Many2one(open.sign.certificate.profile)` | Yes | FK, `ondelete='restrict'` | indexed | Certificate profile used |
+| `signed_attachment_id` | `Many2one(ir.attachment)` | Yes | FK, `ondelete='restrict'` | indexed | Cryptographically signed PDF |
+| `signed_at` | `Datetime` | Yes | - | indexed | Signing timestamp evidence |
+| `verification_status` | `Selection(VerificationStatus)` | Yes | - | indexed | Verification outcome |
+| `details_json` | `Json` | No | - | schema checked by service | Verification details and diagnostics |
+
+Model constraints:
+- Unique pair `(request_id, signed_attachment_id)`.
+- Verification events append to logs, not overwrite prior evidence.
+
+### XML-Loaded Persistent Records (Non-Business Schema)
+
+The addon set also persists configuration and metadata records via XML/CSV files. These are not business transaction models but are part of system behavior and must be tracked:
+
+| Record Type | Source Files | Critical Fields | Purpose |
+|---|---|---|---|
+| `res.groups` | `security/open_sign_groups.xml` | `name`, `implied_ids`, `category_id` | Security role definitions |
+| `ir.model.access` | `security/ir.model.access.csv` (each addon) | `model_id`, `group_id`, CRUD flags | Model access control |
+| `ir.rule` | `security/open_sign_security.xml`, `security/open_sign_portal_security.xml` | `domain_force`, `groups` | Multi-company and ownership boundaries |
+| `mail.template` | `data/mail_templates.xml` | `model_id`, `subject`, `body_html` | Invitation/reminder/completion notices |
+| `ir.cron` | `data/ir_cron.xml` | `model_id`, `code`, `interval_*` | Reminder and expiration jobs |
+| `ir.sequence` | `data/sequence.xml` | `code`, `prefix`, `padding` | Request numbering |
+| `ir.ui.view` | `views/*.xml`, `report/*.xml` | `model`, `arch`, `inherit_id` | Backend, portal, and report rendering |
+
+## Development Task Breakdown and Tracking
+
+Legend:
+
+- `[ ]` Not started
+- `[~]` In progress
+- `[x]` Completed
+
+### Phase 0: Planning and Architecture
+
+- [x] `T00` Create and baseline `FEATURE.md` control document.
+- [x] `T01` Confirm Odoo target version and compatibility constraints.
+- [x] `T02` Finalize addon names, dependencies, and install order.
+- [x] `T03` Define legal/compliance acceptance criteria (audit, retention, consent).
+- [x] `T04` Approve wireframes for template editor and signer portal.
+- [x] `T05` Decide PDF processing stack and licensing constraints.
+- [x] `T06` Finalize status transition matrix, ACL matrix, and cross-model invariants from the schema contract.
+- [x] `T07` Define evidence retention, archival, and purge policy.
+- [x] `T08` Define observability baseline (events, metrics, alerts).
+- [x] `T09` Finalize Odoo compliance checklist (lint, module structure, route/model conventions, XML `noupdate`/external-ID policy).
+- [x] `T90` Complete Odoo design data collection notes using the reference map.
+- [x] `T91` Create task cards (template-based) for all remaining open tasks.
+- [x] `T92` Add PR template/checklist section for this feature in team workflow docs.
+- [x] `T93` Create developer command cookbook for local setup, test, and lint flows.
+- [x] `T94` Finalize security group/ACL matrix and model-level access policy.
+- [x] `T95` Finalize portal endpoint contract and error-code policy.
+- [x] `T96` Finalize legal disclosure text strategy and consent evidence format.
+- [x] `T97` Finalize signed attachment access policy (token scope, expiry, visibility).
+- [x] `T98` Finalize field-type validation and normalization matrix with test vectors.
+- [x] `T99` Finalize audit event taxonomy and evidence package schema v1.
+
+### Phase 1: Core Addon (`open_sign`)
+
+- [x] `T10` Scaffold addon with manifest/init/security skeleton.
+- [ ] `T11` Implement `open.sign.template` model + views.
+- [ ] `T12` Implement `open.sign.role` model + assignment flows.
+- [ ] `T13` Implement `open.sign.template.field` + `open.sign.template.field.option`.
+- [ ] `T14` Implement `open.sign.request` model + status engine.
+- [ ] `T15` Implement `open.sign.request.signer` with sequence logic.
+- [ ] `T16` Implement `open.sign.request.value` storage and normalization.
+- [ ] `T17` Implement `open.sign.audit.log` immutable records.
+- [ ] `T18` Implement validation service for required/optional and field-type checks.
+- [ ] `T19` Create base backend menus and form/tree/kanban views.
+- [ ] `T110` Add SQL constraints, FK `ondelete` policies, and indexes per schema contract.
+- [ ] `T111` Implement cron jobs for reminders and expiration.
+- [ ] `T112` Add core migration hooks and upgrade scripts aligned to schema contract evolution.
+- [ ] `T113` Implement security groups + ACL/record-rule matrix from design baseline.
+
+### Phase 2: Web Editor Addon (`open_sign_web`)
+
+- [ ] `T20` Scaffold addon and declare backend/frontend assets in `__manifest__.py`.
+- [ ] `T21` Build template canvas with drag/drop/resizing on PDF pages.
+- [ ] `T22` Build field palette and field property editor.
+- [ ] `T23` Implement signer role assignment in editor.
+- [ ] `T24` Implement client-side value validation aligned with server rules.
+- [ ] `T25` Implement signature adoption dialog (draw/type/upload).
+- [ ] `T26` Add JS tests for geometry and validation payloads.
+
+### Phase 3: Portal Addon (`open_sign_portal`)
+
+- [ ] `T30` Scaffold addon with controller/routes and portal templates.
+- [ ] `T31` Extend signer model with `portal.mixin` and standard access-token URL flow.
+- [ ] `T32` Implement signing session open/save/submit flows.
+- [ ] `T33` Enforce signer order (sequential and parallel policies).
+- [ ] `T34` Implement decline flow and reason capture.
+- [ ] `T35` Add reminder/invitation/completion notifications.
+- [ ] `T36` Add portal security tests for replay and token abuse.
+- [ ] `T37` Implement optional OTP verification flow.
+- [ ] `T38` Implement endpoint response envelope/error codes and contract tests.
+- [ ] `T39` Add portal addon ACL/rules (`security/ir.model.access.csv`, portal model record rules) for session/OTP models.
+- [ ] `T114` Implement idempotency-key handling and concurrency-safe locking for submit/decline.
+- [ ] `T115` Add duplicate-submit and race-condition test coverage for portal signer flows.
+
+### Phase 4: PDF Finalization and Audit Evidence
+
+- [ ] `T40` Implement value-to-PDF rendering/flattening.
+- [ ] `T41` Generate final signed attachment and lock request edits.
+- [ ] `T42` Build completion certificate/evidence summary page.
+- [ ] `T43` Extend audit logging with hash-chain integrity checks.
+- [ ] `T44` Add end-to-end tests from send -> sign -> complete.
+- [ ] `T45` Add audit package export (values, timeline, metadata).
+- [ ] `T46` Persist consent/legal snapshot and include it in audit package output.
+- [ ] `T47` Apply tokenized access policy for generated signed artifacts and payload attachments.
+- [ ] `T116` Implement UTC timestamp trust policy checks and include clock metadata in evidence export.
+- [ ] `T117` Persist source/final PDF SHA-256 digests and verify during evidence export.
+
+### Phase 5: Certificate Module (`open_sign_certificate`) Optional
+
+- [ ] `T50` Scaffold optional addon and profile models.
+- [ ] `T51` Implement PDF certificate signing service.
+- [ ] `T52` Implement signature verification and persisted results.
+- [ ] `T53` Add admin configuration views and access control.
+- [ ] `T54` Add optional integration tests.
+
+### Phase 6: Hardening, QA, and Release
+
+- [ ] `T60` Performance test with large PDFs and multi-signer load.
+- [ ] `T61` Security review (token handling, PII, permission boundaries).
+- [ ] `T62` Accessibility and mobile signing UX validation.
+- [ ] `T63` Regression suite and CI integration.
+- [ ] `T64` Prepare deployment/migration and operator runbook.
+- [ ] `T65` UAT signoff and release checklist completion.
+- [ ] `T66` Add observability dashboards and failure alerts.
+- [ ] `T67` Execute backup/restore and failure-recovery validation.
+- [ ] `T68` Run data retention and purge dry-run verification.
+- [ ] `T69` Run lint/conformance checks (`test_lint` subset, manifest and module structure checks).
+
+## Requirement Traceability Matrix
+
+| Requirement | Tasks | Addon | Validation |
+|---|---|---|---|
+| `R-001` | `T11`, `T21`, `T40` | `open_sign`, `open_sign_web` | Unit + E2E tests |
+| `R-002` | `T13`, `T24`, `T44` | `open_sign`, `open_sign_web` | Field-type test suite |
+| `R-003` | `T18`, `T24`, `T44` | `open_sign`, `open_sign_web` | Server/client validation tests |
+| `R-004` | `T12`, `T15`, `T33`, `T44` | `open_sign`, `open_sign_portal` | Workflow tests |
+| `R-005` | `T25`, `T32`, `T44` | `open_sign_web`, `open_sign_portal` | UI + submit tests |
+| `R-006` | `T06`, `T14`, `T43`, `T44` | `open_sign` | State transition tests |
+| `R-007` | `T17`, `T43`, `T61` | `open_sign` | Audit integrity + security review |
+| `R-008` | `T40`, `T41`, `T44`, `T117` | `open_sign` | PDF output validation |
+| `R-009` | `T31`, `T32`, `T36` | `open_sign_portal` | Portal security tests |
+| `R-010` | `T50`, `T51`, `T52` | `open_sign_certificate` | Signature verification tests |
+| `R-011` | `T06`, `T94`, `T113`, `T61` | `open_sign`, `open_sign_portal` | ACL and multi-company rule tests |
+| `R-012` | `T06`, `T14`, `T44` | `open_sign` | Invalid transition tests |
+| `R-013` | `T07`, `T45`, `T68` | `open_sign` | Retention and export checks |
+| `R-014` | `T112`, `T64`, `T63` | All | Upgrade test plan |
+| `R-015` | `T08`, `T66` | All | Event/metric checks |
+| `R-016` | `T37`, `T36`, `T61` | `open_sign_portal` | OTP and abuse tests |
+| `R-017` | `T09`, `T20`, `T69` | All | Lint and structure compliance checks |
+| `R-018` | `T91`, `T92`, `T93`, `T65` | All | Review process audit |
+| `R-019` | `T90`, `T05`, `T06` | All | Referenced design evidence in PRs |
+| `R-020` | `T39`, `T94`, `T113`, `T61` | `open_sign`, `open_sign_portal` | ACL/rule matrix and access-boundary tests |
+| `R-021` | `T95`, `T38`, `T36`, `T114`, `T115` | `open_sign_portal` | Endpoint contract and abuse/replay tests |
+| `R-022` | `T03`, `T96`, `T46` | `open_sign`, `open_sign_portal` | Consent evidence persistence and export checks |
+| `R-023` | `T97`, `T47`, `T36` | `open_sign`, `open_sign_portal` | Tokenized artifact access and security tests |
+| `R-024` | `T95`, `T114`, `T115`, `T38`, `T36` | `open_sign_portal` | Idempotency and race-condition tests |
+| `R-025` | `T08`, `T116`, `T61` | `open_sign`, `open_sign_portal` | UTC timestamp and drift-control validation |
+| `R-026` | `T98`, `T18`, `T24`, `T44` | `open_sign`, `open_sign_web` | Validation matrix conformance tests |
+| `R-027` | `T99`, `T42`, `T45`, `T63` | `open_sign` | Evidence schema and event taxonomy checks |
+| `R-028` | `T40`, `T41`, `T117`, `T45` | `open_sign` | Artifact digest integrity verification |
+
+## Milestones and Exit Criteria
+
+| Milestone | Target | Exit Criteria |
+|---|---|---|
+| `M0` Design Freeze | `2026-02-26 (Complete)` | `T01`-`T09`, `T90`-`T99` complete, ADRs updated |
+| `M1` Core Backend | `In Progress (started 2026-02-26)` | `T10`-`T19`, `T110`-`T113` complete + tests green |
+| `M2` Editor UX | TBD | `T20`-`T26` complete + demo approved |
+| `M3` Portal Signing | TBD | `T30`-`T39`, `T114`-`T115` complete + security baseline pass |
+| `M4` PDF + Audit | TBD | `T40`-`T47`, `T116`-`T117` complete + E2E pass |
+| `M5` Certificate (Optional) | TBD | `T50`-`T54` complete + verification pass |
+| `M6` Release | TBD | `T60`-`T69` complete + UAT signoff |
+
+## Risks and Mitigations
+
+| Risk ID | Risk | Severity | Mitigation | Owner | Status |
+|---|---|---|---|---|---|
+| `RK-001` | PDF rendering inconsistencies across viewers | High | Validate with multiple PDF libraries/viewers, add golden tests | Backend | Open |
+| `RK-002` | Token leakage or replay attacks | High | Use `portal.mixin` tokens with strict expiry/revocation policy, optional OTP, replay tests | Security | Open |
+| `RK-003` | Field coordinate drift on responsive layouts | Medium | Normalize coordinates and fixed PDF viewport mapping | Frontend | Open |
+| `RK-004` | Legal expectations exceed MVP evidence model | High | Early legal review and explicit compliance baseline | Product | Open |
+| `RK-005` | Certificate support complexity impacts timeline | Medium | Keep addon optional and behind milestone gate | Engineering | Open |
+| `RK-006` | PDF/certificate dependency licensing incompatibility | Medium | License review at `T05`; pin approved libraries only | Engineering | Open |
+| `RK-007` | Missing migration scripts causes upgrade regressions | High | Implement `T112` and upgrade tests in CI | Backend | Open |
+| `RK-008` | Retention/purge process removes evidence prematurely | High | Controlled policy, dry-run mode, audit on purge events | Ops/Product | Open |
+| `RK-009` | Addon diverges from Odoo lint/convention expectations | Medium | Track `T09` + `T69`, enforce review checklist in PRs | Engineering | Open |
+| `RK-010` | Junior implementation diverges from intended architecture | High | Enforce task card + PR checklist + code reference evidence (`T90`-`T92`) | Engineering | Open |
+| `RK-011` | Portal endpoint contract drifts between frontend and backend | Medium | Lock v1 contract in `T95`, enforce contract tests in `T38` | Web/Backend | Open |
+| `RK-012` | Consent evidence is incomplete or unverifiable during audit/export | High | Persist consent hash/timestamp in `T46` and validate in security review `T61` | Product/Security | Open |
+| `RK-013` | Signed artifacts become accessible outside token scope | High | Enforce tokenized attachment policy in `T97`/`T47` and test abuse paths in `T36` | Security/Backend | Open |
+| `RK-014` | Duplicate submits or concurrent requests create inconsistent signer/request states | High | Implement idempotency + locking (`T114`) and race tests (`T115`) | Backend/Security | Open |
+| `RK-015` | Server clock drift undermines timestamp credibility in legal evidence | High | Define UTC clock policy and drift checks (`T116`) plus operational monitoring | Platform/Ops | Open |
+| `RK-016` | Missing or mismatched artifact digests weakens integrity proof during disputes | High | Persist and verify SHA-256 digests (`T117`) in evidence export flow | Backend | Open |
+
+## Definition of Done (DoD)
+
+A task may be marked complete only if:
+
+- Code merged with tests.
+- Security and access rules verified where applicable.
+- Relevant requirement IDs referenced in PR.
+- For feature branches: `FEATURE.md` task status and change log updated (for non-feature branches, linked task/issue and gate evidence provided).
+- Documentation updated for any user-visible behavior change.
+- PR includes links to the Odoo reference files used for design decisions.
+- No known critical defects for the task scope.
+
+## Odoo Compliance Checklist (Per PR)
+
+Use this checklist in every implementation PR touching this feature:
+
+- [ ] Manifest keys/values conform to Odoo expectations (`test_manifests` equivalent checks).
+- [ ] `__init__.py` exists for module and test packages; all tests are imported in `tests/__init__.py`.
+- [ ] No direct `odoo.orm` imports.
+- [ ] Public method signatures avoid `ids`/`context` parameter names.
+- [ ] Method overrides preserve parent signature/decorators where required.
+- [ ] One2many inverse Many2one fields are indexed appropriately (`btree`/`btree_not_null` where needed).
+- [ ] Persisted model changes align with the `Database Storage Contract (Schema v1 Draft)` section.
+- [ ] Security reviewed: ACL + record rules + portal access token checks.
+- [ ] `jsonrpc` endpoints follow documented request/response/error envelope contract.
+- [ ] Mutating portal endpoints enforce idempotency keys and race-safe transition handling.
+- [ ] Evidence timestamps are UTC and artifact digest fields are generated/verified as specified.
+- [ ] Signed artifacts and attachment payloads enforce token scope and expiry checks.
+- [ ] JS translation usage follows `_t` conventions and avoids `_('...')`.
+- [ ] Assets declared in manifest and tests wired through `web.assets_tests` / `web.assets_unit_tests`.
+
+## Developer Command Cookbook (Starter)
+
+Use these command patterns during development (adapt database/module names as needed):
+
+```bash
+# Upgrade/install target modules
+./odoo-bin -d <db_name> -u open_sign,open_sign_web,open_sign_portal --stop-after-init
+
+# Run Python tests for target modules
+./odoo-bin -d <db_name> --test-enable --test-tags /open_sign,/open_sign_portal --stop-after-init
+
+# Run a focused test class
+./odoo-bin -d <db_name> --test-enable --test-tags open_sign.tests.test_sign_request_flow --stop-after-init
+
+# Run frontend tours/unit tests (module-specific tags/assets)
+./odoo-bin -d <db_name> --test-enable --test-tags /open_sign_web --stop-after-init
+```
+
+Notes:
+
+- Always run module upgrade before functional testing after schema changes.
+- Prefer focused test tags while iterating; run broader test scope before merge.
+
+## Progress Snapshot
+
+Counts below track only `T*` development tasks in the phase task board.
+
+- Completed tasks: `21`
+- In progress tasks: `0`
+- Remaining tasks: `57`
+
+## Update Log
+
+| Date | Author | Update |
+|---|---|---|
+| `2026-02-26` | Codex | Created initial feature plan, design controls, addon specs, and task tracking baseline. |
+| `2026-02-26` | Codex | Applied review updates: control requirements, missing entities, transition matrix, dependency corrections, expanded task board. |
+| `2026-02-26` | Codex | Added Odoo codebase alignment rules, switched portal token strategy to `portal.mixin`, and aligned module/test/assets structure with repository conventions. |
+| `2026-02-26` | Codex | Added junior-focused delivery scaffolding (DoR, task card template, PR checklist), reference study map, and developer command cookbook. |
+| `2026-02-26` | Codex | Renamed planned addon/model namespace from `custom_*` / `custom.*` to `open_*` / `open.*` across the feature plan. |
+| `2026-02-26` | Codex | Completed final comprehensive review updates: added `R-020`-`R-023` traceability rows, milestone gate alignment, additional risk controls, and corrected progress metrics. |
+| `2026-02-26` | Codex | Added concept coverage re-review and detailed schema storage contract with field types, FK/ondelete policies, constraints, and component interaction notes. |
+| `2026-02-26` | Codex | Compared official addon data patterns and added explicit model-vs-XML guidance, manifest load plan, and portal addon security artifacts/tasks. |
+| `2026-02-26` | Codex | Added senior hardening controls for idempotency/race safety, UTC timestamp trust policy, field validation taxonomy, evidence schema versioning, and immutable PDF digest tracking. |
+| `2026-02-26` | Codex | Generated M0 deliverables bundle (`T90`-`T99`) under `doc/open_sign/m0/`, created task cards for remaining open tasks, and updated Open Sign PR checklist section. |
+| `2026-02-26` | Codex | Applied Phase 0 decision updates (`T01/T02/T03/T06/T07`), added immutable template-version-before-send model/status flow, and added planning artifacts for wireframes, observability, merge gates, and PDF stack recommendation. |
+| `2026-02-26` | Codex | Applied final M0 approvals (`T04/T05/T08/T09`), updated merge-gate policy for feature-branch-only `FEATURE.md` updates, and set M0 design freeze milestone target date. |
+| `2026-02-26` | Codex | Closed M0 and opened M1 by scaffolding `T10` (`addons/open_sign` manifest/init/security skeleton), then updated milestone/progress tracking. |
