@@ -1172,7 +1172,7 @@ Legend:
 - [x] `T11` Implement `open.sign.template` model + views.
 - [x] `T12` Implement `open.sign.role` model + assignment flows.
 - [x] `T13` Implement `open.sign.template.field` + `open.sign.template.field.option`.
-- [ ] `T14` Implement `open.sign.request` model + status engine.
+- [x] `T14` Implement `open.sign.request` model + status engine.
 - [ ] `T15` Implement `open.sign.request.signer` with sequence logic.
 - [ ] `T16` Implement `open.sign.request.value` storage and normalization.
 - [ ] `T17` Implement `open.sign.audit.log` immutable records.

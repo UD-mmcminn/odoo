@@ -1,7 +1,7 @@
 # Open Sign Continuation Notes
 
 Last updated: 2026-02-28
-Scope checkpoint: T13 closed out on Odoo 19 + T14 readiness
+Scope checkpoint: T14 closed out on Odoo 19
 
 ## Why This Exists
 
@@ -66,10 +66,10 @@ Scope checkpoint: T13 closed out on Odoo 19 + T14 readiness
 
 - M0 is closed.
 - M1 is open and in progress.
-- `T10`, `T11`, `T12`, `T13` are marked complete in `FEATURE.md`.
+- `T10`, `T11`, `T12`, `T13`, `T14` are marked complete in `FEATURE.md`.
 - T12 final review is complete; no additional in-scope blockers were identified.
 - `T13` implementation and closeout are complete (models, ACL, views, tests, Odoo 19 compatibility fixes, deprecated-call cleanup).
-- `T14` is the next planned implementation task.
+- `T14` implementation and closeout are complete (request lifecycle model, version snapshot binding, transition guards, ACL + views, runtime tests green).
 
 ## What Was Implemented For T12
 
@@ -196,9 +196,71 @@ Scope checkpoint: T13 closed out on Odoo 19 + T14 readiness
   - `./odoo-bin -d test_open_sign -u open_sign --test-enable --test-tags /open_sign --stop-after-init`
   - result: `0 failed, 0 error(s) of 24 tests`
 
+## What Was Implemented For T14
+
+### Core models and lifecycle engine
+
+- Added `open.sign.request` model:
+  - `addons/open_sign/models/sign_request.py`
+- Added immutable template version model:
+  - `addons/open_sign/models/sign_template_version.py`
+- Wired model imports:
+  - `addons/open_sign/models/__init__.py`
+- Linked template relations:
+  - `addons/open_sign/models/sign_template.py` (`version_ids`, `request_ids`)
+
+### Lifecycle and invariant enforcement
+
+- Added request status lifecycle:
+  - `draft`, `versioned`, `sent`, `opened`, `in_progress`, `partially_signed`, `completed`, `declined`, `expired`, `cancelled`, `voided`
+- Added transition guard matrix in `open.sign.request._check_transition(...)`.
+- Added action methods:
+  - `action_version`, `action_send`, `action_cancel`, `action_complete`, `action_void`
+- Added model constraints for:
+  - template-version/template consistency
+  - source digest match against selected template version
+  - SHA-256 format checks for source/final digests
+  - completed-state requirements (`completed_at`, final attachment, final digest)
+  - expiration not before sent timestamp
+
+### Version snapshot support
+
+- Added template snapshot helpers:
+  - `open.sign.template._build_role_snapshot()`
+  - `open.sign.template._build_field_snapshot()`
+  - `open.sign.template.action_publish_version()`
+- Added immutable template-version creation:
+  - `open.sign.template.version.create_from_template(...)`
+  - source PDF SHA-256 computation from attachment payload
+
+### ACL, views, and menu
+
+- Added ACL rows for:
+  - `open.sign.request`
+  - `open.sign.template.version`
+  - file: `addons/open_sign/security/ir.model.access.csv`
+- Added request list/search/form views and action:
+  - `addons/open_sign/views/sign_request_views.xml`
+- Added Requests menu entry:
+  - `addons/open_sign/views/sign_menus.xml`
+- Added view data file to manifest:
+  - `addons/open_sign/__manifest__.py`
+
+### Tests and runtime verification
+
+- Added request lifecycle/constraint/ACL tests:
+  - `addons/open_sign/tests/test_sign_request.py`
+- Imported in:
+  - `addons/open_sign/tests/__init__.py`
+- Runtime verification completed:
+  - `./odoo-bin -d test_open_sign -u open_sign --test-enable --test-tags /open_sign --stop-after-init`
+  - result: `0 failed, 0 error(s) of 31 tests`
+
 ## Important Open Risk / Follow-Up
 
 - No current runtime blocker for `open_sign` test execution in this environment.
+- `T14` intentionally does not enforce signer-presence on send yet because `open.sign.request.signer` lands in `T15`.
+  - `R-029` send-gating invariant is completed in `T15` when signer rows exist.
 - Remaining security-scope follow-up from earlier phases remains:
   - `T113` record rules / multi-company scoping completion in `open_sign_security.xml`
 
@@ -208,12 +270,16 @@ Scope checkpoint: T13 closed out on Odoo 19 + T14 readiness
 - `addons/open_sign/models/sign_template.py`
 - `addons/open_sign/models/sign_template_field.py`
 - `addons/open_sign/models/sign_template_field_option.py`
+- `addons/open_sign/models/sign_template_version.py`
+- `addons/open_sign/models/sign_request.py`
 - `addons/open_sign/views/sign_role_views.xml`
 - `addons/open_sign/views/sign_template_field_views.xml`
+- `addons/open_sign/views/sign_request_views.xml`
 - `addons/open_sign/views/sign_menus.xml`
 - `addons/open_sign/security/ir.model.access.csv`
 - `addons/open_sign/tests/test_sign_role.py`
 - `addons/open_sign/tests/test_sign_template_field.py`
+- `addons/open_sign/tests/test_sign_request.py`
 - `FEATURE.md`
 
 ## Suggested First Steps In New Dev Environment
@@ -221,22 +287,22 @@ Scope checkpoint: T13 closed out on Odoo 19 + T14 readiness
 1. Run targeted Open Sign tests:
    - `./odoo-bin -d <db> --init open_sign --test-enable --test-tags open_sign.tests.test_sign_role --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags open_sign.tests.test_sign_template_field --stop-after-init`
+   - `./odoo-bin -d <db> --test-enable --test-tags open_sign.tests.test_sign_request --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign --stop-after-init`
-2. If tests pass, proceed to `T14` (`open.sign.request` model + status engine).
+2. If tests pass, proceed to `T15` (`open.sign.request.signer` sequencing + send gating).
 3. Keep `T113` (record rules) as mandatory before any production readiness claim.
 
 ## Next Tasks (Planned Order)
 
-1. `T14` Implement `open.sign.request` status engine and transition guard tests.
-2. `T15` Implement signer sequencing (`open.sign.request.signer`) with participant-required send invariants.
-3. `T16` Implement `open.sign.request.value` storage and normalization.
+1. `T15` Implement signer sequencing (`open.sign.request.signer`) with participant-required send invariants.
+2. `T16` Implement `open.sign.request.value` storage and normalization.
+3. `T17` Implement `open.sign.audit.log` immutable records.
 4. `T113` Complete record rules and multi-company/ownership scoping before any production-readiness claim.
 
 ## Notes For Next Chat
 
-- If the next session starts directly at T14, ensure request-state design honors:
+- If the next session starts at `T15`, ensure signer model implementation completes:
   - participant-required send flow (`R-029`)
-  - signature-optional workflow
-  - immutable template-version-before-send invariant
-  - transition matrix and invalid-transition rejection contract (`R-006`, `R-012`)
+  - ordered vs parallel sequencing behavior
+  - signer state transitions compatible with request status matrix (`R-006`, `R-012`)
 - If the next session starts with cleanup, run runtime tests first and fix any failures before adding new features.

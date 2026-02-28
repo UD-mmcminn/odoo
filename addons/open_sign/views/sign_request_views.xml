@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data>
+        <record id="view_open_sign_request_list" model="ir.ui.view">
+            <field name="name">open.sign.request.view.list</field>
+            <field name="model">open.sign.request</field>
+            <field name="arch" type="xml">
+                <list string="Sign Requests" sample="1">
+                    <field name="name"/>
+                    <field name="status" widget="badge"/>
+                    <field name="template_id"/>
+                    <field name="owner_id" optional="hide"/>
+                    <field name="company_id" groups="base.group_multi_company" optional="hide"/>
+                    <field name="sent_at" optional="hide"/>
+                    <field name="completed_at" optional="hide"/>
+                </list>
+            </field>
+        </record>
+
+        <record id="view_open_sign_request_search" model="ir.ui.view">
+            <field name="name">open.sign.request.view.search</field>
+            <field name="model">open.sign.request</field>
+            <field name="arch" type="xml">
+                <search string="Sign Requests">
+                    <field name="name"/>
+                    <field name="template_id"/>
+                    <field name="owner_id"/>
+                    <field name="company_id" groups="base.group_multi_company"/>
+                    <filter name="filter_draft" string="Draft" domain="[('status', '=', 'draft')]"/>
+                    <filter name="filter_sent" string="Sent" domain="[('status', '=', 'sent')]"/>
+                    <filter name="filter_completed" string="Completed" domain="[('status', '=', 'completed')]"/>
+                    <filter name="filter_cancelled" string="Cancelled" domain="[('status', '=', 'cancelled')]"/>
+                    <group>
+                        <filter name="group_status" string="Status" context="{'group_by': 'status'}"/>
+                        <filter name="group_template" string="Template" context="{'group_by': 'template_id'}"/>
+                        <filter name="group_owner" string="Owner" context="{'group_by': 'owner_id'}"/>
+                    </group>
+                </search>
+            </field>
+        </record>
+
+        <record id="view_open_sign_request_form" model="ir.ui.view">
+            <field name="name">open.sign.request.view.form</field>
+            <field name="model">open.sign.request</field>
+            <field name="arch" type="xml">
+                <form string="Sign Request">
+                    <header>
+                        <button name="action_version" string="Version" type="object" class="btn-primary" invisible="status != 'draft'"/>
+                        <button name="action_send" string="Send" type="object" class="btn-primary" invisible="status != 'versioned'"/>
+                        <button name="action_complete" string="Complete" type="object" invisible="status not in ('in_progress', 'partially_signed')"/>
+                        <button name="action_cancel" string="Cancel" type="object" invisible="status in ('cancelled', 'voided', 'completed')"/>
+                        <button name="action_void" string="Void" type="object" invisible="status != 'completed'"/>
+                        <field name="status" widget="statusbar" statusbar_visible="draft,versioned,sent,opened,in_progress,partially_signed,declined,expired,completed,cancelled,voided"/>
+                    </header>
+                    <sheet>
+                        <div class="oe_title">
+                            <label for="name" class="oe_edit_only"/>
+                            <h1>
+                                <field name="name"/>
+                            </h1>
+                        </div>
+                        <group>
+                            <group>
+                                <field name="template_id" readonly="status != 'draft'"/>
+                                <field name="template_version_id" readonly="status != 'draft'"/>
+                                <field name="ordered_signing"/>
+                                <field name="owner_id"/>
+                                <field name="company_id" groups="base.group_multi_company"/>
+                            </group>
+                            <group>
+                                <field name="sent_at"/>
+                                <field name="completed_at"/>
+                                <field name="expires_at"/>
+                                <field name="evidence_schema_version"/>
+                                <field name="lock_version"/>
+                            </group>
+                        </group>
+                        <group>
+                            <group>
+                                <field name="source_pdf_sha256" readonly="status != 'draft'"/>
+                                <field name="final_pdf_sha256"/>
+                                <field name="final_attachment_id"/>
+                            </group>
+                            <group>
+                                <field name="signed_count" readonly="1"/>
+                                <field name="pending_count" readonly="1"/>
+                                <field name="declined_count" readonly="1"/>
+                                <field name="last_event_at" readonly="1"/>
+                            </group>
+                        </group>
+                    </sheet>
+                    <chatter/>
+                </form>
+            </field>
+        </record>
+
+        <record id="action_open_sign_request" model="ir.actions.act_window">
+            <field name="name">Sign Requests</field>
+            <field name="res_model">open.sign.request</field>
+            <field name="view_mode">list,form</field>
+            <field name="search_view_id" ref="open_sign.view_open_sign_request_search"/>
+        </record>
+    </data>
+</odoo>

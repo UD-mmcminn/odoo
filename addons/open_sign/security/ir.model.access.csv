@@ -2,9 +2,15 @@ id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
 access_open_sign_template_user,open.sign.template.user,model_open_sign_template,open_sign.group_open_sign_user,1,1,1,0
 access_open_sign_template_manager,open.sign.template.manager,model_open_sign_template,open_sign.group_open_sign_manager,1,1,1,1
 access_open_sign_template_auditor,open.sign.template.auditor,model_open_sign_template,open_sign.group_open_sign_auditor,1,0,0,0
+access_open_sign_template_version_user,open.sign.template.version.user,model_open_sign_template_version,open_sign.group_open_sign_user,1,0,0,0
+access_open_sign_template_version_manager,open.sign.template.version.manager,model_open_sign_template_version,open_sign.group_open_sign_manager,1,0,0,0
+access_open_sign_template_version_auditor,open.sign.template.version.auditor,model_open_sign_template_version,open_sign.group_open_sign_auditor,1,0,0,0
 access_open_sign_role_user,open.sign.role.user,model_open_sign_role,open_sign.group_open_sign_user,1,1,1,0
 access_open_sign_role_manager,open.sign.role.manager,model_open_sign_role,open_sign.group_open_sign_manager,1,1,1,1
 access_open_sign_role_auditor,open.sign.role.auditor,model_open_sign_role,open_sign.group_open_sign_auditor,1,0,0,0
+access_open_sign_request_user,open.sign.request.user,model_open_sign_request,open_sign.group_open_sign_user,1,1,1,0
+access_open_sign_request_manager,open.sign.request.manager,model_open_sign_request,open_sign.group_open_sign_manager,1,1,1,1
+access_open_sign_request_auditor,open.sign.request.auditor,model_open_sign_request,open_sign.group_open_sign_auditor,1,0,0,0
 access_open_sign_template_field_user,open.sign.template.field.user,model_open_sign_template_field,open_sign.group_open_sign_user,1,1,1,0
 access_open_sign_template_field_manager,open.sign.template.field.manager,model_open_sign_template_field,open_sign.group_open_sign_manager,1,1,1,1
 access_open_sign_template_field_auditor,open.sign.template.field.auditor,model_open_sign_template_field,open_sign.group_open_sign_auditor,1,0,0,0

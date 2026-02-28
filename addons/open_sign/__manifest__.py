@@ -13,6 +13,7 @@
         'views/sign_template_views.xml',
         'views/sign_role_views.xml',
         'views/sign_template_field_views.xml',
+        'views/sign_request_views.xml',
         'views/sign_menus.xml',
     ],
     'author': 'Odoo S.A.',
