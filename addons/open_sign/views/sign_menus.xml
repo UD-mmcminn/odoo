@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data>
+        <menuitem id="menu_open_sign_root" name="Open Sign" sequence="320" groups="open_sign.group_open_sign_user,open_sign.group_open_sign_auditor"/>
+        <menuitem id="menu_open_sign_templates" name="Templates" parent="menu_open_sign_root" action="open_sign.action_open_sign_template" sequence="10"/>
+        <menuitem id="menu_open_sign_roles" name="Roles" parent="menu_open_sign_root" action="open_sign.action_open_sign_role" sequence="20"/>
+        <menuitem id="menu_open_sign_template_fields" name="Fields" parent="menu_open_sign_root" action="open_sign.action_open_sign_template_field" sequence="30"/>
+    </data>
+</odoo>

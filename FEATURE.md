@@ -8,7 +8,7 @@
 | Version | `1.1.0` |
 | Status | `Active (Living Document)` |
 | Created | `2026-02-26` |
-| Last Updated | `2026-02-26` |
+| Last Updated | `2026-02-28` |
 | Product Area | `Open Sign Odoo Addons` |
 | Primary Owner | `Engineering` |
 | Review Cadence | `Weekly or at milestone close` |
@@ -214,6 +214,7 @@ Build an Odoo Community replacement for the Enterprise Signature app with:
 - Configurable, editable fields (required/optional): `signature`, `initials`, `name`, `email`, `phone`, `company`, `text`, `multiline`, `checkbox`, `radio`, `selection`, `date`, `strikethrough`, `stamp`.
 - Multi-signer workflows (sequential and parallel).
 - Signature adoption methods (draw, type, upload).
+- Signature blocks are optional per workflow; non-signature acknowledgement flows are supported.
 - Document lifecycle and status tracking.
 - Full audit trail.
 - Optional certificate-based digital signing module.
@@ -258,6 +259,7 @@ Out of scope for MVP:
 | `R-026` | Field-type validation and normalization matrix is documented and enforced client/server | Must | `Open` |
 | `R-027` | Audit event taxonomy and evidence package schema are versioned and backward-compatible | Must | `Open` |
 | `R-028` | Source and final PDF SHA-256 digests are stored immutably for integrity verification | Must | `Open` |
+| `R-029` | Requests require at least one participant role/signer, while signature fields remain optional for non-signature acknowledgement workflows | Must | `Open` |
 
 ### Design Control Block
 
@@ -313,6 +315,7 @@ Implementation notes:
 | `D-007` | Define production clock drift tolerance and monitoring policy for legal timestamps | Platform/Ops | `M0` | `Resolved (Policy v1)` |
 | `D-008` | Approve field-level validation matrix defaults (length/date/format constraints) | Product/Backend | `M0` | `Resolved (Matrix v1)` |
 | `D-009` | Approve evidence package schema v1 and event taxonomy versioning policy | Product/Backend | `M0` | `Resolved (Schema v1)` |
+| `D-010` | Confirm whether a signature block is mandatory for completion workflows | Product/Backend | `M1` | `Resolved (participant required; signature field optional)` |
 
 ### Phase 0 Decisions Locked (2026-02-26)
 
@@ -341,6 +344,7 @@ Implementation notes:
 | `CR-008` | `2026-02-26` | Generated M0 documentation deliverables bundle (`T90`-`T99`) and linked artifacts | Execution readiness and junior handoff quality | Approved |
 | `CR-009` | `2026-02-26` | Applied Phase 0 decision updates (`T01/T02/T03/T06/T07`) including immutable template versioning and planning artifacts for `T04/T05/T08/T09` | Design completeness and implementation guardrail quality | Approved |
 | `CR-010` | `2026-02-26` | Applied final Phase 0 approvals (`T04/T05/T08/T09`) and feature-branch-only `FEATURE.md` merge-gate rule | M0 closure and workflow policy refinement | Approved |
+| `CR-011` | `2026-02-27` | Clarified workflow invariant: at least one participant role/signer is required for send flows, but signature fields are optional | Prevents false signature-field dependency and preserves form/acknowledgement use cases | Approved |
 
 ### Architecture Decisions (ADRs Summary)
 
@@ -356,6 +360,7 @@ Implementation notes:
 | `ADR-008` | Require idempotency keys and row-level locking for mutating portal signer endpoints | Accepted |
 | `ADR-009` | Version audit event taxonomy and evidence package schema from v1 onward | Accepted |
 | `ADR-010` | Require immutable template version snapshots before sending requests (`draft -> versioned -> sent`) | Accepted |
+| `ADR-011` | Enforce participant-required send flows while keeping signature fields optional | Accepted |
 
 ## Addons To Create
 
@@ -856,7 +861,8 @@ This section is the implementation baseline for persisted data. It is intentiona
 | `request_ids` | `One2many(open.sign.request, template_id)` | No | relation-only | not stored on this table | Back-reference for usage and impact analysis |
 
 Model constraints:
-- Template cannot be published without at least one role and one field.
+- Template publish does not require a signature-type field.
+- Templates intended for request send flows must define at least one signer role before request version/send transitions.
 - Archival of a template referenced by active requests is blocked by business rule.
 
 #### `open.sign.template.version`
@@ -884,12 +890,13 @@ Model constraints:
 |---|---|---|---|---|---|
 | `template_id` | `Many2one(open.sign.template)` | Yes | FK, `ondelete='cascade'` | indexed | Parent template |
 | `name` | `Char` | Yes | - | non-empty | Displayed as signer role label |
+| `name_normalized` | `Char` | Yes | - | indexed; normalized key | Internal case-insensitive uniqueness key |
 | `sequence` | `Integer` | Yes | - | default `10`; indexed | Used for ordered signing and UI ordering |
 | `required` | `Boolean` | Yes | - | default `True` | Optional signer slots supported when false |
 | `color` | `Integer` | No | - | default `0` | Editor/preview color coding |
 
 Model constraints:
-- Unique role name per template (`UNIQUE(template_id, name)`).
+- Role names are trim-normalized and unique per template using case-insensitive comparison (`UNIQUE(template_id, name_normalized)`).
 - Sequence must be non-negative.
 
 #### `open.sign.template.field`
@@ -959,10 +966,12 @@ Model constraints:
 Model constraints:
 - Status transitions must follow the approved transition matrix.
 - Any status at or beyond `versioned` requires `template_version_id` and `source_pdf_sha256`.
+- Transition to `sent` requires at least one signer (`open.sign.request.signer`) on the request.
 - `template_version_id.template_id` must equal `template_id`.
 - `source_pdf_sha256` must equal `template_version_id.source_pdf_sha256` when `template_version_id` is set.
 - `completed` status requires `completed_at` and `final_attachment_id`.
 - `completed` status requires `final_pdf_sha256`.
+- Signature-type fields are optional; completion gating relies on required-field validation and consent evidence policy.
 - `expires_at` must be greater than or equal to `sent_at` when both exist.
 
 #### `open.sign.request.signer`
@@ -1117,7 +1126,8 @@ The addon set also persists configuration and metadata records via XML/CSV files
 
 | Record Type | Source Files | Critical Fields | Purpose |
 |---|---|---|---|
-| `res.groups` | `security/open_sign_groups.xml` | `name`, `implied_ids`, `category_id` | Security role definitions |
+| `res.groups` | `security/open_sign_groups.xml` | `name`, `implied_ids`, `privilege_id` | Security role definitions |
+| `res.groups.privilege` | `security/open_sign_groups.xml` | `name`, `category_id`, `sequence` | Privilege grouping for security roles |
 | `ir.model.access` | `security/ir.model.access.csv` (each addon) | `model_id`, `group_id`, CRUD flags | Model access control |
 | `ir.rule` | `security/open_sign_security.xml`, `security/open_sign_portal_security.xml` | `domain_force`, `groups` | Multi-company and ownership boundaries |
 | `mail.template` | `data/mail_templates.xml` | `model_id`, `subject`, `body_html` | Invitation/reminder/completion notices |
@@ -1159,9 +1169,9 @@ Legend:
 ### Phase 1: Core Addon (`open_sign`)
 
 - [x] `T10` Scaffold addon with manifest/init/security skeleton.
-- [ ] `T11` Implement `open.sign.template` model + views.
-- [ ] `T12` Implement `open.sign.role` model + assignment flows.
-- [ ] `T13` Implement `open.sign.template.field` + `open.sign.template.field.option`.
+- [x] `T11` Implement `open.sign.template` model + views.
+- [x] `T12` Implement `open.sign.role` model + assignment flows.
+- [x] `T13` Implement `open.sign.template.field` + `open.sign.template.field.option`.
 - [ ] `T14` Implement `open.sign.request` model + status engine.
 - [ ] `T15` Implement `open.sign.request.signer` with sequence logic.
 - [ ] `T16` Implement `open.sign.request.value` storage and normalization.
@@ -1264,6 +1274,7 @@ Legend:
 | `R-026` | `T98`, `T18`, `T24`, `T44` | `open_sign`, `open_sign_web` | Validation matrix conformance tests |
 | `R-027` | `T99`, `T42`, `T45`, `T63` | `open_sign` | Evidence schema and event taxonomy checks |
 | `R-028` | `T40`, `T41`, `T117`, `T45` | `open_sign` | Artifact digest integrity verification |
+| `R-029` | `T12`, `T14`, `T15`, `T44` | `open_sign`, `open_sign_portal` | Participant-required flow tests without mandatory signature field |
 
 ## Milestones and Exit Criteria
 
@@ -1356,9 +1367,9 @@ Notes:
 
 Counts below track only `T*` development tasks in the phase task board.
 
-- Completed tasks: `21`
+- Completed tasks: `23`
 - In progress tasks: `0`
-- Remaining tasks: `57`
+- Remaining tasks: `55`
 
 ## Update Log
 
@@ -1377,3 +1388,12 @@ Counts below track only `T*` development tasks in the phase task board.
 | `2026-02-26` | Codex | Applied Phase 0 decision updates (`T01/T02/T03/T06/T07`), added immutable template-version-before-send model/status flow, and added planning artifacts for wireframes, observability, merge gates, and PDF stack recommendation. |
 | `2026-02-26` | Codex | Applied final M0 approvals (`T04/T05/T08/T09`), updated merge-gate policy for feature-branch-only `FEATURE.md` updates, and set M0 design freeze milestone target date. |
 | `2026-02-26` | Codex | Closed M0 and opened M1 by scaffolding `T10` (`addons/open_sign` manifest/init/security skeleton), then updated milestone/progress tracking. |
+| `2026-02-26` | Codex | Completed `T11` by implementing `open.sign.template` model, ACL entries, and initial backend views/menus for `open_sign`. |
+| `2026-02-26` | Codex | Addressed T11 review findings by adding `open_sign` unit tests for template behavior and granting auditor menu visibility without changing write permissions. |
+| `2026-02-27` | Codex | Completed `T12` by adding `open.sign.role` model integration, role management/action/menu views, template role assignment UI, and role constraint/assignment unit tests. |
+| `2026-02-27` | Codex | Captured participant-vs-signature invariant: requests require at least one participant role/signer while signature fields are optional for acknowledgement workflows, and updated requirements/traceability/contracts accordingly. |
+| `2026-02-27` | Codex | Strengthened T12 coverage with ACL behavior tests for `open.sign.role` (auditor read-only, user no-unlink, manager unlink) and aligned role-name normalization/uniqueness constraints. |
+| `2026-02-27` | Codex | Hardened role-name uniqueness with DB-backed case-insensitive key (`name_normalized`) to close race-condition gaps and updated tests accordingly. |
+| `2026-02-27` | Codex | Final T12 review sign-off completed (no additional in-scope blockers found), confirmed `T13` as next execution task, and refreshed continuation notes for handoff readiness. |
+| `2026-02-27` | Codex | Completed `T13` by implementing `open.sign.template.field` and `open.sign.template.field.option` models, constraints, ACL rows, template field management views/menu, and dedicated field/option unit tests including ACL behavior coverage. |
+| `2026-02-28` | Codex | Closed out `T13` with Odoo 19 compatibility fixes (groups privilege model, view XML updates, constraint API updates), removed deprecated `check_access_rights()` usage in tests, and re-validated with `/open_sign` suite passing (`0 failed, 0 errors`). |

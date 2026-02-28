@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data>
+        <record id="view_open_sign_template_list" model="ir.ui.view">
+            <field name="name">open.sign.template.view.list</field>
+            <field name="model">open.sign.template</field>
+            <field name="arch" type="xml">
+                <list string="Sign Templates" sample="1">
+                    <field name="name"/>
+                    <field name="state" widget="badge"/>
+                    <field name="owner_id" optional="hide"/>
+                    <field name="company_id" groups="base.group_multi_company" optional="hide"/>
+                    <field name="create_date" optional="hide"/>
+                </list>
+            </field>
+        </record>
+
+        <record id="view_open_sign_template_search" model="ir.ui.view">
+            <field name="name">open.sign.template.view.search</field>
+            <field name="model">open.sign.template</field>
+            <field name="arch" type="xml">
+                <search string="Sign Templates">
+                    <field name="name"/>
+                    <field name="owner_id"/>
+                    <field name="company_id" groups="base.group_multi_company"/>
+                    <filter name="filter_draft" string="Draft" domain="[('state', '=', 'draft')]"/>
+                    <filter name="filter_published" string="Published" domain="[('state', '=', 'published')]"/>
+                    <filter name="filter_archived" string="Archived" domain="[('state', '=', 'archived')]"/>
+                    <group>
+                        <filter name="group_state" string="State" context="{'group_by': 'state'}"/>
+                        <filter name="group_owner" string="Owner" context="{'group_by': 'owner_id'}"/>
+                        <filter name="group_company" string="Company" context="{'group_by': 'company_id'}" groups="base.group_multi_company"/>
+                    </group>
+                </search>
+            </field>
+        </record>
+
+        <record id="view_open_sign_template_form" model="ir.ui.view">
+            <field name="name">open.sign.template.view.form</field>
+            <field name="model">open.sign.template</field>
+            <field name="arch" type="xml">
+                <form string="Sign Template">
+                    <header>
+                        <button name="action_publish" string="Publish" type="object" class="btn-primary" invisible="state != 'draft'"/>
+                        <button name="action_archive" string="Archive" type="object" invisible="state == 'archived'"/>
+                        <button name="action_set_draft" string="Set to Draft" type="object" invisible="state == 'draft'"/>
+                        <field name="state" widget="statusbar" statusbar_visible="draft,published,archived"/>
+                    </header>
+                    <sheet>
+                        <div class="oe_title">
+                            <label for="name" class="oe_edit_only"/>
+                            <h1>
+                                <field name="name" placeholder="e.g. Master Service Agreement"/>
+                            </h1>
+                        </div>
+                        <group>
+                            <group>
+                                <field name="source_attachment_id" domain="[('mimetype', '=', 'application/pdf')]"/>
+                                <field name="owner_id"/>
+                            </group>
+                            <group>
+                                <field name="company_id" groups="base.group_multi_company"/>
+                                <field name="active"/>
+                            </group>
+                        </group>
+                    </sheet>
+                    <chatter/>
+                </form>
+            </field>
+        </record>
+
+        <record id="action_open_sign_template" model="ir.actions.act_window">
+            <field name="name">Sign Templates</field>
+            <field name="res_model">open.sign.template</field>
+            <field name="view_mode">list,form</field>
+            <field name="search_view_id" ref="open_sign.view_open_sign_template_search"/>
+            <field name="help" type="html">
+                <p class="o_view_nocontent_smiling_face">Create your first sign template</p>
+                <p>
+                    Templates define the source PDF and signer fields used to generate sign requests.
+                </p>
+            </field>
+        </record>
+    </data>
+</odoo>

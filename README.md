@@ -36,14 +36,18 @@ Developers can start with [the developer tutorials](https://www.odoo.com/documen
 This repository includes a VS Code devcontainer in `.devcontainer/`.
 
 1. Open the repo in VS Code and choose **Reopen in Container**.
-2. Update `.devcontainer/odoo.conf` with your external PostgreSQL settings.
+2. The devcontainer starts a local PostgreSQL service named `postgres` with:
+   - user: `odoo`
+   - password: `odoo`
+   - port: `5432`
 3. Run Odoo from the workspace:
 
 ```bash
 ./odoo-bin -c .devcontainer/odoo.conf
 ```
 
-The devcontainer does not run PostgreSQL. Use an external database endpoint.
+The default `.devcontainer/odoo.conf` is preconfigured to use this local PostgreSQL instance.
+If you want to use an external DB instead, update `db_host`, `db_user`, and `db_password`.
 
 ## Container image
 
