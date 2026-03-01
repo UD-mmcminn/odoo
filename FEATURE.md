@@ -1201,7 +1201,7 @@ Legend:
 - [x] `T21` Build template canvas with drag/drop/resizing on PDF pages.
 - [x] `T22` Build field palette and field property editor.
 - [x] `T23` Implement signer role assignment in editor.
-- [ ] `T24` Implement client-side value validation aligned with server rules.
+- [x] `T24` Implement client-side value validation aligned with server rules.
 - [ ] `T25` Implement signature adoption dialog (draw/type/upload).
 - [ ] `T26` Add JS tests for geometry and validation payloads, including explicit frontend test-runner/discovery wiring so `/open_sign_web` test tags execute non-zero tests in CI.
 

@@ -91,6 +91,8 @@ Use this before marking any task complete (especially model/state/security work)
 - `T22` hardening follow-up is complete: field-palette labels are now JS-translatable, unknown field types now fallback deterministically to `text`, and backend-safe payload serialization is now wired through `serializeTemplateFieldsForBackend()` + `toTemplateFieldVals()` (with editor-only properties kept client-side and excluded from backend payloads).
 - `T23` implementation and closeout are complete (template-aware signer role assignment in editor via template/role selectors, role normalization across template changes, and backend payload mapping via `role_id`), with `/open_sign` regression green and `/open_sign_web` runtime load validated.
 - `T23` hardening follow-up is complete: removed silent role reassignment on template switch, removed misleading `Unassigned` role UI path, blocked new-field creation when template roles are absent, added stale async response protection for role loading, and added role-validity utility test coverage.
+- `T24` implementation and closeout are complete (client-side value normalization/validation matrix in `signing_form.js` aligned to backend validation service for field types, required/optional semantics, option canonicalization, regex/length checks, and signature payload attachment rules); `/open_sign` regression is green and `/open_sign_web` runtime load is green.
+- `T24` follow-up note: explicit frontend JS test discovery/execution is still deferred to `T26`; current Odoo CLI web-tag runs still report `0` discovered frontend tests.
 - T12 final review is complete; no additional in-scope blockers were identified.
 - `T13` implementation and closeout are complete (models, ACL, views, tests, Odoo 19 compatibility fixes, deprecated-call cleanup).
 - `T14` implementation and closeout are complete (request lifecycle model, version snapshot binding, transition guards, ACL + views, runtime tests green).
@@ -623,15 +625,14 @@ Use this before marking any task complete (especially model/state/security work)
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign/tests/test_sign_audit_log.py --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign/tests/test_sign_security_rules.py --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign --stop-after-init`
-2. If tests pass, continue Phase 2 implementation (`T24`).
+2. If tests pass, continue Phase 2 implementation (`T25`).
 3. Re-run recurring hardening re-audit (`T610`) after each major phase slice and after every 3 completed implementation tasks.
 
 ## Next Tasks (Planned Order)
 
-1. `T24` Implement client-side value validation aligned with server rules.
-2. `T25` Implement signature adoption dialog (draw/type/upload).
-3. `T26` Add JS tests for geometry/validation payloads and enable frontend test discovery/execution in CI.
-4. `T35` (deferred reminder email scope) implement invitation/reminder/completion notifications after portal flow foundations.
+1. `T25` Implement signature adoption dialog (draw/type/upload).
+2. `T26` Add JS tests for geometry/validation payloads and enable frontend test discovery/execution in CI.
+3. `T35` (deferred reminder email scope) implement invitation/reminder/completion notifications after portal flow foundations.
 
 ## Notes For Next Chat
 
