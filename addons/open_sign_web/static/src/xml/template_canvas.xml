@@ -1,9 +1,42 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <templates xml:space="preserve">
     <t t-name="open_sign_web.TemplateCanvas">
-        <section class="o_open_sign_web_canvas">
-            <header class="o_open_sign_web_canvas_header">Template Canvas</header>
-            <div class="o_open_sign_web_canvas_body"/>
+        <section class="o_open_sign_web_canvas d-flex flex-column gap-2">
+            <header class="o_open_sign_web_canvas_header d-flex align-items-center justify-content-between gap-2">
+                <span>Template Canvas</span>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="text-muted small">
+                        <t t-esc="state.fields.length"/> field(s)
+                    </span>
+                    <button class="btn btn-sm btn-primary" type="button" t-on-click="addField">
+                        Add Field
+                    </button>
+                </div>
+            </header>
+            <div class="o_open_sign_web_canvas_body">
+                <div class="o_open_sign_web_canvas_page" t-ref="page" t-att-style="pageStyle">
+                    <t t-foreach="state.fields" t-as="field" t-key="field.id">
+                        <div
+                            class="o_open_sign_web_field"
+                            t-att-class="isFieldActive(field) ? 'o_is_active' : ''"
+                            t-att-style="getFieldStyle(field)"
+                            t-on-pointerdown="(ev) => onFieldPointerDown(field, ev)"
+                        >
+                            <span class="o_open_sign_web_field_label">
+                                <t t-esc="field.label"/>
+                            </span>
+                            <span class="o_open_sign_web_field_geometry">
+                                <t t-esc="describeField(field)"/>
+                            </span>
+                            <span
+                                class="o_open_sign_web_field_resize_handle"
+                                title="Resize"
+                                t-on-pointerdown.stop.prevent="(ev) => onResizePointerDown(field, ev)"
+                            />
+                        </div>
+                    </t>
+                </div>
+            </div>
         </section>
     </t>
 </templates>

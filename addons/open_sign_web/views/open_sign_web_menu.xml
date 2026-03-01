@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data>
+        <record id="action_open_sign_template_canvas" model="ir.actions.client">
+            <field name="name">Template Canvas</field>
+            <field name="tag">open_sign_web.template_canvas_action</field>
+        </record>
+
+        <menuitem
+            id="menu_open_sign_template_canvas"
+            name="Editor"
+            parent="open_sign.menu_open_sign_root"
+            action="open_sign_web.action_open_sign_template_canvas"
+            sequence="25"
+            groups="open_sign.group_open_sign_user"
+        />
+    </data>
+</odoo>

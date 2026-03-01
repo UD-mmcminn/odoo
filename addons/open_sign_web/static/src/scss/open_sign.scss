@@ -11,3 +11,74 @@
     font-weight: 600;
     margin-bottom: 8px;
 }
+
+.o_open_sign_web_canvas_body {
+    display: flex;
+    justify-content: center;
+    padding: 12px;
+    background: #f3f5f7;
+    border: 1px solid #e4e6e8;
+    border-radius: 4px;
+    overflow: auto;
+}
+
+.o_open_sign_web_canvas_page {
+    position: relative;
+    width: min(100%, 860px);
+    min-width: 540px;
+    background: #ffffff;
+    border: 1px solid #cfd3d7;
+    border-radius: 4px;
+    box-shadow: 0 8px 20px rgba(20, 40, 60, 0.07);
+}
+
+.o_open_sign_web_field {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    border: 2px solid #0f6ac8;
+    border-radius: 4px;
+    background: rgba(15, 106, 200, 0.1);
+    color: #0f3966;
+    padding: 4px;
+    cursor: move;
+    min-width: 48px;
+    min-height: 32px;
+}
+
+.o_open_sign_web_field.o_is_active {
+    border-color: #0a4f98;
+    background: rgba(15, 106, 200, 0.18);
+}
+
+.o_open_sign_web_field_label {
+    font-weight: 600;
+    font-size: 11px;
+    line-height: 1.1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.o_open_sign_web_field_geometry {
+    margin-top: auto;
+    font-size: 10px;
+    line-height: 1.2;
+}
+
+.o_open_sign_web_field_resize_handle {
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    right: -7px;
+    bottom: -7px;
+    border-radius: 2px;
+    border: 1px solid #ffffff;
+    background: #0f6ac8;
+    cursor: nwse-resize;
+}
+
+.o_open_sign_web_unselectable {
+    user-select: none !important;
+}

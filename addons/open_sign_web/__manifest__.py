@@ -6,6 +6,9 @@
     'category': 'Productivity',
     'version': '1.0',
     'depends': ['open_sign', 'web'],
+    'data': [
+        'views/open_sign_web_menu.xml',
+    ],
     'assets': {
         'web.assets_backend': [
             'open_sign_web/static/src/js/**/*',
