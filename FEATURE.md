@@ -128,6 +128,7 @@ This section is intentionally explicit to support lower-experience implementers.
 4. Add tests for each behavior in the same PR that adds the behavior.
 5. Add migration hooks and indexes before declaring backend complete.
 6. Add observability and hardening before UAT/release signoff.
+7. For Phase 2 (`open_sign_web`), keep client validation UX-only and never bypass/replace server-authoritative model constraints.
 
 ### Definition of Ready (DoR) For Any Task
 
@@ -638,6 +639,14 @@ Evidence package schema v1 minimum sections:
 ---
 
 ## Addon Specification: `open_sign_web`
+
+### Phase 2 Guardrails (Derived From M1 Outcomes)
+
+- Client/editor validation is convenience only; server validation and normalization (`open_sign` models/services) remain authoritative.
+- Editor payload serialization must align with backend schema constraints (geometry bounds, required labels, non-negative sequence, option/value normalization).
+- Frontend components must not write server-authoritative lifecycle/control fields (`state`, `signed_at`, audit chain data, validation authority flags).
+- Every `open_sign_web` PR must run both web scope tests and full backend regression (`/open_sign`) before merge.
+- Deferred M1 items remain out of M2 scope unless explicitly scheduled: `DQ-001` (`T35` notifications) and `DQ-002` (`T43` hash-chain continuity service checks).
 
 ### Interfaces
 
@@ -1188,13 +1197,13 @@ Legend:
 
 ### Phase 2: Web Editor Addon (`open_sign_web`)
 
-- [ ] `T20` Scaffold addon and declare backend/frontend assets in `__manifest__.py`.
+- [x] `T20` Scaffold addon and declare backend/frontend assets in `__manifest__.py`.
 - [ ] `T21` Build template canvas with drag/drop/resizing on PDF pages.
 - [ ] `T22` Build field palette and field property editor.
 - [ ] `T23` Implement signer role assignment in editor.
 - [ ] `T24` Implement client-side value validation aligned with server rules.
 - [ ] `T25` Implement signature adoption dialog (draw/type/upload).
-- [ ] `T26` Add JS tests for geometry and validation payloads.
+- [ ] `T26` Add JS tests for geometry and validation payloads, including explicit frontend test-runner/discovery wiring so `/open_sign_web` test tags execute non-zero tests in CI.
 
 ### Phase 3: Portal Addon (`open_sign_portal`)
 
@@ -1385,9 +1394,9 @@ Notes:
 
 Counts below track only `T*` development tasks in the phase task board.
 
-- Completed tasks: `32`
+- Completed tasks: `33`
 - In progress tasks: `0`
-- Remaining tasks: `53`
+- Remaining tasks: `52`
 
 ## Update Log
 
@@ -1414,6 +1423,7 @@ Counts below track only `T*` development tasks in the phase task board.
 | `2026-02-27` | Codex | Hardened role-name uniqueness with DB-backed case-insensitive key (`name_normalized`) to close race-condition gaps and updated tests accordingly. |
 | `2026-02-27` | Codex | Final T12 review sign-off completed (no additional in-scope blockers found), confirmed `T13` as next execution task, and refreshed continuation notes for handoff readiness. |
 | `2026-02-27` | Codex | Completed `T13` by implementing `open.sign.template.field` and `open.sign.template.field.option` models, constraints, ACL rows, template field management views/menu, and dedicated field/option unit tests including ACL behavior coverage. |
+| `2026-03-01` | Codex | Started Phase 2 by completing `T20`: scaffolded `open_sign_web` addon, declared backend/test assets, added initial OWL/JS/CSS skeleton files, and added baseline geometry/validation JS test stubs. |
 | `2026-02-28` | Codex | Closed out `T13` with Odoo 19 compatibility fixes (groups privilege model, view XML updates, constraint API updates), removed deprecated `check_access_rights()` usage in tests, and re-validated with `/open_sign` suite passing (`0 failed, 0 errors`). |
 | `2026-02-28` | Codex | Closed out `T14` hardening (status bypass guard, template-version immutability, request binding freeze) and completed `T15` with `open.sign.request.signer`, signer sequencing helpers, participant-required send gating, ACL/view wiring, and `/open_sign` tests passing (`0 failed, 0 errors`). |
 | `2026-02-28` | Codex | Hardened `T15` after review by blocking non-superuser signer lifecycle/evidence mutations (`state`, `signed_at`, consent/IP/opened fields), requiring at least one actionable signer (`pending/opened`) before send, setting signer lifecycle columns readonly in request UI, and extending tests; `/open_sign` remains green (`0 failed, 0 errors`). |

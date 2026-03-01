@@ -81,8 +81,10 @@ Use this before marking any task complete (especially model/state/security work)
 ## Current Status
 
 - M0 is closed.
-- M1 is open and in progress.
+- M1 is closed.
+- M2 is open and in progress.
 - `T10`, `T11`, `T12`, `T13`, `T14`, `T15`, `T16`, `T17`, `T18`, `T19`, `T110`, `T111`, `T112`, `T113` are marked complete in `FEATURE.md`.
+- `T20` implementation is complete (new `open_sign_web` addon scaffold, manifest asset wiring, initial JS/XML/SCSS skeleton, and baseline frontend test stubs).
 - T12 final review is complete; no additional in-scope blockers were identified.
 - `T13` implementation and closeout are complete (models, ACL, views, tests, Odoo 19 compatibility fixes, deprecated-call cleanup).
 - `T14` implementation and closeout are complete (request lifecycle model, version snapshot binding, transition guards, ACL + views, runtime tests green).
@@ -543,9 +545,12 @@ Use this before marking any task complete (especially model/state/security work)
 
 - No current runtime blocker for `open_sign` test execution in this environment.
 - `T113` security-scope follow-up is now completed and validated with dedicated multi-company/ownership tests.
+- `T20` module install is validated and backend regression remains green (`/open_sign`: `0 failed, 0 errors`, `74` tests).
 - Remaining follow-up for the just-closed M1 scope:
   - monitor reminder cadence behavior in real environments and tune via `open_sign.reminder_interval_hours`
   - maintain upgrade-script CI coverage so `T112` remains effective across future schema changes
+- M2 test-runner note:
+  - current CLI runs (`--test-tags /open_sign_web`, `/open_sign_web:js`) report `0` tests despite JS test files under `open_sign_web/static/tests/`; treat explicit frontend runner wiring/coverage confirmation as part of `T26`.
 
 ## Deferred Queue (Tracked Next-Up)
 
@@ -574,6 +579,12 @@ Use this before marking any task complete (especially model/state/security work)
 - `addons/open_sign/views/sign_menus.xml`
 - `addons/open_sign/security/ir.model.access.csv`
 - `addons/open_sign/__manifest__.py`
+- `addons/open_sign_web/__manifest__.py`
+- `addons/open_sign_web/static/src/js/template_canvas.js`
+- `addons/open_sign_web/static/src/js/signing_form.js`
+- `addons/open_sign_web/static/tests/test_template_canvas.test.js`
+- `addons/open_sign_web/static/tests/test_signing_form.test.js`
+- `addons/open_sign_web/static/tests/test_coordinate_normalization.test.js`
 - `addons/open_sign/data/ir_cron.xml`
 - `addons/open_sign/upgrades/1.1/pre-migrate.py`
 - `addons/open_sign/upgrades/1.1/post-migrate.py`
@@ -596,14 +607,14 @@ Use this before marking any task complete (especially model/state/security work)
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign/tests/test_sign_audit_log.py --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign/tests/test_sign_security_rules.py --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign --stop-after-init`
-2. If tests pass, proceed to Phase 2 kickoff (`T20`).
+2. If tests pass, continue Phase 2 implementation (`T21`).
 3. Re-run recurring hardening re-audit (`T610`) after each major phase slice and after every 3 completed implementation tasks.
 
 ## Next Tasks (Planned Order)
 
-1. `T20` Scaffold `open_sign_web` addon and declare backend/frontend assets in `__manifest__.py`.
-2. `T21` Build template canvas with drag/drop/resizing on PDF pages.
-3. `T22` Build field palette and field property editor.
+1. `T21` Build template canvas with drag/drop/resizing on PDF pages.
+2. `T22` Build field palette and field property editor.
+3. `T23` Implement signer role assignment in editor.
 4. `T35` (deferred reminder email scope) implement invitation/reminder/completion notifications after portal flow foundations.
 
 ## Notes For Next Chat

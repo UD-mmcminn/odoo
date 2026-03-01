@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t t-name="open_sign_web.TemplateCanvas">
+        <section class="o_open_sign_web_canvas">
+            <header class="o_open_sign_web_canvas_header">Template Canvas</header>
+            <div class="o_open_sign_web_canvas_body"/>
+        </section>
+    </t>
+</templates>

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t t-name="open_sign_web.SignatureAdoptionDialog">
+        <div class="o_open_sign_web_signature_dialog">
+            <h4>Signature Adoption</h4>
+        </div>
+    </t>
+</templates>

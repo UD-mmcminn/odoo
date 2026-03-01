@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t t-name="open_sign_web.FieldPropertiesPanel">
+        <aside class="o_open_sign_web_properties">
+            <h4>Field Properties</h4>
+        </aside>
+    </t>
+</templates>

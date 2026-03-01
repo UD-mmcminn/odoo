@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t t-name="open_sign_web.SigningForm">
+        <form class="o_open_sign_web_signing_form">
+            <div class="o_open_sign_web_fields"/>
+        </form>
+    </t>
+</templates>
