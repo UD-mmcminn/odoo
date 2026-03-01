@@ -67,6 +67,7 @@ export function normalizeFieldProperties(properties = {}, fieldType = "text") {
 
 export function toTemplateFieldVals(field = {}) {
     const type = field.type || DEFAULT_FIELD_TYPE;
+    const roleId = asOptionalInteger(field.roleId ?? field.role_id);
     const normalized = normalizeFieldProperties(field, type);
     const optionValues = supportsFieldOptions(type)
         ? normalized.optionList
@@ -85,6 +86,7 @@ export function toTemplateFieldVals(field = {}) {
     ]);
 
     return {
+        role_id: roleId || false,
         type,
         label: sanitizeFieldLabel(field.label, "Field"),
         required: normalized.required,

@@ -2,6 +2,7 @@
 
 import { registry } from "@web/core/registry";
 import { _t } from "@web/core/l10n/translation";
+import { useService } from "@web/core/utils/hooks";
 import { standardActionServiceProps } from "@web/webclient/actions/action_service";
 
 import {
@@ -16,12 +17,23 @@ import {
     toTemplateFieldVals,
 } from "@open_sign_web/js/field_properties_panel";
 
-import { Component, onWillUnmount, useExternalListener, useRef, useState } from "@odoo/owl";
+import {
+    Component,
+    onWillStart,
+    onWillUnmount,
+    useExternalListener,
+    useRef,
+    useState,
+} from "@odoo/owl";
 
 const MIN_FIELD_SIZE = 0.02;
 const DEFAULT_PAGE_SIZE = Object.freeze({ width: 800, height: 1132 });
 const DEFAULT_FIELD_TYPE = "text";
 const DEFAULT_OPTION_LIST = `${_t("Option 1")}\n${_t("Option 2")}`;
+const TEMPLATE_MODEL = "open.sign.template";
+const ROLE_MODEL = "open.sign.role";
+const ROLE_REQUIRED_LABEL = _t("Role required");
+const INVALID_ROLE_LABEL = _t("Invalid role");
 
 function asNumber(value, fallback = 0) {
     const parsed = Number(value);
@@ -34,6 +46,44 @@ function clamp(value, min, max) {
 
 function roundGeometryNumber(value) {
     return Math.round(value * 10000) / 10000;
+}
+
+function asPositiveInteger(value) {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function normalizeRoleIdSet(availableRoleIds = []) {
+    if (availableRoleIds instanceof Set) {
+        return new Set([...availableRoleIds].map((value) => asPositiveInteger(value)).filter(Boolean));
+    }
+    const normalizedItems = Array.isArray(availableRoleIds) ? availableRoleIds : [];
+    const roleIds = normalizedItems
+        .map((item) => asPositiveInteger(item && typeof item === "object" ? item.id : item))
+        .filter(Boolean);
+    return new Set(roleIds);
+}
+
+export function isFieldRoleValid(field = {}, availableRoleIds = []) {
+    const roleId = asPositiveInteger(field.roleId ?? field.role_id);
+    if (!roleId) {
+        return false;
+    }
+    const roleIdSet = normalizeRoleIdSet(availableRoleIds);
+    return roleIdSet.has(roleId);
+}
+
+export function countInvalidFieldRoles(fields = [], availableRoleIds = []) {
+    const normalizedFields = Array.isArray(fields) ? fields : [];
+    const roleIdSet = normalizeRoleIdSet(availableRoleIds);
+    let invalidCount = 0;
+    for (const field of normalizedFields) {
+        const roleId = asPositiveInteger(field.roleId ?? field.role_id);
+        if (!roleId || !roleIdSet.has(roleId)) {
+            invalidCount += 1;
+        }
+    }
+    return invalidCount;
 }
 
 export function serializeFieldGeometry(geometry = {}) {
@@ -101,7 +151,7 @@ export function applyResizeDelta(baseGeometry = {}, deltaXRatio = 0, deltaYRatio
     };
 }
 
-function buildFieldRecord(id, page, fieldType, sequence) {
+function buildFieldRecord(id, page, fieldType, sequence, roleId = null) {
     const paletteEntry = getPaletteEntryByType(fieldType || DEFAULT_FIELD_TYPE);
     const properties = normalizeFieldProperties({ sequence }, paletteEntry.type);
     if (supportsFieldOptions(paletteEntry.type) && !properties.optionList) {
@@ -110,6 +160,7 @@ function buildFieldRecord(id, page, fieldType, sequence) {
 
     return {
         id,
+        roleId,
         type: paletteEntry.type,
         label: `${paletteEntry.label} ${id}`,
         ...properties,
@@ -123,9 +174,14 @@ function buildFieldRecord(id, page, fieldType, sequence) {
     };
 }
 
-export function serializeTemplateFieldsForBackend(fields = []) {
+export function serializeTemplateFieldsForBackend(fields = [], options = {}) {
     const normalizedFields = Array.isArray(fields) ? fields : [];
+    const roleIdSet = normalizeRoleIdSet(options.availableRoleIds || []);
+    const requireValidRoles = Boolean(options.requireValidRoles);
     return normalizedFields.map((field) => {
+        if (requireValidRoles && !isFieldRoleValid(field, roleIdSet)) {
+            throw new Error("Template field role assignment is invalid for the selected template.");
+        }
         const geometry = coerceRenderableGeometry(field);
         return {
             ...toTemplateFieldVals(field),
@@ -144,17 +200,37 @@ export class TemplateCanvas extends Component {
 
     setup() {
         this.pageRef = useRef("page");
+        this.orm = useService("orm");
+        this._roleOptionsLoadToken = 0;
         this.paletteEntries = getFieldPaletteEntries();
         this.paletteByType = new Map(this.paletteEntries.map((entry) => [entry.type, entry]));
+        const actionContext = this.props.action?.context || {};
+        const contextTemplateId =
+            actionContext.active_model === TEMPLATE_MODEL
+                ? asPositiveInteger(actionContext.active_id)
+                : null;
 
-        const firstField = buildFieldRecord(1, 1, DEFAULT_FIELD_TYPE, 10);
         this.state = useState({
             activePage: 1,
-            nextId: 2,
+            nextId: 1,
+            templateId: contextTemplateId,
+            templateOptions: [],
+            roleOptions: [],
             pageSize: { ...DEFAULT_PAGE_SIZE },
-            fields: [firstField],
-            selectedFieldId: firstField.id,
+            fields: [],
+            selectedFieldId: null,
             interaction: null,
+        });
+
+        onWillStart(async () => {
+            await this._loadTemplateOptions();
+            if (!this.state.templateId && this.state.templateOptions.length) {
+                this.state.templateId = this.state.templateOptions[0].id;
+            }
+            await this._loadRoleOptions();
+            if (this.canAddFields && !this.state.fields.length) {
+                this.addField(DEFAULT_FIELD_TYPE);
+            }
         });
 
         useExternalListener(window, "pointermove", this.onPointerMove);
@@ -173,6 +249,18 @@ export class TemplateCanvas extends Component {
         return this.paletteEntries;
     }
 
+    get templateOptions() {
+        return this.state.templateOptions;
+    }
+
+    get roleOptions() {
+        return this.state.roleOptions;
+    }
+
+    get canAddFields() {
+        return Boolean(this.state.templateId) && this.state.roleOptions.length > 0;
+    }
+
     get selectedField() {
         return this.state.fields.find((field) => field.id === this.state.selectedFieldId) || null;
     }
@@ -185,8 +273,37 @@ export class TemplateCanvas extends Component {
         return this.selectedField ? supportsLengthBounds(this.selectedField.type) : false;
     }
 
+    get selectedFieldRoleValid() {
+        if (!this.selectedField) {
+            return true;
+        }
+        return isFieldRoleValid(this.selectedField, this.state.roleOptions);
+    }
+
+    get defaultRoleId() {
+        return this.state.roleOptions[0] ? this.state.roleOptions[0].id : null;
+    }
+
+    get invalidRoleFieldCount() {
+        return countInvalidFieldRoles(this.state.fields, this.state.roleOptions);
+    }
+
+    get hasInvalidRoleAssignments() {
+        return this.invalidRoleFieldCount > 0;
+    }
+
+    get canSerializeBackendPayload() {
+        return Boolean(this.state.templateId) && !this.hasInvalidRoleAssignments;
+    }
+
     get backendFieldPayload() {
-        return serializeTemplateFieldsForBackend(this.state.fields);
+        if (!this.canSerializeBackendPayload) {
+            return null;
+        }
+        return serializeTemplateFieldsForBackend(this.state.fields, {
+            requireValidRoles: true,
+            availableRoleIds: this.state.roleOptions,
+        });
     }
 
     getPaletteLabel(fieldType) {
@@ -194,16 +311,40 @@ export class TemplateCanvas extends Component {
         return entry ? entry.label : getPaletteEntryByType(DEFAULT_FIELD_TYPE).label;
     }
 
+    getRoleLabel(roleId) {
+        const normalizedRoleId = asPositiveInteger(roleId);
+        if (!normalizedRoleId) {
+            return ROLE_REQUIRED_LABEL;
+        }
+        const role = this.state.roleOptions.find((candidate) => candidate.id === normalizedRoleId);
+        return role ? role.name : INVALID_ROLE_LABEL;
+    }
+
     addField(fieldType = DEFAULT_FIELD_TYPE) {
+        if (!this.canAddFields) {
+            return;
+        }
         const fieldId = this.state.nextId;
         this.state.nextId += 1;
-        const field = buildFieldRecord(fieldId, this.state.activePage, fieldType, fieldId * 10);
+        const field = buildFieldRecord(
+            fieldId,
+            this.state.activePage,
+            fieldType,
+            fieldId * 10,
+            this.defaultRoleId
+        );
         this.state.fields.push(field);
         this.state.selectedFieldId = field.id;
     }
 
     addFieldFromPalette(fieldType) {
         this.addField(fieldType);
+    }
+
+    async onTemplateChange(ev) {
+        this.state.templateId = asPositiveInteger(ev.target.value);
+        this.state.roleOptions = [];
+        await this._loadRoleOptions();
     }
 
     removeSelectedField() {
@@ -242,11 +383,12 @@ export class TemplateCanvas extends Component {
 
     describeField(field) {
         const geometry = coerceRenderableGeometry(field);
+        const roleLabel = this.getRoleLabel(field.roleId);
         const x = Math.round(geometry.x * 100);
         const y = Math.round(geometry.y * 100);
         const width = Math.round(geometry.width * 100);
         const height = Math.round(geometry.height * 100);
-        return `${this.getPaletteLabel(field.type)} | p${geometry.page} | x:${x}% y:${y}% w:${width}% h:${height}%`;
+        return `${this.getPaletteLabel(field.type)} | ${roleLabel} | p${geometry.page} | x:${x}% y:${y}% w:${width}% h:${height}%`;
     }
 
     getFieldStyle(field) {
@@ -296,6 +438,10 @@ export class TemplateCanvas extends Component {
 
     updateSelectedFieldOptionList(ev) {
         this._updateSelectedFieldProperties({ optionList: ev.target.value });
+    }
+
+    updateSelectedFieldRole(ev) {
+        this._updateSelectedFieldProperties({ roleId: asPositiveInteger(ev.target.value) });
     }
 
     onFieldPointerDown(field, ev) {
@@ -369,6 +515,31 @@ export class TemplateCanvas extends Component {
         document.body.classList.add("o_open_sign_web_unselectable");
     }
 
+    async _loadTemplateOptions() {
+        this.state.templateOptions = await this.orm.searchRead(TEMPLATE_MODEL, [], ["id", "name"], {
+            order: "name, id",
+        });
+    }
+
+    async _loadRoleOptions() {
+        const loadToken = ++this._roleOptionsLoadToken;
+        const selectedTemplateId = this.state.templateId;
+        if (!selectedTemplateId) {
+            this.state.roleOptions = [];
+            return;
+        }
+        const roleOptions = await this.orm.searchRead(
+            ROLE_MODEL,
+            [["template_id", "=", selectedTemplateId]],
+            ["id", "name", "sequence"],
+            { order: "sequence, id" }
+        );
+        if (loadToken !== this._roleOptionsLoadToken) {
+            return;
+        }
+        this.state.roleOptions = roleOptions;
+    }
+
     _updateSelectedFieldProperties(patch = {}) {
         const field = this.selectedField;
         if (!field) {
@@ -383,6 +554,7 @@ export class TemplateCanvas extends Component {
         }
 
         Object.assign(field, {
+            roleId: asPositiveInteger(nextValues.roleId),
             type: nextType,
             label: sanitizeFieldLabel(nextValues.label, `${this.getPaletteLabel(nextType)} ${field.id}`),
             required: normalized.required,

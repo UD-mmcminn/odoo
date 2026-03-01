@@ -1200,7 +1200,7 @@ Legend:
 - [x] `T20` Scaffold addon and declare backend/frontend assets in `__manifest__.py`.
 - [x] `T21` Build template canvas with drag/drop/resizing on PDF pages.
 - [x] `T22` Build field palette and field property editor.
-- [ ] `T23` Implement signer role assignment in editor.
+- [x] `T23` Implement signer role assignment in editor.
 - [ ] `T24` Implement client-side value validation aligned with server rules.
 - [ ] `T25` Implement signature adoption dialog (draw/type/upload).
 - [ ] `T26` Add JS tests for geometry and validation payloads, including explicit frontend test-runner/discovery wiring so `/open_sign_web` test tags execute non-zero tests in CI.
@@ -1394,9 +1394,9 @@ Notes:
 
 Counts below track only `T*` development tasks in the phase task board.
 
-- Completed tasks: `35`
+- Completed tasks: `36`
 - In progress tasks: `0`
-- Remaining tasks: `50`
+- Remaining tasks: `49`
 
 ## Update Log
 
@@ -1447,3 +1447,5 @@ Counts below track only `T*` development tasks in the phase task board.
 | `2026-03-01` | Codex | Completed `T111` by adding scheduler automation (`data/ir_cron.xml`) and request cron methods for reminder dispatch + expiration transitions, including dedicated cron tests (`test_sign_cron.py`); reminder emails remain intentionally deferred to `T35` while current cron records reminder events via chatter + counters. |
 | `2026-03-01` | Codex | Completed `T112` by adding upgrade scripts (`upgrades/1.1/pre-migrate.py`, `upgrades/1.1/post-migrate.py`) and bumping addon version to `1.1`, with conservative data normalization to satisfy new schema constraints during upgrades and full `/open_sign` regression pass (`0 failed, 0 errors`). |
 | `2026-03-01` | Codex | Completed recurring hardening re-audit (`T610` / continuation task `T118`) over all completed M1 backend deliverables using the mandatory closeout checklist; no new blocking gaps found, deferred queue remains `DQ-001` (`T35`) and `DQ-002` (`T43`), and full `/open_sign` regression remains green (`0 failed, 0 errors`). |
+| `2026-03-01` | Codex | Completed `T23` by adding template-aware signer-role assignment in `open_sign_web` editor (template selector, role selector in field properties, role normalization against template roles, and backend payload role mapping via `role_id`), with regression verification on `/open_sign` (`74 tests, 0 failed`) and module/runtime validation for `/open_sign_web` (known frontend test discovery remains deferred to `T26`). |
+| `2026-03-01` | Codex | Applied `T23` hardening follow-up from holistic review: removed silent role reassignment on template switch, removed misleading `Unassigned` assignment path, gated field creation on template-role availability, guarded against stale async role-load responses, and expanded JS utility coverage for role-validity semantics. |

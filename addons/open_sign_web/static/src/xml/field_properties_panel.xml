@@ -31,6 +31,39 @@
                             </t>
                         </select>
                     </label>
+                    <label class="o_open_sign_web_input_group">
+                        <span>Signer Role</span>
+                        <select
+                            class="form-select form-select-sm"
+                            t-att-value="selectedFieldRoleValid ? selectedField.roleId : ''"
+                            t-att-disabled="!roleOptions.length"
+                            t-on-change="updateSelectedFieldRole"
+                        >
+                            <t t-if="roleOptions.length">
+                                <t t-if="!selectedFieldRoleValid">
+                                    <option value="">Role needs reassignment</option>
+                                </t>
+                                <t t-foreach="roleOptions" t-as="role" t-key="role.id">
+                                    <option t-att-value="role.id">
+                                        <t t-esc="role.name"/>
+                                    </option>
+                                </t>
+                            </t>
+                            <t t-else="">
+                                <option value="" disabled="1">No roles available</option>
+                            </t>
+                        </select>
+                    </label>
+                    <t t-if="roleOptions.length && !selectedFieldRoleValid">
+                        <div class="o_open_sign_web_role_help text-warning">
+                            This field references a role from a different template. Reassign it before save/export.
+                        </div>
+                    </t>
+                    <t t-if="!roleOptions.length">
+                        <div class="o_open_sign_web_role_help text-muted">
+                            Select a template with signer roles before assigning fields.
+                        </div>
+                    </t>
                     <label class="o_open_sign_web_input_group o_open_sign_web_checkbox_group">
                         <input
                             class="form-check-input"

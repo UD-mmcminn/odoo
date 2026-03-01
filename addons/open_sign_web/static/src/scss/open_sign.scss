@@ -13,6 +13,14 @@
     margin-bottom: 8px;
 }
 
+.o_open_sign_web_template_picker {
+    min-width: 280px;
+}
+
+.o_open_sign_web_canvas_notice {
+    font-size: 12px;
+}
+
 .o_open_sign_web_editor_layout {
     display: grid;
     grid-template-columns: 220px minmax(0, 1fr) 300px;
@@ -161,6 +169,10 @@
 }
 
 .o_open_sign_web_properties_empty {
+    font-size: 12px;
+}
+
+.o_open_sign_web_role_help {
     font-size: 12px;
 }
 

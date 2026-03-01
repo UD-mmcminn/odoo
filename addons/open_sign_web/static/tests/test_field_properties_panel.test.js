@@ -75,6 +75,7 @@ test("field-type capability helpers expose expected behavior", () => {
 
 test("toTemplateFieldVals maps editor state to backend-safe keys", () => {
     const vals = toTemplateFieldVals({
+        roleId: 11,
         type: "selection",
         label: "  Approver Choice  ",
         required: true,
@@ -89,6 +90,7 @@ test("toTemplateFieldVals maps editor state to backend-safe keys", () => {
     });
 
     expect(vals).toEqual({
+        role_id: 11,
         type: "selection",
         label: "Approver Choice",
         required: true,
@@ -102,4 +104,9 @@ test("toTemplateFieldVals maps editor state to backend-safe keys", () => {
             [0, 0, { value: "B", label: "B", sequence: 20 }],
         ],
     });
+});
+
+test("toTemplateFieldVals emits false role_id when role is not assigned", () => {
+    const vals = toTemplateFieldVals({ label: "  Field  " });
+    expect(vals.role_id).toBe(false);
 });

@@ -1,6 +1,8 @@
 import { expect, test } from "@odoo/hoot";
 
 import {
+    countInvalidFieldRoles,
+    isFieldRoleValid,
     serializeFieldGeometry,
     serializeTemplateFieldsForBackend,
 } from "@open_sign_web/js/template_canvas";
@@ -27,6 +29,7 @@ test("serializeTemplateFieldsForBackend maps to backend-safe keys only", () => {
     const payload = serializeTemplateFieldsForBackend([
         {
             id: 7,
+            roleId: 12,
             type: "selection",
             label: "  Approver  ",
             required: true,
@@ -48,6 +51,7 @@ test("serializeTemplateFieldsForBackend maps to backend-safe keys only", () => {
 
     expect(payload).toEqual([
         {
+            role_id: 12,
             type: "selection",
             label: "Approver",
             required: true,
@@ -67,4 +71,42 @@ test("serializeTemplateFieldsForBackend maps to backend-safe keys only", () => {
             height: 0.1,
         },
     ]);
+});
+
+test("isFieldRoleValid accepts only assigned roles from selected template", () => {
+    const roles = [{ id: 11, name: "Signer A" }, { id: 12, name: "Signer B" }];
+
+    expect(isFieldRoleValid({ roleId: 11 }, roles)).toBe(true);
+    expect(isFieldRoleValid({ roleId: "12" }, roles)).toBe(true);
+    expect(isFieldRoleValid({ roleId: 99 }, roles)).toBe(false);
+    expect(isFieldRoleValid({ roleId: null }, roles)).toBe(false);
+});
+
+test("countInvalidFieldRoles reports missing and stale role assignments", () => {
+    const roles = [{ id: 21, name: "Employee" }, { id: 22, name: "Customer" }];
+    const fields = [
+        { id: 1, roleId: 21 },
+        { id: 2, roleId: "22" },
+        { id: 3, roleId: 23 },
+        { id: 4, roleId: null },
+    ];
+
+    expect(countInvalidFieldRoles(fields, roles)).toBe(2);
+});
+
+test("serializeTemplateFieldsForBackend can enforce valid role assignment", () => {
+    let thrownError = null;
+    try {
+        serializeTemplateFieldsForBackend(
+            [{ label: "Field", roleId: null }],
+            {
+                requireValidRoles: true,
+                availableRoleIds: [{ id: 31 }],
+            }
+        );
+    } catch (error) {
+        thrownError = error;
+    }
+
+    expect(Boolean(thrownError)).toBe(true);
 });

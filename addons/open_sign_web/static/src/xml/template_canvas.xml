@@ -5,10 +5,40 @@
             <header class="o_open_sign_web_canvas_header d-flex align-items-center justify-content-between gap-2">
                 <span>Template Canvas</span>
                 <div class="d-flex align-items-center gap-2">
+                    <label class="o_open_sign_web_template_picker d-flex align-items-center gap-2 mb-0">
+                        <span class="text-muted small">Template</span>
+                        <select
+                            class="form-select form-select-sm"
+                            t-att-value="state.templateId || ''"
+                            t-on-change="onTemplateChange"
+                        >
+                            <option value="">Select a template</option>
+                            <t t-foreach="templateOptions" t-as="template" t-key="template.id">
+                                <option t-att-value="template.id">
+                                    <t t-esc="template.name"/>
+                                </option>
+                            </t>
+                        </select>
+                    </label>
                     <span class="text-muted small">
                         <t t-esc="state.fields.length"/> field(s)
                     </span>
-                    <button class="btn btn-sm btn-primary" type="button" t-on-click="() => addField()">
+                    <t t-if="hasInvalidRoleAssignments">
+                        <span class="o_open_sign_web_canvas_notice text-warning">
+                            <t t-esc="invalidRoleFieldCount"/> field(s) need role reassignment
+                        </span>
+                    </t>
+                    <t t-if="!canAddFields">
+                        <span class="o_open_sign_web_canvas_notice text-muted">
+                            Configure signer roles on the selected template before adding fields.
+                        </span>
+                    </t>
+                    <button
+                        class="btn btn-sm btn-primary"
+                        type="button"
+                        t-att-disabled="!canAddFields"
+                        t-on-click="() => addField()"
+                    >
                         Add Default Field
                     </button>
                 </div>
@@ -21,6 +51,7 @@
                             <button
                                 class="btn btn-outline-secondary btn-sm o_open_sign_web_palette_button"
                                 type="button"
+                                t-att-disabled="!canAddFields"
                                 t-on-click="() => addFieldFromPalette(entry.type)"
                             >
                                 <span class="o_open_sign_web_palette_label">
