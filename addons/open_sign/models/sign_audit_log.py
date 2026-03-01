@@ -71,6 +71,10 @@ class OpenSignAuditLog(models.Model):
         'UNIQUE(request_id, event_sequence)',
         'Audit event sequence must be unique per request.',
     )
+    _event_sequence_positive_check = models.Constraint(
+        'CHECK(event_sequence > 0)',
+        'Audit event sequence must be greater than zero.',
+    )
 
     @api.model
     def _can_repair_mutate_audit_log(self):
@@ -98,14 +102,28 @@ class OpenSignAuditLog(models.Model):
         if self.search_count(domain):
             raise ValidationError(_("Audit event sequence must be unique per request."))
 
+    @api.model
+    def _sanitize_event_sequence(self, event_sequence):
+        try:
+            normalized_sequence = int(event_sequence)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(_("Audit event sequence must be greater than zero.")) from exc
+        if normalized_sequence <= 0:
+            raise ValidationError(_("Audit event sequence must be greater than zero."))
+        return normalized_sequence
+
     @api.model_create_multi
     def create(self, vals_list):
+        default_vals = self.default_get(['request_id', 'hash_chain', 'event_sequence'])
         pending_hash_keys = set()
         pending_sequence_keys = set()
         for vals in vals_list:
-            request_id = vals.get('request_id')
-            hash_chain = vals.get('hash_chain')
-            event_sequence = vals.get('event_sequence')
+            request_id = vals.get('request_id', default_vals.get('request_id'))
+            hash_chain = vals.get('hash_chain', default_vals.get('hash_chain'))
+            event_sequence = vals.get('event_sequence', default_vals.get('event_sequence'))
+            if event_sequence is not None:
+                event_sequence = self._sanitize_event_sequence(event_sequence)
+                vals['event_sequence'] = event_sequence
             if request_id and hash_chain:
                 hash_key = (request_id, hash_chain)
                 if hash_key in pending_hash_keys:

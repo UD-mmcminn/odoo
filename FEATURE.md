@@ -8,7 +8,7 @@
 | Version | `1.1.0` |
 | Status | `Active (Living Document)` |
 | Created | `2026-02-26` |
-| Last Updated | `2026-02-28` |
+| Last Updated | `2026-03-01` |
 | Product Area | `Open Sign Odoo Addons` |
 | Primary Owner | `Engineering` |
 | Review Cadence | `Weekly or at milestone close` |
@@ -1181,9 +1181,9 @@ Legend:
 - [x] `T17` Implement `open.sign.audit.log` immutable records.
 - [x] `T18` Implement validation service for required/optional and field-type checks (including signer evidence fields: `consent_text_hash`, `signer_timezone`, `ip_last` format validation).
 - [x] `T19` Create base backend menus and form/tree/kanban views.
-- [ ] `T110` Add SQL constraints, FK `ondelete` policies, and indexes per schema contract.
-- [ ] `T111` Implement cron jobs for reminders and expiration.
-- [ ] `T112` Add core migration hooks and upgrade scripts aligned to schema contract evolution.
+- [x] `T110` Add SQL constraints, FK `ondelete` policies, and indexes per schema contract.
+- [x] `T111` Implement cron jobs for reminders and expiration.
+- [x] `T112` Add core migration hooks and upgrade scripts aligned to schema contract evolution.
 - [x] `T113` Implement security groups + ACL/record-rule matrix from design baseline.
 
 ### Phase 2: Web Editor Addon (`open_sign_web`)
@@ -1250,7 +1250,7 @@ Legend:
 - [ ] `T67` Execute backup/restore and failure-recovery validation.
 - [ ] `T68` Run data retention and purge dry-run verification.
 - [ ] `T69` Run lint/conformance checks (`test_lint` subset, manifest and module structure checks).
-- [ ] `T610` Run recurring hardening re-audit on completed tasks using the closeout checklist (server-authority fields, action preconditions, denial-path tests, UI/server alignment) and file follow-up fixes.
+- [x] `T610` Run recurring hardening re-audit on completed tasks using the closeout checklist (server-authority fields, action preconditions, denial-path tests, UI/server alignment) and file follow-up fixes.
 
 ## Requirement Traceability Matrix
 
@@ -1291,7 +1291,7 @@ Legend:
 | Milestone | Target | Exit Criteria |
 |---|---|---|
 | `M0` Design Freeze | `2026-02-26 (Complete)` | `T01`-`T09`, `T90`-`T99` complete, ADRs updated |
-| `M1` Core Backend | `In Progress (started 2026-02-26)` | `T10`-`T19`, `T110`-`T113` complete + tests green |
+| `M1` Core Backend | `Complete (2026-03-01)` | `T10`-`T19`, `T110`-`T113` complete + tests green |
 | `M2` Editor UX | TBD | `T20`-`T26` complete + demo approved |
 | `M3` Portal Signing | TBD | `T30`-`T39`, `T310`-`T317` complete + security baseline pass |
 | `M4` PDF + Audit | TBD | `T40`-`T47`, `T410`-`T411` complete + E2E pass |
@@ -1308,7 +1308,7 @@ Legend:
 | `RK-004` | Legal expectations exceed MVP evidence model | High | Early legal review and explicit compliance baseline | Product | Open |
 | `RK-005` | Certificate support complexity impacts timeline | Medium | Keep addon optional and behind milestone gate | Engineering | Open |
 | `RK-006` | PDF/certificate dependency licensing incompatibility | Medium | License review at `T05`; pin approved libraries only | Engineering | Open |
-| `RK-007` | Missing migration scripts causes upgrade regressions | High | Implement `T112` and upgrade tests in CI | Backend | Open |
+| `RK-007` | Missing migration scripts causes upgrade regressions | High | Implement `T112` and upgrade tests in CI | Backend | Mitigated (`T112` complete; keep CI upgrade coverage active) |
 | `RK-008` | Retention/purge process removes evidence prematurely | High | Controlled policy, dry-run mode, audit on purge events | Ops/Product | Open |
 | `RK-009` | Addon diverges from Odoo lint/convention expectations | Medium | Track `T09` + `T69`, enforce review checklist in PRs | Engineering | Open |
 | `RK-010` | Junior implementation diverges from intended architecture | High | Enforce task card + PR checklist + code reference evidence (`T90`-`T92`) | Engineering | Open |
@@ -1385,9 +1385,9 @@ Notes:
 
 Counts below track only `T*` development tasks in the phase task board.
 
-- Completed tasks: `28`
+- Completed tasks: `32`
 - In progress tasks: `0`
-- Remaining tasks: `57`
+- Remaining tasks: `53`
 
 ## Update Log
 
@@ -1428,3 +1428,7 @@ Counts below track only `T*` development tasks in the phase task board.
 | `2026-02-28` | Codex | Completed follow-up hardening re-audit fixes: enforced request immutability for terminal states including `cancelled`, preserved retention evidence via request soft-delete behavior validation (no cascade loss of signer/value/audit rows), made multi-record request-value writes savepointed/all-or-nothing, and expanded terminal/atomicity regression coverage; `open_sign` suite remains green (`0 failed, 0 errors`). |
 | `2026-02-28` | Codex | Completed `T113` by implementing `open_sign_security.xml` record-rule matrix (company isolation on all operational models plus owner/assignee scope for request-linked models), adding dedicated multi-company/ownership security tests (`test_sign_security_rules.py`), aligning existing ACL fixtures with owner-scoped behavior, and re-validating `/open_sign` (`0 failed, 0 errors` of 69 tests). |
 | `2026-02-28` | Codex | Added deferred portal task track `T310`-`T315` for email-only signer authentication via email+token magic links (strategy decision, issuance/revocation, lifecycle hardening, audit taxonomy, and denial-path/E2E tests), and updated traceability/milestone/risk mappings. |
+| `2026-03-01` | Codex | Completed `T110` with schema-hardening controls across core models (new SQL checks, FK `ondelete` alignment, and index additions), added create/write pre-validation to preserve deterministic `ValidationError` behavior before DB checks, and revalidated full `/open_sign` (`0 failed, 0 errors`). |
+| `2026-03-01` | Codex | Completed `T111` by adding scheduler automation (`data/ir_cron.xml`) and request cron methods for reminder dispatch + expiration transitions, including dedicated cron tests (`test_sign_cron.py`); reminder emails remain intentionally deferred to `T35` while current cron records reminder events via chatter + counters. |
+| `2026-03-01` | Codex | Completed `T112` by adding upgrade scripts (`upgrades/1.1/pre-migrate.py`, `upgrades/1.1/post-migrate.py`) and bumping addon version to `1.1`, with conservative data normalization to satisfy new schema constraints during upgrades and full `/open_sign` regression pass (`0 failed, 0 errors`). |
+| `2026-03-01` | Codex | Completed recurring hardening re-audit (`T610` / continuation task `T118`) over all completed M1 backend deliverables using the mandatory closeout checklist; no new blocking gaps found, deferred queue remains `DQ-001` (`T35`) and `DQ-002` (`T43`), and full `/open_sign` regression remains green (`0 failed, 0 errors`). |

@@ -59,7 +59,7 @@ class OpenSignRequestSigner(models.Model):
     signed_at = fields.Datetime(index=True)
     declined_reason = fields.Text()
     last_opened_at = fields.Datetime(index=True)
-    ip_last = fields.Char()
+    ip_last = fields.Char(size=45)
     consent_accepted_at = fields.Datetime(index=True)
     consent_text_hash = fields.Char()
     signer_timezone = fields.Char()
@@ -75,6 +75,14 @@ class OpenSignRequestSigner(models.Model):
     _request_role_uniq = models.Constraint(
         'UNIQUE(request_id, role_id)',
         'Each role can be assigned only once per request.',
+    )
+    _sequence_non_negative_check = models.Constraint(
+        'CHECK(sequence >= 0)',
+        'Signer sequence must be zero or greater.',
+    )
+    _signed_state_requires_timestamp_check = models.Constraint(
+        "CHECK(state != 'signed' OR signed_at IS NOT NULL)",
+        'Signed signer state requires signed_at timestamp.',
     )
 
     @api.model
@@ -166,6 +174,21 @@ class OpenSignRequestSigner(models.Model):
         return normalized_timezone
 
     @api.model
+    def _sanitize_sequence(self, sequence):
+        try:
+            normalized_sequence = int(sequence)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(_("Signer sequence must be zero or greater.")) from exc
+        if normalized_sequence < 0:
+            raise ValidationError(_("Signer sequence must be zero or greater."))
+        return normalized_sequence
+
+    @api.model
+    def _check_signed_state_timestamp_pair(self, state, signed_at):
+        if state == 'signed' and not signed_at:
+            raise ValidationError(_("Signed signer state requires signed_at timestamp."))
+
+    @api.model
     def _check_role_available(self, request_id, role_id, excluded_ids=None):
         domain = [
             ('request_id', '=', request_id),
@@ -179,19 +202,23 @@ class OpenSignRequestSigner(models.Model):
     @api.model_create_multi
     def create(self, vals_list):
         pending_keys = set()
-        create_fields = {'request_id', 'role_id', 'email'} | set(LIFECYCLE_FIELDS)
+        create_fields = {'request_id', 'role_id', 'email', 'sequence'} | set(LIFECYCLE_FIELDS)
         for vals in vals_list:
             defaults, effective_vals = self._get_effective_create_vals(vals, create_fields)
             self._guard_request_state_on_create(effective_vals)
             self._guard_lifecycle_values_on_create(effective_vals)
             if 'email' in vals or 'email' in defaults:
                 vals['email'] = self._sanitize_email(effective_vals.get('email'))
+            if 'sequence' in vals or 'sequence' in defaults:
+                vals['sequence'] = self._sanitize_sequence(effective_vals.get('sequence'))
             if 'ip_last' in vals or 'ip_last' in defaults:
                 vals['ip_last'] = self._sanitize_ip_last(effective_vals.get('ip_last'))
             if 'consent_text_hash' in vals or 'consent_text_hash' in defaults:
                 vals['consent_text_hash'] = self._sanitize_consent_text_hash(effective_vals.get('consent_text_hash'))
             if 'signer_timezone' in vals or 'signer_timezone' in defaults:
                 vals['signer_timezone'] = self._sanitize_signer_timezone(effective_vals.get('signer_timezone'))
+            if {'state', 'signed_at'}.intersection(vals) or {'state', 'signed_at'}.intersection(defaults):
+                self._check_signed_state_timestamp_pair(effective_vals.get('state'), effective_vals.get('signed_at'))
             request_id = effective_vals.get('request_id')
             role_id = effective_vals.get('role_id')
             if request_id and role_id:
@@ -208,12 +235,20 @@ class OpenSignRequestSigner(models.Model):
         self._guard_lifecycle_values_on_write(vals)
         if 'email' in vals:
             vals['email'] = self._sanitize_email(vals['email'])
+        if 'sequence' in vals:
+            vals['sequence'] = self._sanitize_sequence(vals['sequence'])
         if 'ip_last' in vals:
             vals['ip_last'] = self._sanitize_ip_last(vals['ip_last'])
         if 'consent_text_hash' in vals:
             vals['consent_text_hash'] = self._sanitize_consent_text_hash(vals['consent_text_hash'])
         if 'signer_timezone' in vals:
             vals['signer_timezone'] = self._sanitize_signer_timezone(vals['signer_timezone'])
+        if 'state' in vals or 'signed_at' in vals:
+            for signer in self:
+                self._check_signed_state_timestamp_pair(
+                    vals.get('state', signer.state),
+                    vals.get('signed_at', signer.signed_at),
+                )
         if 'request_id' in vals or 'role_id' in vals:
             candidate_keys = set()
             for signer in self:

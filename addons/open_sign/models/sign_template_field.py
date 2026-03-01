@@ -58,6 +58,27 @@ class OpenSignTemplateField(models.Model):
     option_ids = fields.One2many('open.sign.template.field.option', 'field_id', string='Options')
     request_value_ids = fields.One2many('open.sign.request.value', 'template_field_id', string='Request Values')
 
+    _page_positive_check = models.Constraint(
+        'CHECK(page >= 1)',
+        'Field page must be 1 or greater.',
+    )
+    _geometry_bounds_check = models.Constraint(
+        'CHECK(x >= 0 AND x <= 1 AND y >= 0 AND y <= 1 AND width > 0 AND width <= 1 AND height > 0 AND height <= 1)',
+        'Field geometry must stay within normalized page bounds.',
+    )
+    _sequence_non_negative_check = models.Constraint(
+        'CHECK(sequence >= 0)',
+        'Field sequence must be zero or greater.',
+    )
+    _length_bounds_check = models.Constraint(
+        'CHECK((min_length IS NULL OR min_length >= 0) AND (max_length IS NULL OR max_length >= 0) AND (min_length IS NULL OR max_length IS NULL OR max_length >= min_length))',
+        'Field length bounds must be valid.',
+    )
+    _label_non_empty_check = models.Constraint(
+        "CHECK(length(btrim(label)) > 0)",
+        'Field label cannot be empty.',
+    )
+
     @api.model
     def _normalize_label(self, label):
         return (label or '').strip()
@@ -69,17 +90,72 @@ class OpenSignTemplateField(models.Model):
             raise ValidationError(_("Field label cannot be empty."))
         return normalized_label
 
+    @api.model
+    def _validate_label_invariant_value(self, label):
+        normalized_label = self._normalize_label(label)
+        if not normalized_label:
+            raise ValidationError(_("Field label cannot be empty."))
+        if label != normalized_label:
+            raise ValidationError(_("Field label cannot contain leading or trailing whitespace."))
+
+    @api.model
+    def _validate_scalar_bounds(self, *, page, x, y, width, height, sequence, min_length, max_length):
+        if page is not None and page < 1:
+            raise ValidationError(_("Field page must be 1 or greater."))
+        if x is not None and (x < 0 or x > 1):
+            raise ValidationError(_("Field x coordinate must be between 0 and 1."))
+        if y is not None and (y < 0 or y > 1):
+            raise ValidationError(_("Field y coordinate must be between 0 and 1."))
+        if width is not None and (width <= 0 or width > 1):
+            raise ValidationError(_("Field width must be greater than 0 and at most 1."))
+        if height is not None and (height <= 0 or height > 1):
+            raise ValidationError(_("Field height must be greater than 0 and at most 1."))
+        if sequence is not None and sequence < 0:
+            raise ValidationError(_("Field sequence must be zero or greater."))
+        if min_length is not None and min_length < 0:
+            raise ValidationError(_("Minimum length must be zero or greater."))
+        if max_length is not None and max_length < 0:
+            raise ValidationError(_("Maximum length must be zero or greater."))
+        if min_length is not None and max_length is not None and max_length < min_length:
+            raise ValidationError(_("Maximum length must be greater than or equal to minimum length."))
+
     @api.model_create_multi
     def create(self, vals_list):
+        default_vals = self.default_get(['label', 'page', 'x', 'y', 'width', 'height', 'sequence', 'min_length', 'max_length'])
         for vals in vals_list:
             if 'label' in vals:
                 vals['label'] = self._sanitize_label(vals['label'])
+            elif 'label' in default_vals:
+                self._validate_label_invariant_value(default_vals.get('label'))
+                vals['label'] = default_vals.get('label')
+            self._validate_scalar_bounds(
+                page=vals.get('page', default_vals.get('page')),
+                x=vals.get('x', default_vals.get('x')),
+                y=vals.get('y', default_vals.get('y')),
+                width=vals.get('width', default_vals.get('width')),
+                height=vals.get('height', default_vals.get('height')),
+                sequence=vals.get('sequence', default_vals.get('sequence')),
+                min_length=vals.get('min_length', default_vals.get('min_length')),
+                max_length=vals.get('max_length', default_vals.get('max_length')),
+            )
         return super().create(vals_list)
 
     def write(self, vals):
         vals = dict(vals)
         if 'label' in vals:
             vals['label'] = self._sanitize_label(vals['label'])
+        if {'page', 'x', 'y', 'width', 'height', 'sequence', 'min_length', 'max_length'}.intersection(vals):
+            for field in self:
+                self._validate_scalar_bounds(
+                    page=vals.get('page', field.page),
+                    x=vals.get('x', field.x),
+                    y=vals.get('y', field.y),
+                    width=vals.get('width', field.width),
+                    height=vals.get('height', field.height),
+                    sequence=vals.get('sequence', field.sequence),
+                    min_length=vals.get('min_length', field.min_length),
+                    max_length=vals.get('max_length', field.max_length),
+                )
         return super().write(vals)
 
     @api.constrains('label')

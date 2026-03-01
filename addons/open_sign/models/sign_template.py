@@ -28,6 +28,7 @@ class OpenSignTemplate(models.Model):
         string='Source PDF',
         required=True,
         ondelete='restrict',
+        index=True,
         check_company=True,
         tracking=True,
     )
@@ -35,6 +36,7 @@ class OpenSignTemplate(models.Model):
     company_id = fields.Many2one(
         'res.company',
         required=True,
+        ondelete='restrict',
         index=True,
         default=lambda self: self.env.company,
     )

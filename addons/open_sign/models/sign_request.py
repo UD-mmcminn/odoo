@@ -1,6 +1,7 @@
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 
 import re
+from datetime import timedelta
 
 from odoo import _, api, fields, models
 from odoo.exceptions import ValidationError
@@ -32,6 +33,7 @@ ALLOWED_STATUS_TRANSITIONS = {
     'cancelled': set(),
     'voided': set(),
 }
+REMINDER_ELIGIBLE_STATUSES = {'sent', 'opened', 'in_progress', 'partially_signed'}
 
 
 class OpenSignRequest(models.Model):
@@ -100,6 +102,7 @@ class OpenSignRequest(models.Model):
     company_id = fields.Many2one(
         'res.company',
         required=True,
+        ondelete='restrict',
         default=lambda self: self.env.company,
         index=True,
     )
@@ -112,14 +115,69 @@ class OpenSignRequest(models.Model):
     signed_count = fields.Integer(compute='_compute_signer_counts', store=True, index=True)
     pending_count = fields.Integer(compute='_compute_signer_counts', store=True, index=True)
     declined_count = fields.Integer(compute='_compute_signer_counts', store=True, index=True)
+    reminder_count = fields.Integer(required=True, default=0, index=True)
+    last_reminder_at = fields.Datetime(index=True)
     last_event_at = fields.Datetime(index=True)
+
+    _lock_version_non_negative_check = models.Constraint(
+        'CHECK(lock_version >= 0)',
+        'Lock version must be zero or greater.',
+    )
+    _evidence_schema_non_empty_check = models.Constraint(
+        "CHECK(length(btrim(evidence_schema_version)) > 0)",
+        'Evidence schema version cannot be empty.',
+    )
+    _reminder_count_non_negative_check = models.Constraint(
+        'CHECK(reminder_count >= 0)',
+        'Reminder count must be zero or greater.',
+    )
+
+    @api.model
+    def _sanitize_lock_version(self, lock_version):
+        try:
+            normalized_lock_version = int(lock_version)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(_("Lock version must be zero or greater.")) from exc
+        if normalized_lock_version < 0:
+            raise ValidationError(_("Lock version must be zero or greater."))
+        return normalized_lock_version
+
+    @api.model
+    def _sanitize_reminder_count(self, reminder_count):
+        try:
+            normalized_reminder_count = int(reminder_count)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(_("Reminder count must be zero or greater.")) from exc
+        if normalized_reminder_count < 0:
+            raise ValidationError(_("Reminder count must be zero or greater."))
+        return normalized_reminder_count
+
+    @api.model
+    def _sanitize_evidence_schema_version(self, evidence_schema_version):
+        normalized_schema_version = (evidence_schema_version or '').strip()
+        if not normalized_schema_version:
+            raise ValidationError(_("Evidence schema version cannot be empty."))
+        return normalized_schema_version
 
     @api.model_create_multi
     def create(self, vals_list):
+        default_vals = self.default_get(['status', 'evidence_schema_version', 'lock_version', 'reminder_count'])
         for vals in vals_list:
-            status = vals.get('status', 'draft')
+            status = vals.get('status', default_vals.get('status', 'draft'))
             if status != 'draft':
                 raise ValidationError(_("Sign requests must be created in draft status."))
+            if 'evidence_schema_version' in vals or 'evidence_schema_version' in default_vals:
+                vals['evidence_schema_version'] = self._sanitize_evidence_schema_version(
+                    vals.get('evidence_schema_version', default_vals.get('evidence_schema_version'))
+                )
+            if 'lock_version' in vals or 'lock_version' in default_vals:
+                vals['lock_version'] = self._sanitize_lock_version(
+                    vals.get('lock_version', default_vals.get('lock_version'))
+                )
+            if 'reminder_count' in vals or 'reminder_count' in default_vals:
+                vals['reminder_count'] = self._sanitize_reminder_count(
+                    vals.get('reminder_count', default_vals.get('reminder_count'))
+                )
         return super().create(vals_list)
 
     @api.model
@@ -199,6 +257,13 @@ class OpenSignRequest(models.Model):
                 raise ValidationError(_("Cannot send a request without at least one pending or opened signer."))
 
     def write(self, vals):
+        vals = dict(vals)
+        if 'evidence_schema_version' in vals:
+            vals['evidence_schema_version'] = self._sanitize_evidence_schema_version(vals['evidence_schema_version'])
+        if 'lock_version' in vals:
+            vals['lock_version'] = self._sanitize_lock_version(vals['lock_version'])
+        if 'reminder_count' in vals:
+            vals['reminder_count'] = self._sanitize_reminder_count(vals['reminder_count'])
         vals = self._sanitize_retention_fields_on_write(vals)
         self._guard_terminal_request_mutation(vals)
         self._check_binding_immutability(vals)
@@ -252,6 +317,66 @@ class OpenSignRequest(models.Model):
             return candidates.sorted(lambda signer: (signer.sequence, signer.id))
         first_sequence = min(candidates.mapped('sequence'))
         return candidates.filtered(lambda signer: signer.sequence == first_sequence).sorted(lambda signer: (signer.sequence, signer.id))
+
+    @api.model
+    def _get_reminder_interval(self):
+        config = self.env['ir.config_parameter'].sudo()
+        raw_interval = config.get_param('open_sign.reminder_interval_hours', default='24')
+        try:
+            interval_hours = max(int(raw_interval), 1)
+        except (TypeError, ValueError):
+            interval_hours = 24
+        return timedelta(hours=interval_hours)
+
+    def _is_reminder_due(self, now, reminder_interval):
+        self.ensure_one()
+        if self.status not in REMINDER_ELIGIBLE_STATUSES:
+            return False
+        if self.expires_at and self.expires_at <= now:
+            return False
+        if not self.sent_at:
+            return False
+        if self.sent_at > (now - reminder_interval):
+            return False
+        if self.last_reminder_at and self.last_reminder_at > (now - reminder_interval):
+            return False
+        return bool(self._get_actionable_signers())
+
+    @api.model
+    def _cron_send_reminders(self):
+        now = fields.Datetime.now()
+        reminder_interval = self._get_reminder_interval()
+        candidate_requests = self.sudo().search([
+            ('active', '=', True),
+            ('status', 'in', list(REMINDER_ELIGIBLE_STATUSES)),
+            ('sent_at', '!=', False),
+            '|',
+            ('expires_at', '=', False),
+            ('expires_at', '>', now),
+        ])
+        for request in candidate_requests:
+            if not request._is_reminder_due(now, reminder_interval):
+                continue
+            request.message_post(body=_("Signing reminder sent to pending signer(s)."))
+            request.write({
+                'last_reminder_at': now,
+                'reminder_count': request.reminder_count + 1,
+                'last_event_at': now,
+            })
+        return True
+
+    @api.model
+    def _cron_expire_requests(self):
+        now = fields.Datetime.now()
+        expirable_requests = self.sudo().search([
+            ('active', '=', True),
+            ('status', 'in', list(REMINDER_ELIGIBLE_STATUSES)),
+            ('expires_at', '!=', False),
+            ('expires_at', '<=', now),
+        ])
+        for request in expirable_requests:
+            request._transition_to('expired', {'last_event_at': now})
+        return True
 
     def action_version(self):
         now = fields.Datetime.now()

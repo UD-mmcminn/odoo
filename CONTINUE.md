@@ -1,7 +1,7 @@
 # Open Sign Continuation Notes
 
-Last updated: 2026-02-28
-Scope checkpoint: T113 closed out on Odoo 19
+Last updated: 2026-03-01
+Scope checkpoint: T118/T610 hardening re-audit closed on Odoo 19
 
 ## Why This Exists
 
@@ -82,7 +82,7 @@ Use this before marking any task complete (especially model/state/security work)
 
 - M0 is closed.
 - M1 is open and in progress.
-- `T10`, `T11`, `T12`, `T13`, `T14`, `T15`, `T16`, `T17`, `T18`, `T19`, `T113` are marked complete in `FEATURE.md`.
+- `T10`, `T11`, `T12`, `T13`, `T14`, `T15`, `T16`, `T17`, `T18`, `T19`, `T110`, `T111`, `T112`, `T113` are marked complete in `FEATURE.md`.
 - T12 final review is complete; no additional in-scope blockers were identified.
 - `T13` implementation and closeout are complete (models, ACL, views, tests, Odoo 19 compatibility fixes, deprecated-call cleanup).
 - `T14` implementation and closeout are complete (request lifecycle model, version snapshot binding, transition guards, ACL + views, runtime tests green).
@@ -94,6 +94,10 @@ Use this before marking any task complete (especially model/state/security work)
 - `T18` implementation and closeout are complete (centralized field validation service, request value required/optional and rule validation, signer evidence-field format validation, and expanded regression coverage).
 - `T19` implementation and closeout are complete (base backend navigation, list/form/kanban coverage across core models, standalone backend views for version/signer/value/audit models, and backend-view regression tests).
 - `T18`/`T19` post-review hardening is applied: non-superuser signer/value create/write/unlink mutations are now blocked when request status is terminal (`completed`, `cancelled`, `voided`), with dedicated denial-path regression tests.
+- `T110` implementation and closeout are complete (schema-hardening SQL checks/FK/index updates plus pre-validation guards to keep deterministic model-level errors); full `/open_sign` suite is green.
+- `T111` implementation and closeout are complete (scheduled actions + reminder/expiration cron handlers + dedicated cron tests); full `/open_sign` suite is green.
+- `T112` implementation and closeout are complete (upgrade scripts in `upgrades/1.1`, addon version bump to `1.1`, migration-time data normalization for new schema constraints); full `/open_sign` suite is green.
+- `T118` (`FEATURE.md` `T610`) recurring hardening re-audit is complete with no new blocking findings; server-authority controls, denial paths, ACL/rule expectations, and UI/server alignment remain intact across completed M1 scope.
 
 ## What Was Implemented For T12
 
@@ -539,10 +543,14 @@ Use this before marking any task complete (especially model/state/security work)
 
 - No current runtime blocker for `open_sign` test execution in this environment.
 - `T113` security-scope follow-up is now completed and validated with dedicated multi-company/ownership tests.
-- Remaining core-addon follow-up stays focused on:
-  - `T110` SQL constraints/FK/index contract completion
-  - `T111` reminder/expiration cron implementation
-  - `T112` migration hooks/upgrades alignment
+- Remaining follow-up for the just-closed M1 scope:
+  - monitor reminder cadence behavior in real environments and tune via `open_sign.reminder_interval_hours`
+  - maintain upgrade-script CI coverage so `T112` remains effective across future schema changes
+
+## Deferred Queue (Tracked Next-Up)
+
+- `DQ-001` (`T35`): reminder/invitation/completion email delivery remains deferred; current `T111` reminder cron records reminder events via chatter + reminder counters only.
+- `DQ-002` (`T43`): audit hash-chain continuity checks remain deferred to service-level implementation.
 
 ## Files Most Relevant To Resume
 
@@ -566,11 +574,15 @@ Use this before marking any task complete (especially model/state/security work)
 - `addons/open_sign/views/sign_menus.xml`
 - `addons/open_sign/security/ir.model.access.csv`
 - `addons/open_sign/__manifest__.py`
+- `addons/open_sign/data/ir_cron.xml`
+- `addons/open_sign/upgrades/1.1/pre-migrate.py`
+- `addons/open_sign/upgrades/1.1/post-migrate.py`
 - `addons/open_sign/tests/test_sign_role.py`
 - `addons/open_sign/tests/test_sign_template_field.py`
 - `addons/open_sign/tests/test_sign_request.py`
 - `addons/open_sign/tests/test_sign_request_value.py`
 - `addons/open_sign/tests/test_sign_audit_log.py`
+- `addons/open_sign/tests/test_sign_cron.py`
 - `addons/open_sign/tests/test_sign_backend_views.py`
 - `FEATURE.md`
 
@@ -584,19 +596,19 @@ Use this before marking any task complete (especially model/state/security work)
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign/tests/test_sign_audit_log.py --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign/tests/test_sign_security_rules.py --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign --stop-after-init`
-2. If tests pass, proceed to `T118` (recurring hardening re-audit over completed backend tasks).
-3. Prioritize `T110`/`T111`/`T112` for remaining Phase 1 backend completion.
+2. If tests pass, proceed to Phase 2 kickoff (`T20`).
+3. Re-run recurring hardening re-audit (`T610`) after each major phase slice and after every 3 completed implementation tasks.
 
 ## Next Tasks (Planned Order)
 
-1. `T118` Run recurring hardening re-audit over completed backend tasks and file follow-up fixes if any checklist gaps are found.
-2. `T110` Add SQL constraints, FK `ondelete` policies, and indexes per schema contract.
-3. `T111` Implement cron jobs for reminders and expiration.
-4. `T112` Add core migration hooks and upgrade scripts aligned to schema contract evolution.
+1. `T20` Scaffold `open_sign_web` addon and declare backend/frontend assets in `__manifest__.py`.
+2. `T21` Build template canvas with drag/drop/resizing on PDF pages.
+3. `T22` Build field palette and field property editor.
+4. `T35` (deferred reminder email scope) implement invitation/reminder/completion notifications after portal flow foundations.
 
 ## Notes For Next Chat
 
-- If the next session starts at `T118`, preserve `T17`/`T18`/`T19` invariants:
+- If the next session starts at recurring hardening re-audit (`T610` / continuation `T118`), preserve `T17`/`T18`/`T19` invariants:
   - no direct mutation of existing audit rows outside privileged repair context
   - request-local uniqueness on audit sequence/hash
   - hash-chain continuity remains deferred to `T43` service-level logic

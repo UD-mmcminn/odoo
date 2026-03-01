@@ -29,6 +29,7 @@ class OpenSignTemplateVersion(models.Model):
         'ir.attachment',
         required=True,
         ondelete='restrict',
+        index=True,
         check_company=True,
     )
     source_pdf_sha256 = fields.Char(required=True, index=True)
@@ -61,6 +62,10 @@ class OpenSignTemplateVersion(models.Model):
     _template_version_uniq = models.Constraint(
         'UNIQUE(template_id, version_number)',
         'Template version number must be unique per template.',
+    )
+    _version_number_positive_check = models.Constraint(
+        'CHECK(version_number > 0)',
+        'Template version number must be greater than zero.',
     )
 
     def _can_mutate_version_record(self):

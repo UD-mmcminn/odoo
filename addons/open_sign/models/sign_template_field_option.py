@@ -27,6 +27,18 @@ class OpenSignTemplateFieldOption(models.Model):
         'UNIQUE(field_id, value)',
         'Option values must be unique per field.',
     )
+    _sequence_non_negative_check = models.Constraint(
+        'CHECK(sequence >= 0)',
+        'Option sequence must be zero or greater.',
+    )
+    _value_non_empty_check = models.Constraint(
+        "CHECK(length(btrim(value)) > 0)",
+        'Option value cannot be empty.',
+    )
+    _label_non_empty_check = models.Constraint(
+        "CHECK(length(btrim(label)) > 0)",
+        'Option label cannot be empty.',
+    )
 
     @api.model
     def _check_value_available(self, field_id, value, excluded_ids=None):
@@ -46,20 +58,56 @@ class OpenSignTemplateFieldOption(models.Model):
             raise ValidationError(message)
         return normalized_text
 
+    @api.model
+    def _validate_text_invariant_value(self, text, empty_message, spacing_message):
+        normalized_text = (text or '').strip()
+        if not normalized_text:
+            raise ValidationError(empty_message)
+        if text != normalized_text:
+            raise ValidationError(spacing_message)
+
+    @api.model
+    def _sanitize_sequence(self, sequence):
+        try:
+            normalized_sequence = int(sequence)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(_("Option sequence must be zero or greater.")) from exc
+        if normalized_sequence < 0:
+            raise ValidationError(_("Option sequence must be zero or greater."))
+        return normalized_sequence
+
     @api.model_create_multi
     def create(self, vals_list):
+        default_vals = self.default_get(['field_id', 'value', 'label', 'sequence'])
         pending_keys = set()
         for vals in vals_list:
             if 'value' in vals:
                 vals['value'] = self._sanitize_text(vals['value'], _("Option value cannot be empty."))
+            elif 'value' in default_vals:
+                self._validate_text_invariant_value(
+                    default_vals.get('value'),
+                    _("Option value cannot be empty."),
+                    _("Option value cannot contain leading or trailing whitespace."),
+                )
+                vals['value'] = default_vals.get('value')
             if 'label' in vals:
                 vals['label'] = self._sanitize_text(vals['label'], _("Option label cannot be empty."))
-            field_id = vals.get('field_id')
-            if field_id and vals.get('value'):
-                key = (field_id, vals['value'])
+            elif 'label' in default_vals:
+                self._validate_text_invariant_value(
+                    default_vals.get('label'),
+                    _("Option label cannot be empty."),
+                    _("Option label cannot contain leading or trailing whitespace."),
+                )
+                vals['label'] = default_vals.get('label')
+            if 'sequence' in vals or 'sequence' in default_vals:
+                vals['sequence'] = self._sanitize_sequence(vals.get('sequence', default_vals.get('sequence')))
+            field_id = vals.get('field_id', default_vals.get('field_id'))
+            option_value = vals.get('value')
+            if field_id and option_value:
+                key = (field_id, option_value)
                 if key in pending_keys:
                     raise ValidationError(_("Option values must be unique per field."))
-                self._check_value_available(field_id, vals['value'])
+                self._check_value_available(field_id, option_value)
                 pending_keys.add(key)
         return super().create(vals_list)
 
@@ -69,6 +117,8 @@ class OpenSignTemplateFieldOption(models.Model):
             vals['value'] = self._sanitize_text(vals['value'], _("Option value cannot be empty."))
         if 'label' in vals:
             vals['label'] = self._sanitize_text(vals['label'], _("Option label cannot be empty."))
+        if 'sequence' in vals:
+            vals['sequence'] = self._sanitize_sequence(vals['sequence'])
         if 'field_id' in vals or 'value' in vals:
             candidate_keys = set()
             for option in self:

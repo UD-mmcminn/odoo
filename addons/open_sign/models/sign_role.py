@@ -33,6 +33,14 @@ class OpenSignRole(models.Model):
         'UNIQUE(template_id, name_normalized)',
         'Role names must be unique per template (case-insensitive).',
     )
+    _sequence_non_negative_check = models.Constraint(
+        'CHECK(sequence >= 0)',
+        'Role sequence must be zero or greater.',
+    )
+    _name_non_empty_check = models.Constraint(
+        "CHECK(length(btrim(name)) > 0)",
+        'Role name cannot be empty.',
+    )
 
     @api.model
     def _check_name_available(self, template_id, normalized_name, excluded_ids=None):
@@ -60,6 +68,16 @@ class OpenSignRole(models.Model):
             raise ValidationError(_("Role name cannot be empty."))
         return normalized_name
 
+    @api.model
+    def _sanitize_sequence(self, sequence):
+        try:
+            normalized_sequence = int(sequence)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(_("Role sequence must be zero or greater.")) from exc
+        if normalized_sequence < 0:
+            raise ValidationError(_("Role sequence must be zero or greater."))
+        return normalized_sequence
+
     @api.depends('name')
     def _compute_name_normalized(self):
         for role in self:
@@ -67,14 +85,18 @@ class OpenSignRole(models.Model):
 
     @api.model_create_multi
     def create(self, vals_list):
+        default_vals = self.default_get(['template_id', 'name', 'sequence'])
         pending_keys = set()
         for vals in vals_list:
             vals.pop('name_normalized', None)
-            if 'name' in vals:
-                vals['name'] = self._sanitize_role_name(vals['name'])
-            template_id = vals.get('template_id')
-            if template_id and vals.get('name'):
-                key = (template_id, self._normalize_role_name_key(vals['name']))
+            if 'name' in vals or 'name' in default_vals:
+                vals['name'] = self._sanitize_role_name(vals.get('name', default_vals.get('name')))
+            if 'sequence' in vals or 'sequence' in default_vals:
+                vals['sequence'] = self._sanitize_sequence(vals.get('sequence', default_vals.get('sequence')))
+            template_id = vals.get('template_id', default_vals.get('template_id'))
+            role_name = vals.get('name')
+            if template_id and role_name:
+                key = (template_id, self._normalize_role_name_key(role_name))
                 if key in pending_keys:
                     raise ValidationError(_("Role names must be unique per template (case-insensitive)."))
                 self._check_name_available(template_id, key[1])
@@ -86,6 +108,8 @@ class OpenSignRole(models.Model):
         vals.pop('name_normalized', None)
         if 'name' in vals:
             vals['name'] = self._sanitize_role_name(vals['name'])
+        if 'sequence' in vals:
+            vals['sequence'] = self._sanitize_sequence(vals['sequence'])
         if 'template_id' in vals or 'name' in vals:
             candidate_keys = set()
             for role in self:
