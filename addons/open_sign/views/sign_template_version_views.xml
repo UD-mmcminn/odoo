@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data>
+        <record id="view_open_sign_template_version_list" model="ir.ui.view">
+            <field name="name">open.sign.template.version.view.list</field>
+            <field name="model">open.sign.template.version</field>
+            <field name="arch" type="xml">
+                <list string="Template Versions" sample="1">
+                    <field name="template_id"/>
+                    <field name="version_number"/>
+                    <field name="state" widget="badge"/>
+                    <field name="published_at"/>
+                    <field name="published_by" optional="hide"/>
+                    <field name="company_id" groups="base.group_multi_company" optional="hide"/>
+                </list>
+            </field>
+        </record>
+
+        <record id="view_open_sign_template_version_kanban" model="ir.ui.view">
+            <field name="name">open.sign.template.version.view.kanban</field>
+            <field name="model">open.sign.template.version</field>
+            <field name="arch" type="xml">
+                <kanban class="o_kanban_mobile" sample="1" default_group_by="template_id">
+                    <field name="template_id"/>
+                    <field name="version_number"/>
+                    <field name="state"/>
+                    <field name="published_at"/>
+                    <field name="published_by"/>
+                    <templates>
+                        <t t-name="card">
+                            <div class="d-flex align-items-baseline mb-2">
+                                <span class="fw-bolder fs-5">Version <field name="version_number"/></span>
+                                <field name="state" widget="badge" class="ms-auto"/>
+                            </div>
+                            <div class="text-muted d-flex flex-wrap gap-1">
+                                <span>Template:</span>
+                                <field name="template_id"/>
+                            </div>
+                            <footer class="d-flex flex-wrap gap-1 text-muted mt-2">
+                                <field name="published_by"/>
+                                <span>on</span>
+                                <field name="published_at"/>
+                            </footer>
+                        </t>
+                    </templates>
+                </kanban>
+            </field>
+        </record>
+
+        <record id="view_open_sign_template_version_search" model="ir.ui.view">
+            <field name="name">open.sign.template.version.view.search</field>
+            <field name="model">open.sign.template.version</field>
+            <field name="arch" type="xml">
+                <search string="Template Versions">
+                    <field name="template_id"/>
+                    <field name="version_number"/>
+                    <field name="published_by"/>
+                    <field name="company_id" groups="base.group_multi_company"/>
+                    <filter name="filter_published" string="Published" domain="[('state', '=', 'published')]"/>
+                    <group>
+                        <filter name="group_template" string="Template" context="{'group_by': 'template_id'}"/>
+                        <filter name="group_published_by" string="Published By" context="{'group_by': 'published_by'}"/>
+                        <filter name="group_company" string="Company" context="{'group_by': 'company_id'}" groups="base.group_multi_company"/>
+                    </group>
+                </search>
+            </field>
+        </record>
+
+        <record id="view_open_sign_template_version_form" model="ir.ui.view">
+            <field name="name">open.sign.template.version.view.form</field>
+            <field name="model">open.sign.template.version</field>
+            <field name="arch" type="xml">
+                <form string="Template Version" create="0" edit="0" delete="0">
+                    <sheet>
+                        <group>
+                            <group>
+                                <field name="template_id"/>
+                                <field name="version_number"/>
+                                <field name="state"/>
+                            </group>
+                            <group>
+                                <field name="published_at"/>
+                                <field name="published_by"/>
+                                <field name="company_id" groups="base.group_multi_company"/>
+                            </group>
+                        </group>
+                        <group>
+                            <field name="source_attachment_id"/>
+                            <field name="source_pdf_sha256"/>
+                        </group>
+                        <notebook>
+                            <page string="Role Snapshot">
+                                <field name="role_snapshot_json"/>
+                            </page>
+                            <page string="Field Snapshot">
+                                <field name="field_snapshot_json"/>
+                            </page>
+                        </notebook>
+                    </sheet>
+                </form>
+            </field>
+        </record>
+
+        <record id="action_open_sign_template_version" model="ir.actions.act_window">
+            <field name="name">Template Versions</field>
+            <field name="res_model">open.sign.template.version</field>
+            <field name="view_mode">list,kanban,form</field>
+            <field name="search_view_id" ref="open_sign.view_open_sign_template_version_search"/>
+        </record>
+    </data>
+</odoo>

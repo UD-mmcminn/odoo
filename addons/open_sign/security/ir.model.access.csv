@@ -11,6 +11,15 @@ access_open_sign_role_auditor,open.sign.role.auditor,model_open_sign_role,open_s
 access_open_sign_request_user,open.sign.request.user,model_open_sign_request,open_sign.group_open_sign_user,1,1,1,0
 access_open_sign_request_manager,open.sign.request.manager,model_open_sign_request,open_sign.group_open_sign_manager,1,1,1,1
 access_open_sign_request_auditor,open.sign.request.auditor,model_open_sign_request,open_sign.group_open_sign_auditor,1,0,0,0
+access_open_sign_request_signer_user,open.sign.request.signer.user,model_open_sign_request_signer,open_sign.group_open_sign_user,1,1,1,0
+access_open_sign_request_signer_manager,open.sign.request.signer.manager,model_open_sign_request_signer,open_sign.group_open_sign_manager,1,1,1,1
+access_open_sign_request_signer_auditor,open.sign.request.signer.auditor,model_open_sign_request_signer,open_sign.group_open_sign_auditor,1,0,0,0
+access_open_sign_request_value_user,open.sign.request.value.user,model_open_sign_request_value,open_sign.group_open_sign_user,1,1,1,0
+access_open_sign_request_value_manager,open.sign.request.value.manager,model_open_sign_request_value,open_sign.group_open_sign_manager,1,1,1,1
+access_open_sign_request_value_auditor,open.sign.request.value.auditor,model_open_sign_request_value,open_sign.group_open_sign_auditor,1,0,0,0
+access_open_sign_audit_log_user,open.sign.audit.log.user,model_open_sign_audit_log,open_sign.group_open_sign_user,1,0,0,0
+access_open_sign_audit_log_manager,open.sign.audit.log.manager,model_open_sign_audit_log,open_sign.group_open_sign_manager,1,0,0,0
+access_open_sign_audit_log_auditor,open.sign.audit.log.auditor,model_open_sign_audit_log,open_sign.group_open_sign_auditor,1,0,0,0
 access_open_sign_template_field_user,open.sign.template.field.user,model_open_sign_template_field,open_sign.group_open_sign_user,1,1,1,0
 access_open_sign_template_field_manager,open.sign.template.field.manager,model_open_sign_template_field,open_sign.group_open_sign_manager,1,1,1,1
 access_open_sign_template_field_auditor,open.sign.template.field.auditor,model_open_sign_template_field,open_sign.group_open_sign_auditor,1,0,0,0

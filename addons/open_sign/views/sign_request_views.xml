@@ -17,6 +17,39 @@
             </field>
         </record>
 
+        <record id="view_open_sign_request_kanban" model="ir.ui.view">
+            <field name="name">open.sign.request.view.kanban</field>
+            <field name="model">open.sign.request</field>
+            <field name="arch" type="xml">
+                <kanban class="o_kanban_mobile" sample="1" default_group_by="status">
+                    <field name="name"/>
+                    <field name="status"/>
+                    <field name="template_id"/>
+                    <field name="signed_count"/>
+                    <field name="pending_count"/>
+                    <field name="declined_count"/>
+                    <field name="completed_at"/>
+                    <templates>
+                        <t t-name="card">
+                            <div class="d-flex align-items-baseline mb-2">
+                                <field name="name" class="fw-bolder fs-5"/>
+                                <field name="status" widget="badge" class="ms-auto"/>
+                            </div>
+                            <div class="text-muted d-flex flex-wrap gap-1">
+                                <span>Template:</span>
+                                <field name="template_id"/>
+                            </div>
+                            <footer class="d-flex flex-wrap gap-2 text-muted mt-2">
+                                <span>Signed: <field name="signed_count"/></span>
+                                <span>Pending: <field name="pending_count"/></span>
+                                <span>Declined: <field name="declined_count"/></span>
+                            </footer>
+                        </t>
+                    </templates>
+                </kanban>
+            </field>
+        </record>
+
         <record id="view_open_sign_request_search" model="ir.ui.view">
             <field name="name">open.sign.request.view.search</field>
             <field name="model">open.sign.request</field>
@@ -88,6 +121,43 @@
                                 <field name="last_event_at" readonly="1"/>
                             </group>
                         </group>
+                        <notebook>
+                            <page string="Signers">
+                                <field name="signer_ids" context="{'default_request_id': id}" readonly="status in ('completed', 'cancelled', 'voided')">
+                                    <list editable="bottom">
+                                        <field name="sequence"/>
+                                        <field name="role_id" domain="[('template_id', '=', parent.template_id)]"/>
+                                        <field name="email"/>
+                                        <field name="partner_id" optional="hide"/>
+                                        <field name="state" readonly="1"/>
+                                        <field name="signed_at" readonly="1" optional="hide"/>
+                                        <field name="last_opened_at" readonly="1" optional="hide"/>
+                                    </list>
+                                </field>
+                            </page>
+                            <page string="Values">
+                                <field name="value_ids" readonly="1">
+                                    <list>
+                                        <field name="signer_id"/>
+                                        <field name="template_field_id"/>
+                                        <field name="value_text"/>
+                                        <field name="is_valid"/>
+                                        <field name="signed_payload_attachment_id" optional="hide"/>
+                                    </list>
+                                </field>
+                            </page>
+                            <page string="Audit Log">
+                                <field name="audit_log_ids" readonly="1">
+                                    <list default_order="event_sequence asc">
+                                        <field name="event_sequence"/>
+                                        <field name="event_type"/>
+                                        <field name="event_at"/>
+                                        <field name="signer_id" optional="hide"/>
+                                        <field name="hash_chain" optional="hide"/>
+                                    </list>
+                                </field>
+                            </page>
+                        </notebook>
                     </sheet>
                     <chatter/>
                 </form>
@@ -97,7 +167,7 @@
         <record id="action_open_sign_request" model="ir.actions.act_window">
             <field name="name">Sign Requests</field>
             <field name="res_model">open.sign.request</field>
-            <field name="view_mode">list,form</field>
+            <field name="view_mode">list,kanban,form</field>
             <field name="search_view_id" ref="open_sign.view_open_sign_request_search"/>
         </record>
     </data>

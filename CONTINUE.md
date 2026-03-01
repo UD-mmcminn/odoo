@@ -1,7 +1,7 @@
 # Open Sign Continuation Notes
 
 Last updated: 2026-02-28
-Scope checkpoint: T14 closed out on Odoo 19
+Scope checkpoint: T113 closed out on Odoo 19
 
 ## Why This Exists
 
@@ -40,12 +40,28 @@ Scope checkpoint: T14 closed out on Odoo 19
 
 - Start by reading `CONTINUE.md` and then `FEATURE.md` task deltas.
 - Pick one coherent task slice and finish it end-to-end (code + tests + doc updates).
+- Every code-change session must end with a comprehensive post-change review (scope intent, diff correctness, cross-model impact, security/authority boundaries, and regression checks).
 - When adding behavior, add tests that could fail for real regressions.
 - Keep server-side rules authoritative; client-side checks are convenience only.
 - If something is intentionally deferred, document where/why (task ID + risk).
 - Before ending a session, update both:
   - objective status (what changed)
   - subjective context (why this change matters)
+
+## Task Closeout Hardening Checklist (Mandatory)
+
+Use this before marking any task complete (especially model/state/security work):
+
+- Perform a deliberate end-of-change review against the task contract and the actual diff; do not rely on in-flight assumptions made while coding.
+- Define server-authoritative fields and block direct client/user mutation in model `create`/`write` where needed.
+- Add explicit action precondition guards (not only structural presence checks).
+- Add denial-path tests for abuse/tamper attempts and invalid state transitions.
+- Ensure UI `readonly`/visibility aligns with server authority (UI must not expose forbidden writes).
+- Verify ACL expectations with tests for user/manager/auditor behavior.
+- Validate invariants at DB/model layer (SQL constraints and Python constraints) rather than relying on client behavior.
+- Re-run task test scope and confirm no regression in adjacent flows.
+- If any guard is intentionally deferred, log task ID + risk + owner in `FEATURE.md`/`CONTINUE.md`.
+- Re-run this checklist as a recurring re-audit after each major phase slice and after every 3 completed implementation tasks.
 
 ## Quality Bar For Individual Contributors
 
@@ -66,10 +82,18 @@ Scope checkpoint: T14 closed out on Odoo 19
 
 - M0 is closed.
 - M1 is open and in progress.
-- `T10`, `T11`, `T12`, `T13`, `T14` are marked complete in `FEATURE.md`.
+- `T10`, `T11`, `T12`, `T13`, `T14`, `T15`, `T16`, `T17`, `T18`, `T19`, `T113` are marked complete in `FEATURE.md`.
 - T12 final review is complete; no additional in-scope blockers were identified.
 - `T13` implementation and closeout are complete (models, ACL, views, tests, Odoo 19 compatibility fixes, deprecated-call cleanup).
 - `T14` implementation and closeout are complete (request lifecycle model, version snapshot binding, transition guards, ACL + views, runtime tests green).
+- `T15` implementation and closeout are complete (request signer model, sequence helpers, participant-required send gating, signer ACL + request form integration, runtime tests green).
+- `T15` post-review hardening is applied: non-superuser lifecycle/evidence signer writes are blocked, send now requires actionable signer(s), signer lifecycle fields are readonly in request form, and regression tests cover these guards.
+- `T16` implementation and closeout are complete (request value model, cross-model invariants, value normalization baselines, server-authoritative `is_valid` guard, value ACL matrix, runtime tests green).
+- `T16` post-review hardening is applied: `default_*` context bypass is blocked for value validation/lifecycle-sensitive fields, context-provided defaults are normalized through server logic, and regression tests cover this path.
+- `T17` implementation and closeout are complete (audit log model, event taxonomy selection, request-local sequence/hash uniqueness, append-only immutability guards, read-only ACLs, and dedicated tests).
+- `T18` implementation and closeout are complete (centralized field validation service, request value required/optional and rule validation, signer evidence-field format validation, and expanded regression coverage).
+- `T19` implementation and closeout are complete (base backend navigation, list/form/kanban coverage across core models, standalone backend views for version/signer/value/audit models, and backend-view regression tests).
+- `T18`/`T19` post-review hardening is applied: non-superuser signer/value create/write/unlink mutations are now blocked when request status is terminal (`completed`, `cancelled`, `voided`), with dedicated denial-path regression tests.
 
 ## What Was Implemented For T12
 
@@ -95,7 +119,7 @@ Scope checkpoint: T14 closed out on Odoo 19
 
 - Added model ACL rows for users/managers/auditors:
   - `addons/open_sign/security/ir.model.access.csv`
-- Record-rule matrix (`open_sign_security.xml`) is still a placeholder and deferred to `T113`.
+- Record-rule matrix (`open_sign_security.xml`) was a placeholder during T12 and is now implemented in `T113` (2026-02-28).
 
 ### Tests
 
@@ -132,9 +156,7 @@ Scope checkpoint: T14 closed out on Odoo 19
   - normalization/uniqueness tests
 - Final review sign-off (`2026-02-27`):
   - no new T12-scope implementation blockers found
-  - remaining security-scope gap remains tracked under `T113`
-- Remaining deferred item:
-  - `T113` record rules / multi-company scoping in `open_sign_security.xml`
+  - security-scope gap that was tracked under `T113` is now closed (`2026-02-28`)
 
 ## What Was Implemented For T13
 
@@ -256,13 +278,271 @@ Scope checkpoint: T14 closed out on Odoo 19
   - `./odoo-bin -d test_open_sign -u open_sign --test-enable --test-tags /open_sign --stop-after-init`
   - result: `0 failed, 0 error(s) of 31 tests`
 
+## What Was Implemented For T15
+
+### Core model and request integration
+
+- Added `open.sign.request.signer` model:
+  - `addons/open_sign/models/sign_request_signer.py`
+- Wired model imports:
+  - `addons/open_sign/models/__init__.py`
+- Linked signer relation to requests:
+  - `addons/open_sign/models/sign_request.py` (`signer_ids`)
+
+### Sequencing and send-gating logic
+
+- Added sequence-oriented signer helper on requests:
+  - `open.sign.request._get_actionable_signers()`
+  - supports ordered mode (lowest pending/opened sequence) and parallel mode (all pending/opened).
+- Added participant-required send invariant:
+  - `open.sign.request.action_send()` now rejects send when no signer rows exist (`R-029`).
+- Added signer-state counters (computed, stored):
+  - `signed_count`, `pending_count`, `declined_count` now compute from signer states.
+
+### Signer model constraints
+
+- Unique signer role per request:
+  - `UNIQUE(request_id, role_id)`
+- `role_id.template_id` must match `request_id.template_id`.
+- `state='signed'` requires `signed_at`.
+- `sequence >= 0`.
+- Email normalization/validation via server-side sanitization.
+
+### ACL and request form UX
+
+- Added ACL rows for `open.sign.request.signer` (user/manager/auditor):
+  - `addons/open_sign/security/ir.model.access.csv`
+- Added signer editor section in request form:
+  - `addons/open_sign/views/sign_request_views.xml`
+
+### Tests and runtime verification
+
+- Extended request tests to cover signer model, send gating, sequence helper behavior, counters, and signer ACL:
+  - `addons/open_sign/tests/test_sign_request.py`
+- Runtime verification completed:
+  - `./odoo-bin -d test_open_sign -u open_sign --test-enable --test-tags /open_sign --stop-after-init`
+  - result: `0 failed, 0 error(s) of 40 tests`
+
+## What Was Implemented For T16
+
+### Core model and wiring
+
+- Added `open.sign.request.value` model:
+  - `addons/open_sign/models/sign_request_value.py`
+- Wired model imports:
+  - `addons/open_sign/models/__init__.py`
+- Linked values to requests/signers/template fields:
+  - `addons/open_sign/models/sign_request.py` (`value_ids`)
+  - `addons/open_sign/models/sign_request_signer.py` (`value_ids`)
+  - `addons/open_sign/models/sign_template_field.py` (`request_value_ids`)
+
+### Storage constraints and normalization
+
+- Added unique value slot constraint:
+  - `UNIQUE(request_id, template_field_id, signer_id)`
+- Enforced cross-model integrity:
+  - `template_field_id.template_id == request_id.template_id`
+  - `signer_id.request_id == request_id`
+  - `signer_id.role_id == template_field_id.role_id`
+- Added baseline server normalization by field type:
+  - `value_text`: trim/email lowercase/initials uppercase/multiline newline normalization/selection-radio canonical option key mapping.
+  - `value_json`: checkbox bool normalization, date ISO payload normalization, strikethrough boolean-shape normalization.
+
+### Server-authoritative validation state
+
+- Added model-layer guard so non-superusers cannot set/modify `is_valid` directly.
+- Added denial-path tests covering attempted `is_valid` tampering.
+
+### ACL and tests
+
+- Added ACL rows for `open.sign.request.value` (user/manager/auditor):
+  - `addons/open_sign/security/ir.model.access.csv`
+- Added dedicated request value tests:
+  - `addons/open_sign/tests/test_sign_request_value.py`
+- Imported in:
+  - `addons/open_sign/tests/__init__.py`
+- Runtime verification completed:
+  - `./odoo-bin -d test_open_sign -u open_sign --test-enable --test-tags /open_sign --stop-after-init`
+  - result: `0 failed, 0 error(s) of 48 tests`
+
+## What Was Implemented For T17
+
+### Core model and wiring
+
+- Added `open.sign.audit.log` model:
+  - `addons/open_sign/models/sign_audit_log.py`
+- Wired model import:
+  - `addons/open_sign/models/__init__.py`
+- Linked request relation:
+  - `addons/open_sign/models/sign_request.py` (`audit_log_ids`)
+
+### Audit invariants and immutability
+
+- Added `AuditEventType` selection contract from schema/taxonomy.
+- Added request-local uniqueness constraints:
+  - `UNIQUE(request_id, hash_chain)`
+  - `UNIQUE(request_id, event_sequence)`
+- Added model checks for:
+  - hash fields (`hash_chain`, `previous_hash`, `consent_text_hash`) as lowercase SHA-256 hex when set
+  - signer/request consistency (`signer_id.request_id == request_id`)
+  - positive event sequence (`event_sequence > 0`)
+- Added append-only/immutability guard behavior:
+  - direct `write`/`unlink` blocked by default
+  - terminal requests (`completed`/`voided`) return explicit immutable error
+  - privileged repair path allowed only via superuser + context `open_sign_allow_audit_log_repair`
+
+### ACL and tests
+
+- Added ACL rows for `open.sign.audit.log` (user/manager/auditor read-only):
+  - `addons/open_sign/security/ir.model.access.csv`
+- Added dedicated audit log tests:
+  - `addons/open_sign/tests/test_sign_audit_log.py`
+- Imported in:
+  - `addons/open_sign/tests/__init__.py`
+- Runtime verification completed:
+  - `./odoo-bin -d test_open_sign -u open_sign --test-enable --test-tags /open_sign --stop-after-init --http-port=8073`
+  - result: `0 failed, 0 error(s) of 54 tests`
+
+## What Was Implemented For T18
+
+### Validation service and value-model wiring
+
+- Added centralized validation service package:
+  - `addons/open_sign/services/__init__.py`
+  - `addons/open_sign/services/validation_service.py`
+- Wired request-value normalization/validation through the service:
+  - `addons/open_sign/models/sign_request_value.py`
+- Added server-authoritative enforcement for:
+  - required vs optional field behavior (`template_field.required`)
+  - field-type-specific normalization/validation (`text`, `multiline`, `email`, `phone`, `initials`, `checkbox`, `radio`, `selection`, `date`, `strikethrough`, `signature`, `stamp`)
+  - template-field regex and length rules
+  - required attachment on `signature`/`stamp` payload values
+
+### Signer evidence-field format validation
+
+- Added signer evidence format checks/sanitization in:
+  - `addons/open_sign/models/sign_request_signer.py`
+- Covered fields:
+  - `ip_last` must be valid IPv4/IPv6
+  - `consent_text_hash` must be lowercase SHA-256 hex
+  - `signer_timezone` must be valid IANA timezone
+
+### Tests and runtime verification
+
+- Extended value validation tests:
+  - `addons/open_sign/tests/test_sign_request_value.py`
+- Extended signer evidence-format tests:
+  - `addons/open_sign/tests/test_sign_request.py`
+- Runtime verification completed:
+  - `./odoo-bin -d test_open_sign -u open_sign --test-enable --test-tags /open_sign/tests/test_sign_request.py --stop-after-init --http-port=8076`
+  - `./odoo-bin -d test_open_sign -u open_sign --test-enable --test-tags /open_sign/tests/test_sign_request_value.py --stop-after-init --http-port=8077`
+  - `./odoo-bin -d test_open_sign -u open_sign --test-enable --test-tags /open_sign --stop-after-init --http-port=8078`
+  - result: `0 failed, 0 error(s) of 56 tests`
+
+## What Was Implemented For T19
+
+### Backend views/actions
+
+- Added `kanban` views and `list,kanban,form` action modes for:
+  - templates (`addons/open_sign/views/sign_template_views.xml`)
+  - requests (`addons/open_sign/views/sign_request_views.xml`)
+  - roles (`addons/open_sign/views/sign_role_views.xml`)
+  - template fields (`addons/open_sign/views/sign_template_field_views.xml`)
+- Added standalone list/search/form/kanban view files + actions for:
+  - template versions (`addons/open_sign/views/sign_template_version_views.xml`)
+  - request signers (`addons/open_sign/views/sign_request_signer_views.xml`)
+  - request values (`addons/open_sign/views/sign_request_value_views.xml`)
+  - audit logs (`addons/open_sign/views/sign_audit_log_views.xml`)
+- Updated manifest data loading for new view files:
+  - `addons/open_sign/__manifest__.py`
+
+### Menu/navigation coverage
+
+- Expanded root Open Sign navigation for operations:
+  - `Requests`, `Templates`, `Signers`, `Values`, `Audit Logs`
+- Added `Configuration` subtree:
+  - `Roles`, `Fields`, `Template Versions`
+- File:
+  - `addons/open_sign/views/sign_menus.xml`
+
+### Request form coverage
+
+- Added request-form notebook pages for:
+  - captured values (`value_ids`)
+  - request audit timeline (`audit_log_ids`)
+- File:
+  - `addons/open_sign/views/sign_request_views.xml`
+
+### Tests and runtime verification
+
+- Added backend-view regression tests (actions include kanban mode, kanban arches load, menu wiring, auditor audit-read visibility):
+  - `addons/open_sign/tests/test_sign_backend_views.py`
+- Imported in:
+  - `addons/open_sign/tests/__init__.py`
+- Runtime verification completed:
+  - `./odoo-bin -d test_open_sign -u open_sign --test-enable --test-tags /open_sign/tests/test_sign_backend_views.py --stop-after-init --http-port=8079`
+  - `./odoo-bin -d test_open_sign -u open_sign --test-enable --test-tags /open_sign --stop-after-init --http-port=8080`
+  - result: `0 failed, 0 error(s) of 59 tests`
+
+### Post-review hardening updates
+
+- Added terminal-request mutation guards in:
+  - `addons/open_sign/models/sign_request_signer.py`
+  - `addons/open_sign/models/sign_request_value.py`
+- Guard behavior:
+  - non-superusers cannot create/write/unlink signer or value records when `request.status in ('completed', 'cancelled', 'voided')`
+- Added dedicated denial-path tests:
+  - `test_signer_mutation_blocked_on_terminal_requests` in `addons/open_sign/tests/test_sign_request.py`
+  - `test_value_mutation_blocked_on_terminal_requests` in `addons/open_sign/tests/test_sign_request_value.py`
+- Runtime verification completed:
+  - `./odoo-bin -d test_open_sign -u open_sign --test-enable --test-tags /open_sign/tests/test_sign_request.py --stop-after-init --http-port=8084`
+  - `./odoo-bin -d test_open_sign -u open_sign --test-enable --test-tags /open_sign/tests/test_sign_request_value.py --stop-after-init --http-port=8085`
+  - `./odoo-bin -d test_open_sign -u open_sign --test-enable --test-tags /open_sign --stop-after-init --http-port=8086`
+  - result: `0 failed, 0 error(s) of 61 tests`
+- Extended hardening follow-up:
+  - request immutability now treats `completed`, `cancelled`, and `voided` as immutable for non-superusers:
+    - `addons/open_sign/models/sign_request.py`
+  - request `unlink` remains retention-first (soft delete via `active=False` + `deleted_at`) and preserves linked signer/value/audit evidence rows.
+  - request value multi-record `write` now uses prepared per-record payloads + savepointed all-or-nothing apply to prevent partial success when validation fails mid-batch:
+    - `addons/open_sign/models/sign_request_value.py`
+  - terminal guard tests now cover all terminal statuses (`completed`, `cancelled`, `voided`) for signer/value mutation denial paths:
+    - `addons/open_sign/tests/test_sign_request.py`
+    - `addons/open_sign/tests/test_sign_request_value.py`
+  - added atomicity regression test for multi-record value write rollback:
+    - `test_multi_record_write_rolls_back_on_validation_error` in `addons/open_sign/tests/test_sign_request_value.py`
+  - runtime verification completed:
+    - `./odoo-bin -d test_open_sign_t19_run2 -i open_sign --test-enable --test-tags open_sign --stop-after-init --http-port=8095`
+    - result: `0 failed, 0 error(s) of 63 tests`
+
+## What Was Implemented For T113
+
+- Implemented full `open_sign` record-rule matrix in:
+  - `addons/open_sign/security/open_sign_security.xml`
+- Rule coverage now includes:
+  - company isolation for templates, template versions, roles, template fields, field options, requests, signers, values, and audit logs
+  - owner/assignee scoping for user-group access on request-linked models (`open.sign.request`, `open.sign.request.signer`, `open.sign.request.value`, `open.sign.audit.log`)
+  - manager/auditor company-scoped visibility aligned to allowed companies
+- Added dedicated security regression tests:
+  - `addons/open_sign/tests/test_sign_security_rules.py`
+- Updated test imports:
+  - `addons/open_sign/tests/__init__.py`
+- Updated ACL test fixtures to align with owner/assignee rule semantics:
+  - `addons/open_sign/tests/test_sign_request.py`
+  - `addons/open_sign/tests/test_sign_request_value.py`
+- Runtime verification completed:
+  - `./odoo-bin -d test_open_sign_t113 -i open_sign --test-enable --test-tags /open_sign/tests/test_sign_security_rules.py --stop-after-init --http-port=8100`
+  - `./odoo-bin -d test_open_sign_t113_fix2 -i open_sign --test-enable --test-tags /open_sign/tests/test_sign_request.py,/open_sign/tests/test_sign_request_value.py --stop-after-init --http-port=8103`
+  - `./odoo-bin -d test_open_sign_t113_full2 -i open_sign --test-enable --test-tags /open_sign --stop-after-init --http-port=8104`
+  - result: `0 failed, 0 error(s)` including full `/open_sign` run (`69` tests)
+
 ## Important Open Risk / Follow-Up
 
 - No current runtime blocker for `open_sign` test execution in this environment.
-- `T14` intentionally does not enforce signer-presence on send yet because `open.sign.request.signer` lands in `T15`.
-  - `R-029` send-gating invariant is completed in `T15` when signer rows exist.
-- Remaining security-scope follow-up from earlier phases remains:
-  - `T113` record rules / multi-company scoping completion in `open_sign_security.xml`
+- `T113` security-scope follow-up is now completed and validated with dedicated multi-company/ownership tests.
+- Remaining core-addon follow-up stays focused on:
+  - `T110` SQL constraints/FK/index contract completion
+  - `T111` reminder/expiration cron implementation
+  - `T112` migration hooks/upgrades alignment
 
 ## Files Most Relevant To Resume
 
@@ -272,37 +552,56 @@ Scope checkpoint: T14 closed out on Odoo 19
 - `addons/open_sign/models/sign_template_field_option.py`
 - `addons/open_sign/models/sign_template_version.py`
 - `addons/open_sign/models/sign_request.py`
+- `addons/open_sign/models/sign_request_signer.py`
+- `addons/open_sign/models/sign_request_value.py`
+- `addons/open_sign/models/sign_audit_log.py`
+- `addons/open_sign/services/validation_service.py`
 - `addons/open_sign/views/sign_role_views.xml`
 - `addons/open_sign/views/sign_template_field_views.xml`
 - `addons/open_sign/views/sign_request_views.xml`
+- `addons/open_sign/views/sign_template_version_views.xml`
+- `addons/open_sign/views/sign_request_signer_views.xml`
+- `addons/open_sign/views/sign_request_value_views.xml`
+- `addons/open_sign/views/sign_audit_log_views.xml`
 - `addons/open_sign/views/sign_menus.xml`
 - `addons/open_sign/security/ir.model.access.csv`
+- `addons/open_sign/__manifest__.py`
 - `addons/open_sign/tests/test_sign_role.py`
 - `addons/open_sign/tests/test_sign_template_field.py`
 - `addons/open_sign/tests/test_sign_request.py`
+- `addons/open_sign/tests/test_sign_request_value.py`
+- `addons/open_sign/tests/test_sign_audit_log.py`
+- `addons/open_sign/tests/test_sign_backend_views.py`
 - `FEATURE.md`
 
 ## Suggested First Steps In New Dev Environment
 
 1. Run targeted Open Sign tests:
-   - `./odoo-bin -d <db> --init open_sign --test-enable --test-tags open_sign.tests.test_sign_role --stop-after-init`
-   - `./odoo-bin -d <db> --test-enable --test-tags open_sign.tests.test_sign_template_field --stop-after-init`
-   - `./odoo-bin -d <db> --test-enable --test-tags open_sign.tests.test_sign_request --stop-after-init`
+   - `./odoo-bin -d <db> --init open_sign --test-enable --test-tags /open_sign/tests/test_sign_role.py --stop-after-init`
+   - `./odoo-bin -d <db> --test-enable --test-tags /open_sign/tests/test_sign_template_field.py --stop-after-init`
+   - `./odoo-bin -d <db> --test-enable --test-tags /open_sign/tests/test_sign_request.py --stop-after-init`
+   - `./odoo-bin -d <db> --test-enable --test-tags /open_sign/tests/test_sign_request_value.py --stop-after-init`
+   - `./odoo-bin -d <db> --test-enable --test-tags /open_sign/tests/test_sign_audit_log.py --stop-after-init`
+   - `./odoo-bin -d <db> --test-enable --test-tags /open_sign/tests/test_sign_security_rules.py --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign --stop-after-init`
-2. If tests pass, proceed to `T15` (`open.sign.request.signer` sequencing + send gating).
-3. Keep `T113` (record rules) as mandatory before any production readiness claim.
+2. If tests pass, proceed to `T118` (recurring hardening re-audit over completed backend tasks).
+3. Prioritize `T110`/`T111`/`T112` for remaining Phase 1 backend completion.
 
 ## Next Tasks (Planned Order)
 
-1. `T15` Implement signer sequencing (`open.sign.request.signer`) with participant-required send invariants.
-2. `T16` Implement `open.sign.request.value` storage and normalization.
-3. `T17` Implement `open.sign.audit.log` immutable records.
-4. `T113` Complete record rules and multi-company/ownership scoping before any production-readiness claim.
+1. `T118` Run recurring hardening re-audit over completed backend tasks and file follow-up fixes if any checklist gaps are found.
+2. `T110` Add SQL constraints, FK `ondelete` policies, and indexes per schema contract.
+3. `T111` Implement cron jobs for reminders and expiration.
+4. `T112` Add core migration hooks and upgrade scripts aligned to schema contract evolution.
 
 ## Notes For Next Chat
 
-- If the next session starts at `T15`, ensure signer model implementation completes:
-  - participant-required send flow (`R-029`)
-  - ordered vs parallel sequencing behavior
-  - signer state transitions compatible with request status matrix (`R-006`, `R-012`)
+- If the next session starts at `T118`, preserve `T17`/`T18`/`T19` invariants:
+  - no direct mutation of existing audit rows outside privileged repair context
+  - request-local uniqueness on audit sequence/hash
+  - hash-chain continuity remains deferred to `T43` service-level logic
+  - request value normalization/validation remains server-authoritative through `validation_service`
+  - signer evidence fields remain format-validated server-side (`ip_last`, `consent_text_hash`, `signer_timezone`)
+  - backend actions that expose operational models include `kanban` mode and remain covered by `test_sign_backend_views.py`
+- Before closing each task, apply the mandatory hardening checklist and re-audit previously completed neighboring tasks when shared models/actions are touched.
 - If the next session starts with cleanup, run runtime tests first and fix any failures before adding new features.

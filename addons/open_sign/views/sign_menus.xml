@@ -2,9 +2,14 @@
 <odoo>
     <data>
         <menuitem id="menu_open_sign_root" name="Open Sign" sequence="320" groups="open_sign.group_open_sign_user,open_sign.group_open_sign_auditor"/>
-        <menuitem id="menu_open_sign_templates" name="Templates" parent="menu_open_sign_root" action="open_sign.action_open_sign_template" sequence="10"/>
-        <menuitem id="menu_open_sign_requests" name="Requests" parent="menu_open_sign_root" action="open_sign.action_open_sign_request" sequence="15"/>
-        <menuitem id="menu_open_sign_roles" name="Roles" parent="menu_open_sign_root" action="open_sign.action_open_sign_role" sequence="20"/>
-        <menuitem id="menu_open_sign_template_fields" name="Fields" parent="menu_open_sign_root" action="open_sign.action_open_sign_template_field" sequence="30"/>
+        <menuitem id="menu_open_sign_requests" name="Requests" parent="menu_open_sign_root" action="open_sign.action_open_sign_request" sequence="10"/>
+        <menuitem id="menu_open_sign_templates" name="Templates" parent="menu_open_sign_root" action="open_sign.action_open_sign_template" sequence="20"/>
+        <menuitem id="menu_open_sign_signers" name="Signers" parent="menu_open_sign_root" action="open_sign.action_open_sign_request_signer" sequence="30"/>
+        <menuitem id="menu_open_sign_values" name="Values" parent="menu_open_sign_root" action="open_sign.action_open_sign_request_value" sequence="40"/>
+        <menuitem id="menu_open_sign_audit_logs" name="Audit Logs" parent="menu_open_sign_root" action="open_sign.action_open_sign_audit_log" sequence="50"/>
+        <menuitem id="menu_open_sign_configuration" name="Configuration" parent="menu_open_sign_root" sequence="90"/>
+        <menuitem id="menu_open_sign_roles" name="Roles" parent="menu_open_sign_configuration" action="open_sign.action_open_sign_role" sequence="10"/>
+        <menuitem id="menu_open_sign_template_fields" name="Fields" parent="menu_open_sign_configuration" action="open_sign.action_open_sign_template_field" sequence="20"/>
+        <menuitem id="menu_open_sign_template_versions" name="Template Versions" parent="menu_open_sign_configuration" action="open_sign.action_open_sign_template_version" sequence="30"/>
     </data>
 </odoo>

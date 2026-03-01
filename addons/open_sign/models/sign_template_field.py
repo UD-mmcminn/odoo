@@ -56,6 +56,7 @@ class OpenSignTemplateField(models.Model):
     min_length = fields.Integer()
     max_length = fields.Integer()
     option_ids = fields.One2many('open.sign.template.field.option', 'field_id', string='Options')
+    request_value_ids = fields.One2many('open.sign.request.value', 'template_field_id', string='Request Values')
 
     @api.model
     def _normalize_label(self, label):

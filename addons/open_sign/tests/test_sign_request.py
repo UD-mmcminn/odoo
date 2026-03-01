@@ -34,6 +34,18 @@ class TestOpenSignRequest(TransactionCase):
         cls.acl_request = cls.env['open.sign.request'].create({
             'name': 'ACL Request',
             'template_id': cls.acl_template.id,
+            'owner_id': cls.open_sign_user.id,
+        })
+        cls.acl_role = cls.env['open.sign.role'].create({
+            'template_id': cls.acl_template.id,
+            'name': 'ACL Signer Role',
+            'sequence': 10,
+        })
+        cls.acl_signer = cls.env['open.sign.request.signer'].create({
+            'request_id': cls.acl_request.id,
+            'role_id': cls.acl_role.id,
+            'email': 'acl.signer@example.com',
+            'sequence': 10,
         })
 
     @classmethod
@@ -61,6 +73,14 @@ class TestOpenSignRequest(TransactionCase):
     def _create_template(self, name='Template'):
         return self._create_template_static(self.env, name)
 
+    def _create_role(self, template, name='Signer', sequence=10, required=True):
+        return self.env['open.sign.role'].create({
+            'template_id': template.id,
+            'name': name,
+            'sequence': sequence,
+            'required': required,
+        })
+
     def _create_request(self, template=None, **overrides):
         template = template or self._create_template('Request Template')
         values = {
@@ -69,6 +89,46 @@ class TestOpenSignRequest(TransactionCase):
         }
         values.update(overrides)
         return self.env['open.sign.request'].create(values)
+
+    def _mark_request_completed(self, request):
+        template_version = request.template_id.action_publish_version()
+        final_attachment = self._create_attachment(name=f'{request.name}_final.pdf', res_model='open.sign.request')
+        request.sudo().with_context(open_sign_skip_transition_check=True).write({
+            'status': 'completed',
+            'template_version_id': template_version.id,
+            'source_pdf_sha256': template_version.source_pdf_sha256,
+            'final_attachment_id': final_attachment.id,
+            'final_pdf_sha256': 'f' * 64,
+            'completed_at': fields.Datetime.now(),
+        })
+
+    def _set_request_terminal_status(self, request, status):
+        if status == 'completed':
+            self._mark_request_completed(request)
+            return
+        if status == 'cancelled':
+            request.action_cancel()
+            return
+        if status == 'voided':
+            self._mark_request_completed(request)
+            request.action_void(reason='terminal state test')
+            return
+        raise ValueError(f'Unsupported terminal status: {status}')
+
+    def _create_signer(self, request, role=None, **overrides):
+        role = role or self._create_role(request.template_id)
+        default_local_part = ''.join(
+            char if char.isalnum() else '.'
+            for char in role.name.casefold()
+        ).strip('.') or 'signer'
+        values = {
+            'request_id': request.id,
+            'role_id': role.id,
+            'email': f'{default_local_part}@example.com',
+            'sequence': role.sequence,
+        }
+        values.update(overrides)
+        return self.env['open.sign.request.signer'].create(values)
 
     def test_request_action_version_send_complete_void_flow(self):
         template = self._create_template('Request Flow')
@@ -80,6 +140,7 @@ class TestOpenSignRequest(TransactionCase):
         self.assertTrue(request.template_version_id)
         self.assertEqual(request.source_pdf_sha256, request.template_version_id.source_pdf_sha256)
 
+        self._create_signer(request, self._create_role(template, name='Primary Signer', sequence=10))
         request.action_send()
         self.assertEqual(request.status, 'sent')
         self.assertTrue(request.sent_at)
@@ -107,6 +168,7 @@ class TestOpenSignRequest(TransactionCase):
         with self.assertRaisesRegex(ValidationError, 'Invalid status transition'):
             request.write({'status': 'draft'})
 
+        self._create_signer(request, self._create_role(request.template_id, name='Transition Signer', sequence=10))
         request.action_send()
         with self.assertRaisesRegex(ValidationError, 'Invalid status transition'):
             request.action_void()
@@ -136,6 +198,7 @@ class TestOpenSignRequest(TransactionCase):
         request = self._create_request(template_a, name='Binding Freeze Request')
 
         request.action_version()
+        self._create_signer(request, self._create_role(template_a, name='Binding Signer', sequence=10))
         request.action_send()
         original_version = request.template_version_id
         original_digest = request.source_pdf_sha256
@@ -203,6 +266,175 @@ class TestOpenSignRequest(TransactionCase):
                 'completed_at': now,
                 'final_pdf_sha256': 'a' * 64,
             })
+
+    def test_send_requires_at_least_one_signer(self):
+        template = self._create_template('Send Signer Requirement')
+        request = self._create_request(template)
+        request.action_version()
+
+        with self.assertRaisesRegex(ValidationError, 'Cannot send a request without at least one signer.'):
+            request.action_send()
+
+        self._create_signer(request, self._create_role(template, name='Send Signer', sequence=10))
+        request.action_send()
+        self.assertEqual(request.status, 'sent')
+
+    def test_send_requires_actionable_signer(self):
+        template = self._create_template('Send Actionable Signer Requirement')
+        request = self._create_request(template)
+        request.action_version()
+        self._create_signer(
+            request,
+            self._create_role(template, name='Declined Signer', sequence=10),
+            state='declined',
+        )
+
+        with self.assertRaisesRegex(ValidationError, 'Cannot send a request without at least one pending or opened signer.'):
+            request.action_send()
+
+    def test_signer_constraints_sequence_logic_and_counters(self):
+        template_a = self._create_template('Signer Logic A')
+        template_b = self._create_template('Signer Logic B')
+        request = self._create_request(template_a, name='Signer Logic Request')
+        role_a_10 = self._create_role(template_a, name='A10', sequence=10)
+        role_a_20 = self._create_role(template_a, name='A20', sequence=20)
+        role_a_20_bis = self._create_role(template_a, name='A20 BIS', sequence=20)
+        role_b = self._create_role(template_b, name='B10', sequence=10)
+
+        signer_1 = self._create_signer(request, role_a_10, email='  FIRST.SIGNER@EXAMPLE.COM  ')
+        signer_2 = self._create_signer(request, role_a_20, email='second.signer@example.com')
+        signer_3 = self._create_signer(request, role_a_20_bis, email='third.signer@example.com', state='declined')
+
+        self.assertEqual(signer_1.email, 'first.signer@example.com')
+        self.assertEqual(request.signed_count, 0)
+        self.assertEqual(request.pending_count, 2)
+        self.assertEqual(request.declined_count, 1)
+
+        actionable_signers = request._get_actionable_signers()
+        self.assertEqual(actionable_signers.ids, signer_1.ids)
+
+        signer_1.write({'state': 'signed', 'signed_at': fields.Datetime.now()})
+        self.assertEqual(request.signed_count, 1)
+        self.assertEqual(request.pending_count, 1)
+        self.assertEqual(request.declined_count, 1)
+
+        actionable_signers = request._get_actionable_signers()
+        self.assertEqual(actionable_signers.ids, signer_2.ids)
+
+        request.write({'ordered_signing': False})
+        actionable_signers = request._get_actionable_signers()
+        self.assertEqual(actionable_signers.ids, signer_2.ids)
+
+        with self.assertRaisesRegex(ValidationError, 'Each role can be assigned only once per request.'):
+            self._create_signer(request, role_a_10, email='duplicate@example.com')
+
+        with self.assertRaisesRegex(ValidationError, 'Signer role must belong to the same template as the request.'):
+            self._create_signer(request, role_b, email='mismatch@example.com')
+
+        with self.assertRaisesRegex(ValidationError, 'Signed signer state requires signed_at timestamp.'):
+            self._create_signer(
+                request,
+                self._create_role(template_a, name='Signed Missing Timestamp', sequence=40),
+                email='signed.missing@example.com',
+                state='signed',
+            )
+
+        with self.assertRaisesRegex(ValidationError, 'Signer sequence must be zero or greater.'):
+            self._create_signer(
+                request,
+                self._create_role(template_a, name='Negative Sequence', sequence=50),
+                email='negative.sequence@example.com',
+                sequence=-1,
+            )
+
+    def test_signer_default_context_cannot_bypass_lifecycle_guard(self):
+        template = self._create_template('Signer Default Context Guard')
+        request = self._create_request(
+            template,
+            name='Signer Default Context Request',
+            owner_id=self.open_sign_user.id,
+        )
+        role = self._create_role(template, name='Default Guard Signer', sequence=10)
+        signer_model = self.env['open.sign.request.signer'].with_user(self.open_sign_user)
+
+        with self.assertRaisesRegex(ValidationError, 'Signer lifecycle fields cannot be set directly.'):
+            signer_model.with_context(default_state='declined').create({
+                'request_id': request.id,
+                'role_id': role.id,
+                'email': 'guarded.signer@example.com',
+                'sequence': 10,
+            })
+
+        created_signer = signer_model.with_context(default_email='  DEFAULT.SIGNER@EXAMPLE.COM  ').create({
+            'request_id': request.id,
+            'role_id': role.id,
+            'sequence': 10,
+        })
+        self.assertEqual(created_signer.email, 'default.signer@example.com')
+
+    def test_signer_evidence_field_format_validation(self):
+        template = self._create_template('Signer Evidence Format Validation')
+        request = self._create_request(template, name='Signer Evidence Request')
+        role = self._create_role(template, name='Evidence Signer', sequence=10)
+        signer_model = self.env['open.sign.request.signer'].sudo()
+
+        with self.assertRaisesRegex(ValidationError, 'Signer IP must be a valid IPv4 or IPv6 address.'):
+            signer_model.create({
+                'request_id': request.id,
+                'role_id': role.id,
+                'email': 'invalid.ip@example.com',
+                'sequence': 10,
+                'ip_last': 'not-an-ip',
+            })
+
+        with self.assertRaisesRegex(ValidationError, 'Signer consent text hash must be a 64-character lowercase hexadecimal string.'):
+            signer_model.create({
+                'request_id': request.id,
+                'role_id': role.id,
+                'email': 'invalid.hash@example.com',
+                'sequence': 10,
+                'consent_text_hash': 'INVALID',
+            })
+
+        with self.assertRaisesRegex(ValidationError, 'Signer timezone must be a valid IANA timezone identifier.'):
+            signer_model.create({
+                'request_id': request.id,
+                'role_id': role.id,
+                'email': 'invalid.tz@example.com',
+                'sequence': 10,
+                'signer_timezone': 'Moon/Base',
+            })
+
+        signer = signer_model.create({
+            'request_id': request.id,
+            'role_id': role.id,
+            'email': 'evidence.valid@example.com',
+            'sequence': 10,
+            'ip_last': ' 2001:0db8:0000:0000:0000:ff00:0042:8329 ',
+            'consent_text_hash': 'a' * 64,
+            'signer_timezone': ' America/New_York ',
+        })
+        self.assertEqual(signer.ip_last, '2001:db8::ff00:42:8329')
+        self.assertEqual(signer.consent_text_hash, 'a' * 64)
+        self.assertEqual(signer.signer_timezone, 'America/New_York')
+
+        with self.assertRaisesRegex(ValidationError, 'Signer IP must be a valid IPv4 or IPv6 address.'):
+            signer.write({'ip_last': '999.999.999.999'})
+
+        with self.assertRaisesRegex(ValidationError, 'Signer consent text hash must be a 64-character lowercase hexadecimal string.'):
+            signer.write({'consent_text_hash': 'A' * 64})
+
+        with self.assertRaisesRegex(ValidationError, 'Signer timezone must be a valid IANA timezone identifier.'):
+            signer.write({'signer_timezone': 'Invalid/Timezone'})
+
+        signer.write({
+            'ip_last': ' 192.168.1.10 ',
+            'consent_text_hash': 'b' * 64,
+            'signer_timezone': 'UTC',
+        })
+        self.assertEqual(signer.ip_last, '192.168.1.10')
+        self.assertEqual(signer.consent_text_hash, 'b' * 64)
+        self.assertEqual(signer.signer_timezone, 'UTC')
 
     def test_template_publish_version_builds_snapshots(self):
         template = self._create_template('Snapshot Template')
@@ -286,6 +518,90 @@ class TestOpenSignRequest(TransactionCase):
         with self.assertRaisesRegex(ValidationError, 'Template versions are immutable once published.'):
             self.acl_version.with_user(self.open_sign_manager).unlink()
 
+    def test_auditor_signer_access_is_read_only(self):
+        signer_model = self.env['open.sign.request.signer'].with_user(self.open_sign_auditor)
+        self.assertTrue(signer_model.has_access('read'))
+        self.assertFalse(signer_model.has_access('create'))
+        self.assertFalse(signer_model.has_access('write'))
+        self.assertFalse(signer_model.has_access('unlink'))
+        self.assertEqual(self.acl_signer.with_user(self.open_sign_auditor).read(['email'])[0]['email'], 'acl.signer@example.com')
+
+        with self.assertRaises(AccessError):
+            signer_model.create({
+                'request_id': self.acl_request.id,
+                'role_id': self._create_role(self.acl_template, name='Auditor Signer Role', sequence=31).id,
+                'email': 'auditor@example.com',
+                'sequence': 10,
+            })
+        with self.assertRaises(AccessError):
+            self.acl_signer.with_user(self.open_sign_auditor).write({'email': 'auditor.update@example.com'})
+        with self.assertRaises(AccessError):
+            self.acl_signer.with_user(self.open_sign_auditor).unlink()
+
+    def test_user_can_create_write_but_not_unlink_signer(self):
+        signer_model = self.env['open.sign.request.signer'].with_user(self.open_sign_user)
+        self.assertTrue(signer_model.has_access('create'))
+        self.assertTrue(signer_model.has_access('write'))
+        self.assertFalse(signer_model.has_access('unlink'))
+
+        created_signer = signer_model.create({
+            'request_id': self.acl_request.id,
+            'role_id': self._create_role(self.acl_template, name='User Signer Role', sequence=30).id,
+            'email': 'user.signer@example.com',
+            'sequence': 30,
+        })
+        created_signer.write({'email': 'user.signer.updated@example.com'})
+        self.assertEqual(created_signer.email, 'user.signer.updated@example.com')
+
+        with self.assertRaisesRegex(ValidationError, 'Signer lifecycle fields cannot be modified directly.'):
+            created_signer.write({'state': 'declined', 'declined_reason': 'No thanks'})
+
+        with self.assertRaisesRegex(ValidationError, 'Signer lifecycle fields cannot be set directly.'):
+            signer_model.create({
+                'request_id': self.acl_request.id,
+                'role_id': self._create_role(self.acl_template, name='User Signer Lifecycle Role', sequence=32).id,
+                'email': 'user.signer.lifecycle@example.com',
+                'sequence': 32,
+                'state': 'declined',
+            })
+
+        with self.assertRaises(AccessError):
+            created_signer.unlink()
+
+    def test_signer_mutation_blocked_on_terminal_requests(self):
+        for status in ('completed', 'cancelled', 'voided'):
+            template = self._create_template(f'Terminal Signer Mutation Template {status}')
+            request = self._create_request(template, name=f'Terminal Signer Mutation Request {status}')
+            role_a = self._create_role(template, name=f'Terminal Role A {status}', sequence=10)
+            role_b = self._create_role(template, name=f'Terminal Role B {status}', sequence=20)
+            signer = self._create_signer(request, role_a, email=f'terminal.signer.{status}@example.com')
+            self._set_request_terminal_status(request, status)
+
+            with self.assertRaisesRegex(ValidationError, 'Signer records cannot be modified once the request is completed, cancelled, or voided.'):
+                signer.with_user(self.open_sign_user).write({'email': f'terminal.signer.updated.{status}@example.com'})
+
+            with self.assertRaisesRegex(ValidationError, 'Signer records cannot be modified once the request is completed, cancelled, or voided.'):
+                self.env['open.sign.request.signer'].with_user(self.open_sign_user).create({
+                    'request_id': request.id,
+                    'role_id': role_b.id,
+                    'email': f'terminal.signer.new.{status}@example.com',
+                    'sequence': 20,
+                })
+
+            with self.assertRaisesRegex(ValidationError, 'Signer records cannot be modified once the request is completed, cancelled, or voided.'):
+                signer.with_user(self.open_sign_manager).unlink()
+
+    def test_manager_can_unlink_signer(self):
+        created_signer = self.env['open.sign.request.signer'].with_user(self.open_sign_manager).create({
+            'request_id': self.acl_request.id,
+            'role_id': self._create_role(self.acl_template, name='Manager Signer Role', sequence=40).id,
+            'email': 'manager.signer@example.com',
+            'sequence': 40,
+        })
+        signer_id = created_signer.id
+        created_signer.unlink()
+        self.assertFalse(self.env['open.sign.request.signer'].browse(signer_id).exists())
+
     def test_auditor_request_access_is_read_only(self):
         request_model = self.env['open.sign.request'].with_user(self.open_sign_auditor)
         self.assertTrue(request_model.has_access('read'))
@@ -320,11 +636,90 @@ class TestOpenSignRequest(TransactionCase):
         with self.assertRaises(AccessError):
             created_request.unlink()
 
-    def test_manager_can_unlink_request(self):
+    def test_request_mutation_blocked_on_terminal_statuses(self):
+        for status in ('completed', 'cancelled', 'voided'):
+            template = self._create_template(f'Terminal Request Mutation Template {status}')
+            request = self._create_request(template, name=f'Terminal Request Mutation {status}')
+            self._set_request_terminal_status(request, status)
+            with self.assertRaisesRegex(
+                ValidationError,
+                'Completed, cancelled, and voided requests are immutable and cannot be modified directly.',
+            ):
+                request.with_user(self.open_sign_user).write({'ordered_signing': False})
+
+    def test_manager_unlink_soft_deletes_request_and_retains_related_records(self):
         created_request = self.env['open.sign.request'].with_user(self.open_sign_manager).create({
             'name': 'Manager Request',
             'template_id': self.acl_template.id,
         })
+        role = self._create_role(self.acl_template, name='Manager Request Soft Delete Role', sequence=90)
+        signer = self.env['open.sign.request.signer'].with_user(self.open_sign_manager).create({
+            'request_id': created_request.id,
+            'role_id': role.id,
+            'email': 'manager.request.soft.delete@example.com',
+            'sequence': 90,
+        })
+        field = self.env['open.sign.template.field'].create({
+            'template_id': self.acl_template.id,
+            'role_id': role.id,
+            'type': 'text',
+            'label': 'Soft Delete Field',
+            'page': 1,
+            'x': 0.1,
+            'y': 0.1,
+            'width': 0.2,
+            'height': 0.05,
+            'sequence': 90,
+        })
+        value = self.env['open.sign.request.value'].with_user(self.open_sign_manager).create({
+            'request_id': created_request.id,
+            'template_field_id': field.id,
+            'signer_id': signer.id,
+            'value_text': 'retained',
+        })
+        audit_log = self.env['open.sign.audit.log'].sudo().create({
+            'request_id': created_request.id,
+            'event_type': 'request_created',
+            'event_sequence': 1,
+            'hash_chain': 'a' * 64,
+        })
         request_id = created_request.id
+        signer_id = signer.id
+        value_id = value.id
+        audit_log_id = audit_log.id
         created_request.unlink()
-        self.assertFalse(self.env['open.sign.request'].browse(request_id).exists())
+
+        self.assertFalse(self.env['open.sign.request'].search([('id', '=', request_id)]))
+        retained_request = self.env['open.sign.request'].with_context(active_test=False).browse(request_id).exists()
+        self.assertTrue(retained_request)
+        self.assertFalse(retained_request.active)
+        self.assertTrue(retained_request.deleted_at)
+        self.assertTrue(self.env['open.sign.request.signer'].browse(signer_id).exists())
+        self.assertTrue(self.env['open.sign.request.value'].browse(value_id).exists())
+        self.assertTrue(self.env['open.sign.audit.log'].sudo().browse(audit_log_id).exists())
+
+    def test_direct_active_write_requires_unlink_permission_and_stamps_deleted_at(self):
+        request = self._create_request(self._create_template('Active Write Guard Template'), name='Active Write Guard Request')
+
+        with self.assertRaises(AccessError):
+            request.with_user(self.open_sign_user).write({'active': False})
+
+        request.with_user(self.open_sign_manager).write({'active': False})
+        archived_request = self.env['open.sign.request'].with_context(active_test=False).browse(request.id)
+        self.assertFalse(archived_request.active)
+        self.assertTrue(archived_request.deleted_at)
+
+        with self.assertRaisesRegex(ValidationError, 'Request deletion timestamp cannot be modified directly.'):
+            archived_request.with_user(self.open_sign_manager).write({'deleted_at': fields.Datetime.now()})
+
+    def test_hard_delete_escape_hatch_is_superuser_only(self):
+        request = self.env['open.sign.request'].with_user(self.open_sign_manager).create({
+            'name': 'Hard Delete Escape Hatch Request',
+            'template_id': self.acl_template.id,
+        })
+        request.with_user(self.open_sign_manager).with_context(open_sign_allow_request_hard_delete=True).unlink()
+
+        retained_request = self.env['open.sign.request'].with_context(active_test=False).browse(request.id).exists()
+        self.assertTrue(retained_request)
+        self.assertFalse(retained_request.active)
+        self.assertTrue(retained_request.deleted_at)

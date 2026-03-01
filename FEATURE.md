@@ -76,8 +76,8 @@ This revision addresses initial planning gaps found during control review:
 | Immutable template version capture before send | Covered | `T06`, schema contract `open.sign.template.version` + request invariants | Enforce snapshot immutability and no post-send template drift |
 | Audit evidence and consent capture | Covered | `R-007`, `R-022`, `T03`, `T43`, `T46` | Jurisdiction-specific wording still requires Legal signoff workflow |
 | Portal/public signing security posture | Covered | `R-009`, `R-020`, `R-021`, `R-023`, `T31`, `T36`, `T38`, `T39` | Replay/expiry/abuse test depth to be validated in QA |
-| Endpoint idempotency and race safety | Covered (this revision) | `R-024`, `T114`, `T115`, endpoint contract v1 | Retry and parallel-submit edge cases must be regression-tested |
-| Timestamp trust and evidence reproducibility | Covered (this revision) | `R-025`, `R-028`, `T116`, `T117` | NTP and deployment clock-drift controls must be operationalized |
+| Endpoint idempotency and race safety | Covered (this revision) | `R-024`, `T316`, `T317`, endpoint contract v1 | Retry and parallel-submit edge cases must be regression-tested |
+| Timestamp trust and evidence reproducibility | Covered (this revision) | `R-025`, `R-028`, `T410`, `T411` | NTP and deployment clock-drift controls must be operationalized |
 | Validation and audit taxonomy clarity | Covered (this revision) | `R-026`, `R-027`, validation matrix + audit taxonomy sections | Matrix updates must remain aligned with code and tests |
 | Odoo codebase compliance and module structure | Covered | Odoo alignment principles + `R-017`, `T09`, `T69` | Must be continuously enforced in PR reviews |
 | Data storage and relational design quality | Covered (this revision) | Schema contract section + `T110`, `T112` | Migration evolution discipline required across releases |
@@ -158,6 +158,7 @@ Rollback/Migration Impact:
 
 - Scope is limited to one coherent slice.
 - Data model changes include constraints + indexes + FK `ondelete` policy + access rules.
+- Server-authoritative fields are explicitly protected from direct client/user writes.
 - Controllers include auth mode, access checks, and readonly declaration rationale.
 - Public endpoints include abuse and replay test coverage.
 - New tests are imported in `tests/__init__.py`.
@@ -316,6 +317,7 @@ Implementation notes:
 | `D-008` | Approve field-level validation matrix defaults (length/date/format constraints) | Product/Backend | `M0` | `Resolved (Matrix v1)` |
 | `D-009` | Approve evidence package schema v1 and event taxonomy versioning policy | Product/Backend | `M0` | `Resolved (Schema v1)` |
 | `D-010` | Confirm whether a signature block is mandatory for completion workflows | Product/Backend | `M1` | `Resolved (participant required; signature field optional)` |
+| `D-011` | Approve external email-signer magic-link policy (TTL, one-time vs multi-use, resend/rotation, revoke semantics) | Product/Security | `M2` | `Open` |
 
 ### Phase 0 Decisions Locked (2026-02-26)
 
@@ -345,6 +347,7 @@ Implementation notes:
 | `CR-009` | `2026-02-26` | Applied Phase 0 decision updates (`T01/T02/T03/T06/T07`) including immutable template versioning and planning artifacts for `T04/T05/T08/T09` | Design completeness and implementation guardrail quality | Approved |
 | `CR-010` | `2026-02-26` | Applied final Phase 0 approvals (`T04/T05/T08/T09`) and feature-branch-only `FEATURE.md` merge-gate rule | M0 closure and workflow policy refinement | Approved |
 | `CR-011` | `2026-02-27` | Clarified workflow invariant: at least one participant role/signer is required for send flows, but signature fields are optional | Prevents false signature-field dependency and preserves form/acknowledgement use cases | Approved |
+| `CR-012` | `2026-02-28` | Added deferred external email-signer authentication track (magic-link token lifecycle, expiry/revocation, and abuse-test coverage) | Clarifies scope and sequencing for unauthenticated signer support without weakening ACL posture | Approved |
 
 ### Architecture Decisions (ADRs Summary)
 
@@ -1173,15 +1176,15 @@ Legend:
 - [x] `T12` Implement `open.sign.role` model + assignment flows.
 - [x] `T13` Implement `open.sign.template.field` + `open.sign.template.field.option`.
 - [x] `T14` Implement `open.sign.request` model + status engine.
-- [ ] `T15` Implement `open.sign.request.signer` with sequence logic.
-- [ ] `T16` Implement `open.sign.request.value` storage and normalization.
-- [ ] `T17` Implement `open.sign.audit.log` immutable records.
-- [ ] `T18` Implement validation service for required/optional and field-type checks.
-- [ ] `T19` Create base backend menus and form/tree/kanban views.
+- [x] `T15` Implement `open.sign.request.signer` with sequence logic.
+- [x] `T16` Implement `open.sign.request.value` storage and normalization.
+- [x] `T17` Implement `open.sign.audit.log` immutable records.
+- [x] `T18` Implement validation service for required/optional and field-type checks (including signer evidence fields: `consent_text_hash`, `signer_timezone`, `ip_last` format validation).
+- [x] `T19` Create base backend menus and form/tree/kanban views.
 - [ ] `T110` Add SQL constraints, FK `ondelete` policies, and indexes per schema contract.
 - [ ] `T111` Implement cron jobs for reminders and expiration.
 - [ ] `T112` Add core migration hooks and upgrade scripts aligned to schema contract evolution.
-- [ ] `T113` Implement security groups + ACL/record-rule matrix from design baseline.
+- [x] `T113` Implement security groups + ACL/record-rule matrix from design baseline.
 
 ### Phase 2: Web Editor Addon (`open_sign_web`)
 
@@ -1205,8 +1208,14 @@ Legend:
 - [ ] `T37` Implement optional OTP verification flow.
 - [ ] `T38` Implement endpoint response envelope/error codes and contract tests.
 - [ ] `T39` Add portal addon ACL/rules (`security/ir.model.access.csv`, portal model record rules) for session/OTP models.
-- [ ] `T114` Implement idempotency-key handling and concurrency-safe locking for submit/decline.
-- [ ] `T115` Add duplicate-submit and race-condition test coverage for portal signer flows.
+- [ ] `T316` Implement idempotency-key handling and concurrency-safe locking for submit/decline.
+- [ ] `T317` Add duplicate-submit and race-condition test coverage for portal signer flows.
+- [ ] `T310` Define and document external email-signer token strategy (reuse `portal.mixin` token flow vs signed/expiring payloads), including accepted link-sharing risk and compensating controls.
+- [ ] `T311` Implement email-invitation magic-link issuance for email-only signers with resend rotation and explicit token revocation hooks.
+- [ ] `T312` Implement public token entry and signer-context resolution for email-only signers without email-based ACL authorization.
+- [ ] `T313` Implement token lifecycle hardening for email-only signers (expiry, revoke, replay handling, invalid-attempt throttling, and deterministic error codes).
+- [ ] `T314` Extend audit/evidence taxonomy for email-token events (`token_issued`, `token_opened`, `token_rejected`, `token_revoked`) with export coverage.
+- [ ] `T315` Add end-to-end and denial-path tests for email-only signer flow (tampered/expired/revoked token, spoofed email no-access, replay, and controlled link-sharing behavior).
 
 ### Phase 4: PDF Finalization and Audit Evidence
 
@@ -1218,8 +1227,8 @@ Legend:
 - [ ] `T45` Add audit package export (values, timeline, metadata).
 - [ ] `T46` Persist consent/legal snapshot and include it in audit package output.
 - [ ] `T47` Apply tokenized access policy for generated signed artifacts and payload attachments.
-- [ ] `T116` Implement UTC timestamp trust policy checks and include clock metadata in evidence export.
-- [ ] `T117` Persist source/final PDF SHA-256 digests and verify during evidence export.
+- [ ] `T410` Implement UTC timestamp trust policy checks and include clock metadata in evidence export.
+- [ ] `T411` Persist source/final PDF SHA-256 digests and verify during evidence export.
 
 ### Phase 5: Certificate Module (`open_sign_certificate`) Optional
 
@@ -1241,6 +1250,7 @@ Legend:
 - [ ] `T67` Execute backup/restore and failure-recovery validation.
 - [ ] `T68` Run data retention and purge dry-run verification.
 - [ ] `T69` Run lint/conformance checks (`test_lint` subset, manifest and module structure checks).
+- [ ] `T610` Run recurring hardening re-audit on completed tasks using the closeout checklist (server-authority fields, action preconditions, denial-path tests, UI/server alignment) and file follow-up fixes.
 
 ## Requirement Traceability Matrix
 
@@ -1252,9 +1262,9 @@ Legend:
 | `R-004` | `T12`, `T15`, `T33`, `T44` | `open_sign`, `open_sign_portal` | Workflow tests |
 | `R-005` | `T25`, `T32`, `T44` | `open_sign_web`, `open_sign_portal` | UI + submit tests |
 | `R-006` | `T06`, `T14`, `T43`, `T44` | `open_sign` | State transition tests |
-| `R-007` | `T17`, `T43`, `T61` | `open_sign` | Audit integrity + security review |
-| `R-008` | `T40`, `T41`, `T44`, `T117` | `open_sign` | PDF output validation |
-| `R-009` | `T31`, `T32`, `T36` | `open_sign_portal` | Portal security tests |
+| `R-007` | `T17`, `T43`, `T61`, `T314` | `open_sign`, `open_sign_portal` | Audit integrity + security review |
+| `R-008` | `T40`, `T41`, `T44`, `T411` | `open_sign` | PDF output validation |
+| `R-009` | `T31`, `T32`, `T36`, `T310`, `T311`, `T312`, `T313`, `T315` | `open_sign_portal` | Portal security tests |
 | `R-010` | `T50`, `T51`, `T52` | `open_sign_certificate` | Signature verification tests |
 | `R-011` | `T06`, `T94`, `T113`, `T61` | `open_sign`, `open_sign_portal` | ACL and multi-company rule tests |
 | `R-012` | `T06`, `T14`, `T44` | `open_sign` | Invalid transition tests |
@@ -1263,17 +1273,17 @@ Legend:
 | `R-015` | `T08`, `T66` | All | Event/metric checks |
 | `R-016` | `T37`, `T36`, `T61` | `open_sign_portal` | OTP and abuse tests |
 | `R-017` | `T09`, `T20`, `T69` | All | Lint and structure compliance checks |
-| `R-018` | `T91`, `T92`, `T93`, `T65` | All | Review process audit |
+| `R-018` | `T91`, `T92`, `T93`, `T610`, `T65` | All | Review process audit |
 | `R-019` | `T90`, `T05`, `T06` | All | Referenced design evidence in PRs |
 | `R-020` | `T39`, `T94`, `T113`, `T61` | `open_sign`, `open_sign_portal` | ACL/rule matrix and access-boundary tests |
-| `R-021` | `T95`, `T38`, `T36`, `T114`, `T115` | `open_sign_portal` | Endpoint contract and abuse/replay tests |
+| `R-021` | `T95`, `T38`, `T36`, `T316`, `T317`, `T313`, `T315` | `open_sign_portal` | Endpoint contract and abuse/replay tests |
 | `R-022` | `T03`, `T96`, `T46` | `open_sign`, `open_sign_portal` | Consent evidence persistence and export checks |
 | `R-023` | `T97`, `T47`, `T36` | `open_sign`, `open_sign_portal` | Tokenized artifact access and security tests |
-| `R-024` | `T95`, `T114`, `T115`, `T38`, `T36` | `open_sign_portal` | Idempotency and race-condition tests |
-| `R-025` | `T08`, `T116`, `T61` | `open_sign`, `open_sign_portal` | UTC timestamp and drift-control validation |
-| `R-026` | `T98`, `T18`, `T24`, `T44` | `open_sign`, `open_sign_web` | Validation matrix conformance tests |
+| `R-024` | `T95`, `T316`, `T317`, `T38`, `T36` | `open_sign_portal` | Idempotency and race-condition tests |
+| `R-025` | `T08`, `T410`, `T61` | `open_sign`, `open_sign_portal` | UTC timestamp and drift-control validation |
+| `R-026` | `T98`, `T16`, `T18`, `T24`, `T44` | `open_sign`, `open_sign_web` | Validation matrix conformance tests |
 | `R-027` | `T99`, `T42`, `T45`, `T63` | `open_sign` | Evidence schema and event taxonomy checks |
-| `R-028` | `T40`, `T41`, `T117`, `T45` | `open_sign` | Artifact digest integrity verification |
+| `R-028` | `T40`, `T41`, `T411`, `T45` | `open_sign` | Artifact digest integrity verification |
 | `R-029` | `T12`, `T14`, `T15`, `T44` | `open_sign`, `open_sign_portal` | Participant-required flow tests without mandatory signature field |
 
 ## Milestones and Exit Criteria
@@ -1283,8 +1293,8 @@ Legend:
 | `M0` Design Freeze | `2026-02-26 (Complete)` | `T01`-`T09`, `T90`-`T99` complete, ADRs updated |
 | `M1` Core Backend | `In Progress (started 2026-02-26)` | `T10`-`T19`, `T110`-`T113` complete + tests green |
 | `M2` Editor UX | TBD | `T20`-`T26` complete + demo approved |
-| `M3` Portal Signing | TBD | `T30`-`T39`, `T114`-`T115` complete + security baseline pass |
-| `M4` PDF + Audit | TBD | `T40`-`T47`, `T116`-`T117` complete + E2E pass |
+| `M3` Portal Signing | TBD | `T30`-`T39`, `T310`-`T317` complete + security baseline pass |
+| `M4` PDF + Audit | TBD | `T40`-`T47`, `T410`-`T411` complete + E2E pass |
 | `M5` Certificate (Optional) | TBD | `T50`-`T54` complete + verification pass |
 | `M6` Release | TBD | `T60`-`T69` complete + UAT signoff |
 
@@ -1305,9 +1315,10 @@ Legend:
 | `RK-011` | Portal endpoint contract drifts between frontend and backend | Medium | Lock v1 contract in `T95`, enforce contract tests in `T38` | Web/Backend | Open |
 | `RK-012` | Consent evidence is incomplete or unverifiable during audit/export | High | Persist consent hash/timestamp in `T46` and validate in security review `T61` | Product/Security | Open |
 | `RK-013` | Signed artifacts become accessible outside token scope | High | Enforce tokenized attachment policy in `T97`/`T47` and test abuse paths in `T36` | Security/Backend | Open |
-| `RK-014` | Duplicate submits or concurrent requests create inconsistent signer/request states | High | Implement idempotency + locking (`T114`) and race tests (`T115`) | Backend/Security | Open |
-| `RK-015` | Server clock drift undermines timestamp credibility in legal evidence | High | Define UTC clock policy and drift checks (`T116`) plus operational monitoring | Platform/Ops | Open |
-| `RK-016` | Missing or mismatched artifact digests weakens integrity proof during disputes | High | Persist and verify SHA-256 digests (`T117`) in evidence export flow | Backend | Open |
+| `RK-014` | Duplicate submits or concurrent requests create inconsistent signer/request states | High | Implement idempotency + locking (`T316`) and race tests (`T317`) | Backend/Security | Open |
+| `RK-015` | Server clock drift undermines timestamp credibility in legal evidence | High | Define UTC clock policy and drift checks (`T410`) plus operational monitoring | Platform/Ops | Open |
+| `RK-016` | Missing or mismatched artifact digests weakens integrity proof during disputes | High | Persist and verify SHA-256 digests (`T411`) in evidence export flow | Backend | Open |
+| `RK-017` | Email-only signer magic links are forwarded/shared, allowing non-intended recipients to sign | High | Explicitly accept baseline risk, enforce short TTL + revoke/rotate controls (`T311`-`T313`), log token events (`T314`), and optionally require OTP (`T37`) for higher-assurance profiles | Product/Security | Open |
 
 ## Definition of Done (DoD)
 
@@ -1315,6 +1326,8 @@ A task may be marked complete only if:
 
 - Code merged with tests.
 - Security and access rules verified where applicable.
+- Action precondition guards and denial-path tests are present for all new stateful or security-sensitive behavior.
+- A comprehensive post-change review has been completed after coding (intent vs implementation, cross-scope impact, and regression risk), with findings resolved or explicitly documented.
 - Relevant requirement IDs referenced in PR.
 - For feature branches: `FEATURE.md` task status and change log updated (for non-feature branches, linked task/issue and gate evidence provided).
 - Documentation updated for any user-visible behavior change.
@@ -1333,6 +1346,11 @@ Use this checklist in every implementation PR touching this feature:
 - [ ] One2many inverse Many2one fields are indexed appropriately (`btree`/`btree_not_null` where needed).
 - [ ] Persisted model changes align with the `Database Storage Contract (Schema v1 Draft)` section.
 - [ ] Security reviewed: ACL + record rules + portal access token checks.
+- [ ] Comprehensive post-change review completed after final code edits (whole-scope behavior, security boundaries, and regression scan), not only incremental checks during implementation.
+- [ ] Server-authoritative fields are protected in model layer; client-submitted lifecycle/evidence/status writes are rejected unless explicitly allowed.
+- [ ] Stateful actions enforce business preconditions (including actionable participants, not just row existence).
+- [ ] Denial-path tests cover tamper attempts and invalid transitions for the changed scope.
+- [ ] UI writeability (`readonly`/invisible) is aligned with server authority for sensitive fields.
 - [ ] `jsonrpc` endpoints follow documented request/response/error envelope contract.
 - [ ] Mutating portal endpoints enforce idempotency keys and race-safe transition handling.
 - [ ] Evidence timestamps are UTC and artifact digest fields are generated/verified as specified.
@@ -1367,9 +1385,9 @@ Notes:
 
 Counts below track only `T*` development tasks in the phase task board.
 
-- Completed tasks: `23`
+- Completed tasks: `28`
 - In progress tasks: `0`
-- Remaining tasks: `55`
+- Remaining tasks: `57`
 
 ## Update Log
 
@@ -1397,3 +1415,16 @@ Counts below track only `T*` development tasks in the phase task board.
 | `2026-02-27` | Codex | Final T12 review sign-off completed (no additional in-scope blockers found), confirmed `T13` as next execution task, and refreshed continuation notes for handoff readiness. |
 | `2026-02-27` | Codex | Completed `T13` by implementing `open.sign.template.field` and `open.sign.template.field.option` models, constraints, ACL rows, template field management views/menu, and dedicated field/option unit tests including ACL behavior coverage. |
 | `2026-02-28` | Codex | Closed out `T13` with Odoo 19 compatibility fixes (groups privilege model, view XML updates, constraint API updates), removed deprecated `check_access_rights()` usage in tests, and re-validated with `/open_sign` suite passing (`0 failed, 0 errors`). |
+| `2026-02-28` | Codex | Closed out `T14` hardening (status bypass guard, template-version immutability, request binding freeze) and completed `T15` with `open.sign.request.signer`, signer sequencing helpers, participant-required send gating, ACL/view wiring, and `/open_sign` tests passing (`0 failed, 0 errors`). |
+| `2026-02-28` | Codex | Hardened `T15` after review by blocking non-superuser signer lifecycle/evidence mutations (`state`, `signed_at`, consent/IP/opened fields), requiring at least one actionable signer (`pending/opened`) before send, setting signer lifecycle columns readonly in request UI, and extending tests; `/open_sign` remains green (`0 failed, 0 errors`). |
+| `2026-02-28` | Codex | Added explicit ownership of signer evidence-field format validation to `T18` and introduced recurring hardening re-audit task `T610` (with traceability linkage) to catch similar authority/precondition/denial-path gaps in later phases. |
+| `2026-02-28` | Codex | Completed `T16` with `open.sign.request.value` model, cross-model integrity constraints, value normalization baselines (text/json by field type), server-authoritative `is_valid` guard, ACL matrix wiring, and dedicated runtime tests; `/open_sign` remains green (`0 failed, 0 errors`). |
+| `2026-02-28` | Codex | Closed post-review hardening gap for `T15`/`T16` by applying create-time effective-default checks (blocking `default_*` context bypass for lifecycle/validation fields), enforcing normalization on context-provided defaults, and adding dedicated regression tests; `/open_sign` remains green (`0 failed, 0 errors`). |
+| `2026-02-28` | Codex | Completed `T17` with `open.sign.audit.log` (event taxonomy selection, request-local sequence/hash uniqueness, hash-format checks, signer/request consistency, append-only immutability with privileged repair context), added read-only ACL coverage for user/manager/auditor, and added dedicated audit-log tests; `/open_sign` remains green (`0 failed, 0 errors`). |
+| `2026-02-28` | Codex | Strengthened process controls by making comprehensive post-change review a mandatory completion/PR gate in `FEATURE.md` and `CONTINUE.md` so every code-change session includes an explicit whole-scope regression and security review step. |
+| `2026-02-28` | Codex | Completed `T18` by adding centralized field validation service (`required`/`optional`, type-specific normalization and rule checks), wiring it into `open.sign.request.value` create/write flows, adding signer evidence format validation (`ip_last`, `consent_text_hash`, `signer_timezone`) in `open.sign.request.signer`, and extending regression coverage; `/open_sign` remains green (`0 failed, 0 errors`). |
+| `2026-02-28` | Codex | Completed `T19` by adding base backend list/form/kanban coverage and actions for templates, requests, roles, fields, template versions, signers, values, and audit logs; expanded Open Sign menu structure (including configuration and audit visibility), added request form tabs for values/audit logs, and added backend-view regression tests; `/open_sign` remains green (`0 failed, 0 errors`). |
+| `2026-02-28` | Codex | Closed T18/T19 post-review security gap by blocking non-superuser signer/value create/write/unlink mutations once requests reach terminal states (`completed`, `cancelled`, `voided`) and adding dedicated denial-path regression tests; `/open_sign` remains green (`0 failed, 0 errors`). |
+| `2026-02-28` | Codex | Completed follow-up hardening re-audit fixes: enforced request immutability for terminal states including `cancelled`, preserved retention evidence via request soft-delete behavior validation (no cascade loss of signer/value/audit rows), made multi-record request-value writes savepointed/all-or-nothing, and expanded terminal/atomicity regression coverage; `open_sign` suite remains green (`0 failed, 0 errors`). |
+| `2026-02-28` | Codex | Completed `T113` by implementing `open_sign_security.xml` record-rule matrix (company isolation on all operational models plus owner/assignee scope for request-linked models), adding dedicated multi-company/ownership security tests (`test_sign_security_rules.py`), aligning existing ACL fixtures with owner-scoped behavior, and re-validating `/open_sign` (`0 failed, 0 errors` of 69 tests). |
+| `2026-02-28` | Codex | Added deferred portal task track `T310`-`T315` for email-only signer authentication via email+token magic links (strategy decision, issuance/revocation, lifecycle hardening, audit taxonomy, and denial-path/E2E tests), and updated traceability/milestone/risk mappings. |

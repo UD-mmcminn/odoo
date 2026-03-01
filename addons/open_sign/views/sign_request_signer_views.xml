@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data>
+        <record id="view_open_sign_request_signer_list" model="ir.ui.view">
+            <field name="name">open.sign.request.signer.view.list</field>
+            <field name="model">open.sign.request.signer</field>
+            <field name="arch" type="xml">
+                <list string="Request Signers" sample="1">
+                    <field name="request_id"/>
+                    <field name="sequence"/>
+                    <field name="role_id"/>
+                    <field name="email"/>
+                    <field name="partner_id" optional="hide"/>
+                    <field name="state" widget="badge"/>
+                    <field name="last_opened_at" optional="hide"/>
+                    <field name="signed_at" optional="hide"/>
+                </list>
+            </field>
+        </record>
+
+        <record id="view_open_sign_request_signer_kanban" model="ir.ui.view">
+            <field name="name">open.sign.request.signer.view.kanban</field>
+            <field name="model">open.sign.request.signer</field>
+            <field name="arch" type="xml">
+                <kanban class="o_kanban_mobile" sample="1" default_group_by="state">
+                    <field name="email"/>
+                    <field name="state"/>
+                    <field name="request_id"/>
+                    <field name="role_id"/>
+                    <field name="sequence"/>
+                    <templates>
+                        <t t-name="card">
+                            <div class="d-flex align-items-baseline mb-2">
+                                <field name="email" class="fw-bolder fs-5"/>
+                                <field name="state" widget="badge" class="ms-auto"/>
+                            </div>
+                            <div class="text-muted d-flex flex-wrap gap-1">
+                                <span>Role:</span>
+                                <field name="role_id"/>
+                            </div>
+                            <footer class="d-flex justify-content-between text-muted mt-2">
+                                <field name="request_id"/>
+                                <span>#<field name="sequence"/></span>
+                            </footer>
+                        </t>
+                    </templates>
+                </kanban>
+            </field>
+        </record>
+
+        <record id="view_open_sign_request_signer_search" model="ir.ui.view">
+            <field name="name">open.sign.request.signer.view.search</field>
+            <field name="model">open.sign.request.signer</field>
+            <field name="arch" type="xml">
+                <search string="Request Signers">
+                    <field name="email"/>
+                    <field name="request_id"/>
+                    <field name="role_id"/>
+                    <field name="state"/>
+                    <filter name="filter_pending" string="Pending" domain="[('state', '=', 'pending')]"/>
+                    <filter name="filter_opened" string="Opened" domain="[('state', '=', 'opened')]"/>
+                    <filter name="filter_signed" string="Signed" domain="[('state', '=', 'signed')]"/>
+                    <filter name="filter_declined" string="Declined" domain="[('state', '=', 'declined')]"/>
+                    <group>
+                        <filter name="group_request" string="Request" context="{'group_by': 'request_id'}"/>
+                        <filter name="group_role" string="Role" context="{'group_by': 'role_id'}"/>
+                        <filter name="group_state" string="State" context="{'group_by': 'state'}"/>
+                    </group>
+                </search>
+            </field>
+        </record>
+
+        <record id="view_open_sign_request_signer_form" model="ir.ui.view">
+            <field name="name">open.sign.request.signer.view.form</field>
+            <field name="model">open.sign.request.signer</field>
+            <field name="arch" type="xml">
+                <form string="Request Signer">
+                    <sheet>
+                        <group>
+                            <group>
+                                <field name="request_id"/>
+                                <field name="role_id"/>
+                                <field name="sequence"/>
+                                <field name="partner_id"/>
+                                <field name="email"/>
+                            </group>
+                            <group>
+                                <field name="state" readonly="1"/>
+                                <field name="signed_at" readonly="1"/>
+                                <field name="last_opened_at" readonly="1"/>
+                                <field name="declined_reason" readonly="1"/>
+                            </group>
+                        </group>
+                        <group>
+                            <group>
+                                <field name="ip_last" readonly="1"/>
+                                <field name="signer_timezone" readonly="1"/>
+                            </group>
+                            <group>
+                                <field name="consent_accepted_at" readonly="1"/>
+                                <field name="consent_text_hash" readonly="1"/>
+                                <field name="company_id" groups="base.group_multi_company" readonly="1"/>
+                            </group>
+                        </group>
+                    </sheet>
+                </form>
+            </field>
+        </record>
+
+        <record id="action_open_sign_request_signer" model="ir.actions.act_window">
+            <field name="name">Request Signers</field>
+            <field name="res_model">open.sign.request.signer</field>
+            <field name="view_mode">list,kanban,form</field>
+            <field name="search_view_id" ref="open_sign.view_open_sign_request_signer_search"/>
+        </record>
+    </data>
+</odoo>

@@ -6,3 +6,6 @@ from . import sign_role
 from . import sign_template_field
 from . import sign_template_field_option
 from . import sign_request
+from . import sign_request_signer
+from . import sign_request_value
+from . import sign_audit_log

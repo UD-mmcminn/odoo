@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data>
+        <record id="view_open_sign_request_value_list" model="ir.ui.view">
+            <field name="name">open.sign.request.value.view.list</field>
+            <field name="model">open.sign.request.value</field>
+            <field name="arch" type="xml">
+                <list string="Request Values" sample="1">
+                    <field name="request_id"/>
+                    <field name="signer_id"/>
+                    <field name="template_field_id"/>
+                    <field name="value_text" optional="show"/>
+                    <field name="is_valid" readonly="1"/>
+                    <field name="signed_payload_attachment_id" optional="hide"/>
+                </list>
+            </field>
+        </record>
+
+        <record id="view_open_sign_request_value_kanban" model="ir.ui.view">
+            <field name="name">open.sign.request.value.view.kanban</field>
+            <field name="model">open.sign.request.value</field>
+            <field name="arch" type="xml">
+                <kanban class="o_kanban_mobile" sample="1" default_group_by="is_valid">
+                    <field name="request_id"/>
+                    <field name="signer_id"/>
+                    <field name="template_field_id"/>
+                    <field name="value_text"/>
+                    <field name="is_valid"/>
+                    <templates>
+                        <t t-name="card">
+                            <div class="d-flex align-items-baseline mb-2">
+                                <field name="template_field_id" class="fw-bolder fs-5"/>
+                                <span class="ms-auto text-muted">
+                                    Valid: <field name="is_valid"/>
+                                </span>
+                            </div>
+                            <div class="text-muted d-flex flex-wrap gap-1">
+                                <span>Signer:</span>
+                                <field name="signer_id"/>
+                            </div>
+                            <footer class="d-flex flex-wrap gap-1 text-muted mt-2">
+                                <field name="request_id"/>
+                                <field name="value_text"/>
+                            </footer>
+                        </t>
+                    </templates>
+                </kanban>
+            </field>
+        </record>
+
+        <record id="view_open_sign_request_value_search" model="ir.ui.view">
+            <field name="name">open.sign.request.value.view.search</field>
+            <field name="model">open.sign.request.value</field>
+            <field name="arch" type="xml">
+                <search string="Request Values">
+                    <field name="request_id"/>
+                    <field name="signer_id"/>
+                    <field name="template_field_id"/>
+                    <filter name="filter_valid" string="Valid" domain="[('is_valid', '=', True)]"/>
+                    <filter name="filter_invalid" string="Invalid" domain="[('is_valid', '=', False)]"/>
+                    <group>
+                        <filter name="group_request" string="Request" context="{'group_by': 'request_id'}"/>
+                        <filter name="group_signer" string="Signer" context="{'group_by': 'signer_id'}"/>
+                        <filter name="group_validity" string="Validation" context="{'group_by': 'is_valid'}"/>
+                    </group>
+                </search>
+            </field>
+        </record>
+
+        <record id="view_open_sign_request_value_form" model="ir.ui.view">
+            <field name="name">open.sign.request.value.view.form</field>
+            <field name="model">open.sign.request.value</field>
+            <field name="arch" type="xml">
+                <form string="Request Value">
+                    <sheet>
+                        <group>
+                            <group>
+                                <field name="request_id"/>
+                                <field name="signer_id"/>
+                                <field name="template_field_id"/>
+                                <field name="is_valid" readonly="1"/>
+                            </group>
+                            <group>
+                                <field name="value_text"/>
+                                <field name="value_json"/>
+                                <field name="signed_payload_attachment_id"/>
+                                <field name="company_id" groups="base.group_multi_company" readonly="1"/>
+                            </group>
+                        </group>
+                    </sheet>
+                </form>
+            </field>
+        </record>
+
+        <record id="action_open_sign_request_value" model="ir.actions.act_window">
+            <field name="name">Request Values</field>
+            <field name="res_model">open.sign.request.value</field>
+            <field name="view_mode">list,kanban,form</field>
+            <field name="search_view_id" ref="open_sign.view_open_sign_request_value_search"/>
+        </record>
+    </data>
+</odoo>
