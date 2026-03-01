@@ -8,34 +8,56 @@
                     <span class="text-muted small">
                         <t t-esc="state.fields.length"/> field(s)
                     </span>
-                    <button class="btn btn-sm btn-primary" type="button" t-on-click="addField">
-                        Add Field
+                    <button class="btn btn-sm btn-primary" type="button" t-on-click="() => addField()">
+                        Add Default Field
                     </button>
                 </div>
             </header>
-            <div class="o_open_sign_web_canvas_body">
-                <div class="o_open_sign_web_canvas_page" t-ref="page" t-att-style="pageStyle">
-                    <t t-foreach="state.fields" t-as="field" t-key="field.id">
-                        <div
-                            class="o_open_sign_web_field"
-                            t-att-class="isFieldActive(field) ? 'o_is_active' : ''"
-                            t-att-style="getFieldStyle(field)"
-                            t-on-pointerdown="(ev) => onFieldPointerDown(field, ev)"
-                        >
-                            <span class="o_open_sign_web_field_label">
-                                <t t-esc="field.label"/>
-                            </span>
-                            <span class="o_open_sign_web_field_geometry">
-                                <t t-esc="describeField(field)"/>
-                            </span>
-                            <span
-                                class="o_open_sign_web_field_resize_handle"
-                                title="Resize"
-                                t-on-pointerdown.stop.prevent="(ev) => onResizePointerDown(field, ev)"
-                            />
-                        </div>
-                    </t>
+            <div class="o_open_sign_web_editor_layout">
+                <aside class="o_open_sign_web_palette">
+                    <h4 class="o_open_sign_web_panel_title">Field Palette</h4>
+                    <div class="o_open_sign_web_palette_list">
+                        <t t-foreach="fieldPaletteEntries" t-as="entry" t-key="entry.type">
+                            <button
+                                class="btn btn-outline-secondary btn-sm o_open_sign_web_palette_button"
+                                type="button"
+                                t-on-click="() => addFieldFromPalette(entry.type)"
+                            >
+                                <span class="o_open_sign_web_palette_label">
+                                    <t t-esc="entry.label"/>
+                                </span>
+                                <span class="o_open_sign_web_palette_hint text-muted">
+                                    <t t-esc="entry.type"/>
+                                </span>
+                            </button>
+                        </t>
+                    </div>
+                </aside>
+                <div class="o_open_sign_web_canvas_body">
+                    <div class="o_open_sign_web_canvas_page" t-ref="page" t-att-style="pageStyle" t-on-pointerdown.self="onCanvasPointerDown">
+                        <t t-foreach="state.fields" t-as="field" t-key="field.id">
+                            <div
+                                class="o_open_sign_web_field"
+                                t-att-class="getFieldClasses(field)"
+                                t-att-style="getFieldStyle(field)"
+                                t-on-pointerdown="(ev) => onFieldPointerDown(field, ev)"
+                            >
+                                <span class="o_open_sign_web_field_label">
+                                    <t t-esc="field.label"/>
+                                </span>
+                                <span class="o_open_sign_web_field_geometry">
+                                    <t t-esc="describeField(field)"/>
+                                </span>
+                                <span
+                                    class="o_open_sign_web_field_resize_handle"
+                                    title="Resize"
+                                    t-on-pointerdown.stop.prevent="(ev) => onResizePointerDown(field, ev)"
+                                />
+                            </div>
+                        </t>
+                    </div>
                 </div>
+                <t t-call="open_sign_web.FieldPropertiesPanel"/>
             </div>
         </section>
     </t>

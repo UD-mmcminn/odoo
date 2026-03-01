@@ -1,12 +1,27 @@
 /** @odoo-module **/
 
 import { registry } from "@web/core/registry";
+import { _t } from "@web/core/l10n/translation";
 import { standardActionServiceProps } from "@web/webclient/actions/action_service";
+
+import {
+    getFieldPaletteEntries,
+    getPaletteEntryByType,
+} from "@open_sign_web/js/field_palette";
+import {
+    normalizeFieldProperties,
+    sanitizeFieldLabel,
+    supportsFieldOptions,
+    supportsLengthBounds,
+    toTemplateFieldVals,
+} from "@open_sign_web/js/field_properties_panel";
 
 import { Component, onWillUnmount, useExternalListener, useRef, useState } from "@odoo/owl";
 
 const MIN_FIELD_SIZE = 0.02;
 const DEFAULT_PAGE_SIZE = Object.freeze({ width: 800, height: 1132 });
+const DEFAULT_FIELD_TYPE = "text";
+const DEFAULT_OPTION_LIST = `${_t("Option 1")}\n${_t("Option 2")}`;
 
 function asNumber(value, fallback = 0) {
     const parsed = Number(value);
@@ -30,11 +45,7 @@ export function serializeFieldGeometry(geometry = {}) {
     return { page, x, y, width, height };
 }
 
-export function normalizeCanvasToPdfCoordinates(
-    geometry = {},
-    canvasSize = {},
-    pdfSize = {}
-) {
+export function normalizeCanvasToPdfCoordinates(geometry = {}, canvasSize = {}, pdfSize = {}) {
     const normalized = serializeFieldGeometry(geometry);
     const canvasWidth = Math.max(1, asNumber(canvasSize.width, 1));
     const canvasHeight = Math.max(1, asNumber(canvasSize.height, 1));
@@ -90,18 +101,41 @@ export function applyResizeDelta(baseGeometry = {}, deltaXRatio = 0, deltaYRatio
     };
 }
 
-function buildFieldRecord(id, page) {
+function buildFieldRecord(id, page, fieldType, sequence) {
+    const paletteEntry = getPaletteEntryByType(fieldType || DEFAULT_FIELD_TYPE);
+    const properties = normalizeFieldProperties({ sequence }, paletteEntry.type);
+    if (supportsFieldOptions(paletteEntry.type) && !properties.optionList) {
+        properties.optionList = DEFAULT_OPTION_LIST;
+    }
+
     return {
         id,
-        label: `Field ${id}`,
+        type: paletteEntry.type,
+        label: `${paletteEntry.label} ${id}`,
+        ...properties,
         ...coerceRenderableGeometry({
             page,
-            x: 0.35,
-            y: 0.2 + (id % 4) * 0.08,
-            width: 0.25,
-            height: 0.08,
+            x: 0.18 + (id % 4) * 0.07,
+            y: 0.16 + (id % 5) * 0.09,
+            width: paletteEntry.defaultWidth,
+            height: paletteEntry.defaultHeight,
         }),
     };
+}
+
+export function serializeTemplateFieldsForBackend(fields = []) {
+    const normalizedFields = Array.isArray(fields) ? fields : [];
+    return normalizedFields.map((field) => {
+        const geometry = coerceRenderableGeometry(field);
+        return {
+            ...toTemplateFieldVals(field),
+            page: geometry.page,
+            x: geometry.x,
+            y: geometry.y,
+            width: geometry.width,
+            height: geometry.height,
+        };
+    });
 }
 
 export class TemplateCanvas extends Component {
@@ -110,11 +144,16 @@ export class TemplateCanvas extends Component {
 
     setup() {
         this.pageRef = useRef("page");
+        this.paletteEntries = getFieldPaletteEntries();
+        this.paletteByType = new Map(this.paletteEntries.map((entry) => [entry.type, entry]));
+
+        const firstField = buildFieldRecord(1, 1, DEFAULT_FIELD_TYPE, 10);
         this.state = useState({
             activePage: 1,
             nextId: 2,
             pageSize: { ...DEFAULT_PAGE_SIZE },
-            fields: [buildFieldRecord(1, 1)],
+            fields: [firstField],
+            selectedFieldId: firstField.id,
             interaction: null,
         });
 
@@ -130,14 +169,75 @@ export class TemplateCanvas extends Component {
         return `aspect-ratio: ${this.state.pageSize.width} / ${this.state.pageSize.height};`;
     }
 
-    addField() {
+    get fieldPaletteEntries() {
+        return this.paletteEntries;
+    }
+
+    get selectedField() {
+        return this.state.fields.find((field) => field.id === this.state.selectedFieldId) || null;
+    }
+
+    get selectedFieldSupportsOptions() {
+        return this.selectedField ? supportsFieldOptions(this.selectedField.type) : false;
+    }
+
+    get selectedFieldSupportsLengthBounds() {
+        return this.selectedField ? supportsLengthBounds(this.selectedField.type) : false;
+    }
+
+    get backendFieldPayload() {
+        return serializeTemplateFieldsForBackend(this.state.fields);
+    }
+
+    getPaletteLabel(fieldType) {
+        const entry = this.paletteByType.get(fieldType);
+        return entry ? entry.label : getPaletteEntryByType(DEFAULT_FIELD_TYPE).label;
+    }
+
+    addField(fieldType = DEFAULT_FIELD_TYPE) {
         const fieldId = this.state.nextId;
         this.state.nextId += 1;
-        this.state.fields.push(buildFieldRecord(fieldId, this.state.activePage));
+        const field = buildFieldRecord(fieldId, this.state.activePage, fieldType, fieldId * 10);
+        this.state.fields.push(field);
+        this.state.selectedFieldId = field.id;
+    }
+
+    addFieldFromPalette(fieldType) {
+        this.addField(fieldType);
+    }
+
+    removeSelectedField() {
+        const selectedField = this.selectedField;
+        if (!selectedField) {
+            return;
+        }
+
+        this.state.fields = this.state.fields.filter((field) => field.id !== selectedField.id);
+        this.state.selectedFieldId = this.state.fields[0] ? this.state.fields[0].id : null;
+        this.state.interaction = null;
+    }
+
+    selectField(fieldId) {
+        this.state.selectedFieldId = fieldId;
+    }
+
+    isFieldSelected(field) {
+        return this.state.selectedFieldId === field.id;
     }
 
     isFieldActive(field) {
         return this.state.interaction && this.state.interaction.fieldId === field.id;
+    }
+
+    getFieldClasses(field) {
+        const classes = [];
+        if (this.isFieldSelected(field)) {
+            classes.push("o_is_selected");
+        }
+        if (this.isFieldActive(field)) {
+            classes.push("o_is_active");
+        }
+        return classes.join(" ");
     }
 
     describeField(field) {
@@ -146,7 +246,7 @@ export class TemplateCanvas extends Component {
         const y = Math.round(geometry.y * 100);
         const width = Math.round(geometry.width * 100);
         const height = Math.round(geometry.height * 100);
-        return `p${geometry.page} | x:${x}% y:${y}% w:${width}% h:${height}%`;
+        return `${this.getPaletteLabel(field.type)} | p${geometry.page} | x:${x}% y:${y}% w:${width}% h:${height}%`;
     }
 
     getFieldStyle(field) {
@@ -154,11 +254,56 @@ export class TemplateCanvas extends Component {
         return `left:${geometry.x * 100}%;top:${geometry.y * 100}%;width:${geometry.width * 100}%;height:${geometry.height * 100}%;`;
     }
 
+    updateSelectedFieldLabel(ev) {
+        this._updateSelectedFieldProperties({ label: ev.target.value });
+    }
+
+    updateSelectedFieldType(ev) {
+        this._updateSelectedFieldProperties({ type: ev.target.value });
+    }
+
+    updateSelectedFieldRequired(ev) {
+        this._updateSelectedFieldProperties({ required: ev.target.checked });
+    }
+
+    updateSelectedFieldSequence(ev) {
+        this._updateSelectedFieldProperties({ sequence: ev.target.value });
+    }
+
+    updateSelectedFieldPlaceholder(ev) {
+        this._updateSelectedFieldProperties({ placeholder: ev.target.value });
+    }
+
+    updateSelectedFieldHelpText(ev) {
+        this._updateSelectedFieldProperties({ helpText: ev.target.value });
+    }
+
+    updateSelectedFieldDefaultValue(ev) {
+        this._updateSelectedFieldProperties({ defaultValue: ev.target.value });
+    }
+
+    updateSelectedFieldValidationRegex(ev) {
+        this._updateSelectedFieldProperties({ validationRegex: ev.target.value });
+    }
+
+    updateSelectedFieldMinLength(ev) {
+        this._updateSelectedFieldProperties({ minLength: ev.target.value });
+    }
+
+    updateSelectedFieldMaxLength(ev) {
+        this._updateSelectedFieldProperties({ maxLength: ev.target.value });
+    }
+
+    updateSelectedFieldOptionList(ev) {
+        this._updateSelectedFieldProperties({ optionList: ev.target.value });
+    }
+
     onFieldPointerDown(field, ev) {
         if (ev.pointerType === "mouse" && ev.button !== 0) {
             return;
         }
         ev.preventDefault();
+        this.selectField(field.id);
         this._startInteraction("move", field, ev);
     }
 
@@ -168,7 +313,12 @@ export class TemplateCanvas extends Component {
         }
         ev.preventDefault();
         ev.stopPropagation();
+        this.selectField(field.id);
         this._startInteraction("resize", field, ev);
+    }
+
+    onCanvasPointerDown() {
+        this.state.selectedFieldId = null;
     }
 
     onPointerMove(ev) {
@@ -217,6 +367,34 @@ export class TemplateCanvas extends Component {
             pageHeight: pageRect.height,
         };
         document.body.classList.add("o_open_sign_web_unselectable");
+    }
+
+    _updateSelectedFieldProperties(patch = {}) {
+        const field = this.selectedField;
+        if (!field) {
+            return;
+        }
+
+        const nextType = patch.type || field.type;
+        const nextValues = { ...field, ...patch };
+        const normalized = normalizeFieldProperties(nextValues, nextType);
+        if (supportsFieldOptions(nextType) && !normalized.optionList) {
+            normalized.optionList = DEFAULT_OPTION_LIST;
+        }
+
+        Object.assign(field, {
+            type: nextType,
+            label: sanitizeFieldLabel(nextValues.label, `${this.getPaletteLabel(nextType)} ${field.id}`),
+            required: normalized.required,
+            sequence: normalized.sequence,
+            placeholder: normalized.placeholder,
+            helpText: normalized.helpText,
+            defaultValue: normalized.defaultValue,
+            validationRegex: normalized.validationRegex,
+            minLength: normalized.minLength,
+            maxLength: normalized.maxLength,
+            optionList: normalized.optionList,
+        });
     }
 }
 

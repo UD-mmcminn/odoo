@@ -2,7 +2,139 @@
 <templates xml:space="preserve">
     <t t-name="open_sign_web.FieldPropertiesPanel">
         <aside class="o_open_sign_web_properties">
-            <h4>Field Properties</h4>
+            <h4 class="o_open_sign_web_panel_title">Field Properties</h4>
+            <t t-if="selectedField">
+                <div class="o_open_sign_web_properties_meta text-muted">
+                    Field #<t t-esc="selectedField.id"/>
+                </div>
+                <div class="o_open_sign_web_properties_form">
+                    <label class="o_open_sign_web_input_group">
+                        <span>Label</span>
+                        <input
+                            class="form-control form-control-sm"
+                            type="text"
+                            t-att-value="selectedField.label"
+                            t-on-change="updateSelectedFieldLabel"
+                        />
+                    </label>
+                    <label class="o_open_sign_web_input_group">
+                        <span>Field Type</span>
+                        <select
+                            class="form-select form-select-sm"
+                            t-att-value="selectedField.type"
+                            t-on-change="updateSelectedFieldType"
+                        >
+                            <t t-foreach="fieldPaletteEntries" t-as="entry" t-key="entry.type">
+                                <option t-att-value="entry.type">
+                                    <t t-esc="entry.label"/>
+                                </option>
+                            </t>
+                        </select>
+                    </label>
+                    <label class="o_open_sign_web_input_group o_open_sign_web_checkbox_group">
+                        <input
+                            class="form-check-input"
+                            type="checkbox"
+                            t-att-checked="selectedField.required"
+                            t-on-change="updateSelectedFieldRequired"
+                        />
+                        <span>Required</span>
+                    </label>
+                    <label class="o_open_sign_web_input_group">
+                        <span>Sequence</span>
+                        <input
+                            class="form-control form-control-sm"
+                            type="number"
+                            min="0"
+                            t-att-value="selectedField.sequence"
+                            t-on-change="updateSelectedFieldSequence"
+                        />
+                    </label>
+                    <label class="o_open_sign_web_input_group">
+                        <span>Placeholder</span>
+                        <input
+                            class="form-control form-control-sm"
+                            type="text"
+                            t-att-value="selectedField.placeholder"
+                            t-on-change="updateSelectedFieldPlaceholder"
+                        />
+                    </label>
+                    <label class="o_open_sign_web_input_group">
+                        <span>Help Text</span>
+                        <textarea
+                            class="form-control form-control-sm"
+                            rows="2"
+                            t-att-value="selectedField.helpText"
+                            t-on-change="updateSelectedFieldHelpText"
+                        />
+                    </label>
+                    <label class="o_open_sign_web_input_group">
+                        <span>Default Value</span>
+                        <input
+                            class="form-control form-control-sm"
+                            type="text"
+                            t-att-value="selectedField.defaultValue"
+                            t-on-change="updateSelectedFieldDefaultValue"
+                        />
+                    </label>
+                    <label class="o_open_sign_web_input_group">
+                        <span>Validation Regex</span>
+                        <input
+                            class="form-control form-control-sm"
+                            type="text"
+                            t-att-value="selectedField.validationRegex"
+                            t-on-change="updateSelectedFieldValidationRegex"
+                        />
+                    </label>
+                    <t t-if="selectedFieldSupportsLengthBounds">
+                        <div class="o_open_sign_web_length_row">
+                            <label class="o_open_sign_web_input_group">
+                                <span>Min Length</span>
+                                <input
+                                    class="form-control form-control-sm"
+                                    type="number"
+                                    min="0"
+                                    t-att-value="selectedField.minLength !== null ? selectedField.minLength : ''"
+                                    t-on-change="updateSelectedFieldMinLength"
+                                />
+                            </label>
+                            <label class="o_open_sign_web_input_group">
+                                <span>Max Length</span>
+                                <input
+                                    class="form-control form-control-sm"
+                                    type="number"
+                                    min="0"
+                                    t-att-value="selectedField.maxLength !== null ? selectedField.maxLength : ''"
+                                    t-on-change="updateSelectedFieldMaxLength"
+                                />
+                            </label>
+                        </div>
+                    </t>
+                    <t t-if="selectedFieldSupportsOptions">
+                        <label class="o_open_sign_web_input_group">
+                            <span>Options (one per line)</span>
+                            <textarea
+                                class="form-control form-control-sm"
+                                rows="4"
+                                t-att-value="selectedField.optionList"
+                                t-on-change="updateSelectedFieldOptionList"
+                            />
+                        </label>
+                    </t>
+                    <button
+                        class="btn btn-outline-danger btn-sm o_open_sign_web_remove_button"
+                        type="button"
+                        t-on-click="removeSelectedField"
+                    >
+                        Remove Field
+                    </button>
+                </div>
+            </t>
+            <t t-else="">
+                <div class="o_open_sign_web_properties_empty text-muted">
+                    Select a field on the canvas to edit its properties.
+                </div>
+            </t>
         </aside>
     </t>
 </templates>

@@ -1199,7 +1199,7 @@ Legend:
 
 - [x] `T20` Scaffold addon and declare backend/frontend assets in `__manifest__.py`.
 - [x] `T21` Build template canvas with drag/drop/resizing on PDF pages.
-- [ ] `T22` Build field palette and field property editor.
+- [x] `T22` Build field palette and field property editor.
 - [ ] `T23` Implement signer role assignment in editor.
 - [ ] `T24` Implement client-side value validation aligned with server rules.
 - [ ] `T25` Implement signature adoption dialog (draw/type/upload).
@@ -1394,9 +1394,9 @@ Notes:
 
 Counts below track only `T*` development tasks in the phase task board.
 
-- Completed tasks: `34`
+- Completed tasks: `35`
 - In progress tasks: `0`
-- Remaining tasks: `51`
+- Remaining tasks: `50`
 
 ## Update Log
 
@@ -1426,6 +1426,9 @@ Counts below track only `T*` development tasks in the phase task board.
 | `2026-03-01` | Codex | Started Phase 2 by completing `T20`: scaffolded `open_sign_web` addon, declared backend/test assets, added initial OWL/JS/CSS skeleton files, and added baseline geometry/validation JS test stubs. |
 | `2026-03-01` | Codex | Completed `T21` by implementing a usable `TemplateCanvas` OWL client action (drag/move/resize field overlays on page canvas), adding backend action/menu wiring for editor access, and validating install + `/open_sign` regression (`0 failed, 0 errors`); frontend test discovery remains explicitly tracked for `T26`. |
 | `2026-03-01` | Codex | Applied T21 security hardening follow-up: restricted `open_sign_web` Editor menu visibility to `open_sign.group_open_sign_user` (auditor removed), and revalidated `open_sign_web` module load plus `/open_sign` regression stability. |
+| `2026-03-01` | Codex | Completed `T22` by implementing a working field palette and property editor in `open_sign_web` (typed field insertion + editable metadata panel with client-side normalization), and revalidated module load plus `/open_sign` regression (`0 failed, 0 errors`); frontend test execution wiring remains deferred to `T26`. |
+| `2026-03-01` | Codex | Applied `T22` hardening follow-up from review findings: JS-translated palette labels (`_t`), deterministic unknown-type fallback to `text`, and explicit backend-safe field serialization helper (`toTemplateFieldVals`) to keep editor-only properties out of ORM payloads until schema support exists. |
+| `2026-03-01` | Codex | Completed `T22` #4 follow-up by wiring backend-safe serialization into the canvas flow (`serializeTemplateFieldsForBackend` using `toTemplateFieldVals`) and adding regression coverage proving editor-only keys (`placeholder`, `helpText`) are excluded from backend payloads. |
 | `2026-02-28` | Codex | Closed out `T13` with Odoo 19 compatibility fixes (groups privilege model, view XML updates, constraint API updates), removed deprecated `check_access_rights()` usage in tests, and re-validated with `/open_sign` suite passing (`0 failed, 0 errors`). |
 | `2026-02-28` | Codex | Closed out `T14` hardening (status bypass guard, template-version immutability, request binding freeze) and completed `T15` with `open.sign.request.signer`, signer sequencing helpers, participant-required send gating, ACL/view wiring, and `/open_sign` tests passing (`0 failed, 0 errors`). |
 | `2026-02-28` | Codex | Hardened `T15` after review by blocking non-superuser signer lifecycle/evidence mutations (`state`, `signed_at`, consent/IP/opened fields), requiring at least one actionable signer (`pending/opened`) before send, setting signer lifecycle columns readonly in request UI, and extending tests; `/open_sign` remains green (`0 failed, 0 errors`). |

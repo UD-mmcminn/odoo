@@ -1,4 +1,5 @@
 .o_open_sign_web_canvas,
+.o_open_sign_web_palette,
 .o_open_sign_web_properties,
 .o_open_sign_web_signature_dialog,
 .o_open_sign_web_signing_form {
@@ -10,6 +11,44 @@
 .o_open_sign_web_canvas_header {
     font-weight: 600;
     margin-bottom: 8px;
+}
+
+.o_open_sign_web_editor_layout {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr) 300px;
+    gap: 12px;
+    align-items: start;
+}
+
+.o_open_sign_web_panel_title {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 0 0 8px;
+}
+
+.o_open_sign_web_palette_list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.o_open_sign_web_palette_button {
+    width: 100%;
+    text-align: left;
+    padding: 8px;
+}
+
+.o_open_sign_web_palette_label {
+    display: block;
+    font-weight: 600;
+    line-height: 1.1;
+}
+
+.o_open_sign_web_palette_hint {
+    display: block;
+    font-size: 11px;
+    line-height: 1.1;
+    margin-top: 2px;
 }
 
 .o_open_sign_web_canvas_body {
@@ -25,7 +64,7 @@
 .o_open_sign_web_canvas_page {
     position: relative;
     width: min(100%, 860px);
-    min-width: 540px;
+    min-width: 420px;
     background: #ffffff;
     border: 1px solid #cfd3d7;
     border-radius: 4px;
@@ -50,6 +89,10 @@
 .o_open_sign_web_field.o_is_active {
     border-color: #0a4f98;
     background: rgba(15, 106, 200, 0.18);
+}
+
+.o_open_sign_web_field.o_is_selected {
+    box-shadow: 0 0 0 2px rgba(10, 79, 152, 0.22);
 }
 
 .o_open_sign_web_field_label {
@@ -81,4 +124,58 @@
 
 .o_open_sign_web_unselectable {
     user-select: none !important;
+}
+
+.o_open_sign_web_properties_meta {
+    font-size: 12px;
+    margin-bottom: 8px;
+}
+
+.o_open_sign_web_properties_form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.o_open_sign_web_input_group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+}
+
+.o_open_sign_web_checkbox_group {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+}
+
+.o_open_sign_web_length_row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.o_open_sign_web_remove_button {
+    align-self: flex-start;
+}
+
+.o_open_sign_web_properties_empty {
+    font-size: 12px;
+}
+
+@media (max-width: 1280px) {
+    .o_open_sign_web_editor_layout {
+        grid-template-columns: 200px minmax(0, 1fr) 280px;
+    }
+}
+
+@media (max-width: 1024px) {
+    .o_open_sign_web_editor_layout {
+        grid-template-columns: 1fr;
+    }
+
+    .o_open_sign_web_canvas_page {
+        min-width: 0;
+    }
 }
