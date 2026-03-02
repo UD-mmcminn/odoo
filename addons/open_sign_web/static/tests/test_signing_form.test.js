@@ -1,9 +1,11 @@
-import { expect, test } from "@odoo/hoot";
+import { describe, expect, test } from "@odoo/hoot";
 
 import {
     normalizeClientFieldValue,
     validateClientFieldValue,
 } from "@open_sign_web/js/signing_form";
+
+describe.current.tags("headless", "open_sign_web");
 
 test("validateClientFieldValue accepts non-required fields", () => {
     const result = validateClientFieldValue({ required: false, type: "text" }, "");
@@ -198,4 +200,57 @@ test("invalid validation regex pattern returns client error", () => {
         valid: false,
         errorCode: "invalid_validation_pattern",
     });
+});
+
+test("optional signature fields can be empty but still require attachment when payload is present", () => {
+    expect(validateClientFieldValue({ required: false, type: "signature" }, false)).toEqual({
+        valid: true,
+        errorCode: null,
+    });
+
+    expect(
+        validateClientFieldValue(
+            { required: false, type: "signature" },
+            { method: "draw", display_name: "Alice" }
+        )
+    ).toEqual({
+        valid: false,
+        errorCode: "signed_payload_attachment_required",
+    });
+});
+
+test("signature attachment id aliases are recognized from field and payload", () => {
+    const fieldCamel = validateClientFieldValue(
+        { required: true, type: "stamp", signedPayloadAttachmentId: 81 },
+        { method: "type", display_name: "Alice" }
+    );
+    expect(fieldCamel).toEqual({ valid: true, errorCode: null });
+
+    const fieldSnake = validateClientFieldValue(
+        { required: true, type: "signature", signed_payload_attachment_id: 82 },
+        { method: "draw", display_name: "Alice" }
+    );
+    expect(fieldSnake).toEqual({ valid: true, errorCode: null });
+
+    const payloadAlias = normalizeClientFieldValue(
+        { required: true, type: "signature" },
+        { method: "draw", display_name: "Alice", signedPayloadAttachmentId: "83" }
+    );
+    expect(payloadAlias.valid).toBe(true);
+    expect(payloadAlias.normalizedValue.signedPayloadAttachmentId).toBe("83");
+});
+
+test("selection/radio options accept backend command-list option payloads", () => {
+    const field = {
+        required: true,
+        type: "radio",
+        option_ids: [
+            [0, 0, { value: "Accept" }],
+            [0, 0, { value: "Decline" }],
+        ],
+    };
+
+    const result = normalizeClientFieldValue(field, "accept");
+    expect(result.valid).toBe(true);
+    expect(result.normalizedValue).toBe("Accept");
 });

@@ -54,7 +54,7 @@
                             </t>
                         </select>
                     </label>
-                    <t t-if="roleOptions.length && !selectedFieldRoleValid">
+                    <t t-if="roleOptions.length &amp;&amp; !selectedFieldRoleValid">
                         <div class="o_open_sign_web_role_help text-warning">
                             This field references a role from a different template. Reassign it before save/export.
                         </div>
@@ -153,6 +153,31 @@
                                 t-on-change="updateSelectedFieldOptionList"
                             />
                         </label>
+                    </t>
+                    <t t-if="selectedFieldSupportsSignatureAdoption">
+                        <div class="o_open_sign_web_signature_adoption_section">
+                            <button
+                                class="btn btn-outline-primary btn-sm"
+                                type="button"
+                                t-on-click="openSelectedFieldSignatureDialog"
+                            >
+                                Adopt Signature
+                            </button>
+                            <t t-if="selectedField.signatureAdoptionPayload">
+                                <div class="text-muted small mt-1">
+                                    Method:
+                                    <t t-esc="selectedField.signatureAdoptionPayload.method"/>
+                                </div>
+                                <div class="text-muted small">
+                                    Attachment ID:
+                                    <t t-esc="selectedField.signatureAdoptionPayload.signed_payload_attachment_id"/>
+                                </div>
+                                <div class="text-muted small">
+                                    MIME:
+                                    <t t-esc="selectedField.signatureAdoptionPayload.signature_image_mime_type"/>
+                                </div>
+                            </t>
+                        </div>
                     </t>
                     <button
                         class="btn btn-outline-danger btn-sm o_open_sign_web_remove_button"

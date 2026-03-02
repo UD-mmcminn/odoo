@@ -1,10 +1,12 @@
-import { expect, test } from "@odoo/hoot";
+import { describe, expect, test } from "@odoo/hoot";
 
 import {
     FIELD_PALETTE_TYPES,
     getFieldPaletteEntries,
     getPaletteEntryByType,
 } from "@open_sign_web/js/field_palette";
+
+describe.current.tags("headless", "open_sign_web");
 
 test("field palette exposes backend-aligned type keys", () => {
     expect(FIELD_PALETTE_TYPES.includes("initials")).toBe(true);

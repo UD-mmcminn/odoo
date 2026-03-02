@@ -82,7 +82,7 @@ Use this before marking any task complete (especially model/state/security work)
 
 - M0 is closed.
 - M1 is closed.
-- M2 is open and in progress.
+- M2 implementation tasks are complete (`T20`-`T26`); milestone sign-off/demo review is next.
 - `T10`, `T11`, `T12`, `T13`, `T14`, `T15`, `T16`, `T17`, `T18`, `T19`, `T110`, `T111`, `T112`, `T113` are marked complete in `FEATURE.md`.
 - `T20` implementation is complete (new `open_sign_web` addon scaffold, manifest asset wiring, initial JS/XML/SCSS skeleton, and baseline frontend test stubs).
 - `T21` implementation is complete (Template Canvas OWL action with drag/move/resize interactions, editor action/menu wiring, and runtime validation).
@@ -92,7 +92,9 @@ Use this before marking any task complete (especially model/state/security work)
 - `T23` implementation and closeout are complete (template-aware signer role assignment in editor via template/role selectors, role normalization across template changes, and backend payload mapping via `role_id`), with `/open_sign` regression green and `/open_sign_web` runtime load validated.
 - `T23` hardening follow-up is complete: removed silent role reassignment on template switch, removed misleading `Unassigned` role UI path, blocked new-field creation when template roles are absent, added stale async response protection for role loading, and added role-validity utility test coverage.
 - `T24` implementation and closeout are complete (client-side value normalization/validation matrix in `signing_form.js` aligned to backend validation service for field types, required/optional semantics, option canonicalization, regex/length checks, and signature payload attachment rules); `/open_sign` regression is green and `/open_sign_web` runtime load is green.
-- `T24` follow-up note: explicit frontend JS test discovery/execution is still deferred to `T26`; current Odoo CLI web-tag runs still report `0` discovered frontend tests.
+- `T25` implementation and closeout are complete (signature adoption dialog using Odoo `NameAndSignature`, method normalization for draw/type/upload, client-side adoption payload validation, and editor integration from field properties for `signature`/`stamp` fields).
+- `T25` hardening follow-up is complete: adopted signature/stamp payloads now create `ir.attachment` rows and persist `signed_payload_attachment_id` in the adopted payload contract, aligned with backend signature value requirements.
+- `T26` implementation and closeout are complete (explicit frontend test-runner wiring in `open_sign_web/tests/test_js.py`, scoped HOOT tagging for addon tests, expanded geometry/validation payload edge-case coverage, and frontend discovery now non-zero under `/open_sign_web` after module install/upgrade).
 - T12 final review is complete; no additional in-scope blockers were identified.
 - `T13` implementation and closeout are complete (models, ACL, views, tests, Odoo 19 compatibility fixes, deprecated-call cleanup).
 - `T14` implementation and closeout are complete (request lifecycle model, version snapshot binding, transition guards, ACL + views, runtime tests green).
@@ -560,7 +562,8 @@ Use this before marking any task complete (especially model/state/security work)
   - monitor reminder cadence behavior in real environments and tune via `open_sign.reminder_interval_hours`
   - maintain upgrade-script CI coverage so `T112` remains effective across future schema changes
 - M2 test-runner note:
-  - current CLI runs (`--test-tags /open_sign_web`, `/open_sign_web:js`) report `0` tests despite JS test files under `open_sign_web/static/tests/`; treat explicit frontend runner wiring/coverage confirmation as part of `T26`.
+  - `/open_sign_web` now executes non-zero post-tests after explicit module install/upgrade (`-i/-u open_sign_web`) with `open_sign_web/tests/test_js.py`.
+  - In this local environment, the HOOT browser run is skipped because `websocket-client` is missing; asset-registration and backend regression checks still pass.
 
 ## Deferred Queue (Tracked Next-Up)
 
@@ -603,6 +606,8 @@ Use this before marking any task complete (especially model/state/security work)
 - `addons/open_sign_web/static/tests/test_template_canvas.test.js`
 - `addons/open_sign_web/static/tests/test_signing_form.test.js`
 - `addons/open_sign_web/static/tests/test_coordinate_normalization.test.js`
+- `addons/open_sign_web/tests/__init__.py`
+- `addons/open_sign_web/tests/test_js.py`
 - `addons/open_sign/data/ir_cron.xml`
 - `addons/open_sign/upgrades/1.1/pre-migrate.py`
 - `addons/open_sign/upgrades/1.1/post-migrate.py`
@@ -625,14 +630,14 @@ Use this before marking any task complete (especially model/state/security work)
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign/tests/test_sign_audit_log.py --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign/tests/test_sign_security_rules.py --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign --stop-after-init`
-2. If tests pass, continue Phase 2 implementation (`T25`).
+   - `./odoo-bin -d <db> -u open_sign_web --test-enable --test-tags /open_sign_web --stop-after-init`
+2. If tests pass, begin Phase 3 implementation (`T30`).
 3. Re-run recurring hardening re-audit (`T610`) after each major phase slice and after every 3 completed implementation tasks.
 
 ## Next Tasks (Planned Order)
 
-1. `T25` Implement signature adoption dialog (draw/type/upload).
-2. `T26` Add JS tests for geometry/validation payloads and enable frontend test discovery/execution in CI.
-3. `T35` (deferred reminder email scope) implement invitation/reminder/completion notifications after portal flow foundations.
+1. `T30` Scaffold addon with portal routes/templates and baseline security posture (`open_sign_portal`).
+2. `T35` (deferred reminder email scope) implement invitation/reminder/completion notifications after portal flow foundations.
 
 ## Notes For Next Chat
 

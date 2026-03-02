@@ -16,6 +16,7 @@ import {
     supportsLengthBounds,
     toTemplateFieldVals,
 } from "@open_sign_web/js/field_properties_panel";
+import { openSignatureAdoptionDialog } from "@open_sign_web/js/signature_adoption_dialog";
 
 import {
     Component,
@@ -29,11 +30,16 @@ import {
 const MIN_FIELD_SIZE = 0.02;
 const DEFAULT_PAGE_SIZE = Object.freeze({ width: 800, height: 1132 });
 const DEFAULT_FIELD_TYPE = "text";
-const DEFAULT_OPTION_LIST = `${_t("Option 1")}\n${_t("Option 2")}`;
 const TEMPLATE_MODEL = "open.sign.template";
 const ROLE_MODEL = "open.sign.role";
 const ROLE_REQUIRED_LABEL = _t("Role required");
 const INVALID_ROLE_LABEL = _t("Invalid role");
+const SIGNATURE_ADOPTION_FIELD_TYPES = new Set(["signature", "stamp"]);
+const DEFAULT_SIGNATURE_DISPLAY_NAME = _t("Signer");
+
+function getDefaultOptionList() {
+    return `${_t("Option 1")}\n${_t("Option 2")}`;
+}
 
 function asNumber(value, fallback = 0) {
     const parsed = Number(value);
@@ -51,6 +57,13 @@ function roundGeometryNumber(value) {
 function asPositiveInteger(value) {
     const parsed = Number.parseInt(value, 10);
     return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function cleanContextDefaults(context = {}) {
+    const baseContext = context && typeof context === "object" ? context : {};
+    return Object.fromEntries(
+        Object.entries(baseContext).filter(([key]) => !String(key).startsWith("default_"))
+    );
 }
 
 function normalizeRoleIdSet(availableRoleIds = []) {
@@ -84,6 +97,10 @@ export function countInvalidFieldRoles(fields = [], availableRoleIds = []) {
         }
     }
     return invalidCount;
+}
+
+export function supportsSignatureAdoption(fieldType) {
+    return SIGNATURE_ADOPTION_FIELD_TYPES.has(fieldType);
 }
 
 export function serializeFieldGeometry(geometry = {}) {
@@ -155,7 +172,7 @@ function buildFieldRecord(id, page, fieldType, sequence, roleId = null) {
     const paletteEntry = getPaletteEntryByType(fieldType || DEFAULT_FIELD_TYPE);
     const properties = normalizeFieldProperties({ sequence }, paletteEntry.type);
     if (supportsFieldOptions(paletteEntry.type) && !properties.optionList) {
-        properties.optionList = DEFAULT_OPTION_LIST;
+        properties.optionList = getDefaultOptionList();
     }
 
     return {
@@ -201,6 +218,12 @@ export class TemplateCanvas extends Component {
     setup() {
         this.pageRef = useRef("page");
         this.orm = useService("orm");
+        this.dialog = useService("dialog");
+        this.onPointerMove = this.onPointerMove.bind(this);
+        this.onPointerUp = this.onPointerUp.bind(this);
+        this.onCanvasPointerDown = this.onCanvasPointerDown.bind(this);
+        this.onFieldPointerDown = this.onFieldPointerDown.bind(this);
+        this.onResizePointerDown = this.onResizePointerDown.bind(this);
         this._roleOptionsLoadToken = 0;
         this.paletteEntries = getFieldPaletteEntries();
         this.paletteByType = new Map(this.paletteEntries.map((entry) => [entry.type, entry]));
@@ -228,9 +251,6 @@ export class TemplateCanvas extends Component {
                 this.state.templateId = this.state.templateOptions[0].id;
             }
             await this._loadRoleOptions();
-            if (this.canAddFields && !this.state.fields.length) {
-                this.addField(DEFAULT_FIELD_TYPE);
-            }
         });
 
         useExternalListener(window, "pointermove", this.onPointerMove);
@@ -271,6 +291,10 @@ export class TemplateCanvas extends Component {
 
     get selectedFieldSupportsLengthBounds() {
         return this.selectedField ? supportsLengthBounds(this.selectedField.type) : false;
+    }
+
+    get selectedFieldSupportsSignatureAdoption() {
+        return this.selectedField ? supportsSignatureAdoption(this.selectedField.type) : false;
     }
 
     get selectedFieldRoleValid() {
@@ -343,6 +367,10 @@ export class TemplateCanvas extends Component {
 
     async onTemplateChange(ev) {
         this.state.templateId = asPositiveInteger(ev.target.value);
+        this.state.fields = [];
+        this.state.selectedFieldId = null;
+        this.state.interaction = null;
+        this.state.nextId = 1;
         this.state.roleOptions = [];
         await this._loadRoleOptions();
     }
@@ -442,6 +470,43 @@ export class TemplateCanvas extends Component {
 
     updateSelectedFieldRole(ev) {
         this._updateSelectedFieldProperties({ roleId: asPositiveInteger(ev.target.value) });
+    }
+
+    openSelectedFieldSignatureDialog() {
+        const selectedField = this.selectedField;
+        if (!selectedField || !this.selectedFieldSupportsSignatureAdoption) {
+            return;
+        }
+        const defaultMethod = selectedField.signatureAdoptionPayload?.method || "draw";
+        const defaultName =
+            selectedField.signatureAdoptionPayload?.display_name ||
+            selectedField.signatureAdoptionPayload?.displayName ||
+            DEFAULT_SIGNATURE_DISPLAY_NAME;
+        openSignatureAdoptionDialog(this.dialog, {
+            defaultMethod,
+            defaultName,
+            attachmentResModel: "open.sign.request.value",
+            attachmentNamePrefix:
+                selectedField.type === "stamp" ? "open_sign_stamp" : "open_sign_signature",
+            attachmentContext: cleanContextDefaults(this.props.action?.context || {}),
+            adoptSignature: async (payload) => {
+                this._applySignatureAdoptionPayload(selectedField.id, payload);
+            },
+        });
+    }
+
+    _applySignatureAdoptionPayload(fieldId, payload) {
+        const targetField = this.state.fields.find((field) => field.id === fieldId);
+        if (!targetField || !payload) {
+            return;
+        }
+        targetField.signatureAdoptionPayload = {
+            method: payload.method || "draw",
+            display_name: payload.display_name || "",
+            signed_payload_attachment_id: asPositiveInteger(payload.signed_payload_attachment_id),
+            signature_image_mime_type: payload.signature_image_mime_type || "",
+            signature_image_byte_size: Number.parseInt(payload.signature_image_byte_size, 10) || 0,
+        };
     }
 
     onFieldPointerDown(field, ev) {
@@ -550,7 +615,7 @@ export class TemplateCanvas extends Component {
         const nextValues = { ...field, ...patch };
         const normalized = normalizeFieldProperties(nextValues, nextType);
         if (supportsFieldOptions(nextType) && !normalized.optionList) {
-            normalized.optionList = DEFAULT_OPTION_LIST;
+            normalized.optionList = getDefaultOptionList();
         }
 
         Object.assign(field, {

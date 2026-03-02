@@ -1202,8 +1202,8 @@ Legend:
 - [x] `T22` Build field palette and field property editor.
 - [x] `T23` Implement signer role assignment in editor.
 - [x] `T24` Implement client-side value validation aligned with server rules.
-- [ ] `T25` Implement signature adoption dialog (draw/type/upload).
-- [ ] `T26` Add JS tests for geometry and validation payloads, including explicit frontend test-runner/discovery wiring so `/open_sign_web` test tags execute non-zero tests in CI.
+- [x] `T25` Implement signature adoption dialog (draw/type/upload).
+- [x] `T26` Add JS tests for geometry and validation payloads, including explicit frontend test-runner/discovery wiring so `/open_sign_web` test tags execute non-zero tests in CI.
 
 ### Phase 3: Portal Addon (`open_sign_portal`)
 
@@ -1382,7 +1382,7 @@ Use these command patterns during development (adapt database/module names as ne
 ./odoo-bin -d <db_name> --test-enable --test-tags open_sign.tests.test_sign_request_flow --stop-after-init
 
 # Run frontend tours/unit tests (module-specific tags/assets)
-./odoo-bin -d <db_name> --test-enable --test-tags /open_sign_web --stop-after-init
+./odoo-bin -d <db_name> -u open_sign_web --test-enable --test-tags /open_sign_web --stop-after-init
 ```
 
 Notes:
@@ -1394,9 +1394,9 @@ Notes:
 
 Counts below track only `T*` development tasks in the phase task board.
 
-- Completed tasks: `36`
+- Completed tasks: `37`
 - In progress tasks: `0`
-- Remaining tasks: `49`
+- Remaining tasks: `48`
 
 ## Update Log
 
@@ -1449,3 +1449,4 @@ Counts below track only `T*` development tasks in the phase task board.
 | `2026-03-01` | Codex | Completed recurring hardening re-audit (`T610` / continuation task `T118`) over all completed M1 backend deliverables using the mandatory closeout checklist; no new blocking gaps found, deferred queue remains `DQ-001` (`T35`) and `DQ-002` (`T43`), and full `/open_sign` regression remains green (`0 failed, 0 errors`). |
 | `2026-03-01` | Codex | Completed `T23` by adding template-aware signer-role assignment in `open_sign_web` editor (template selector, role selector in field properties, role normalization against template roles, and backend payload role mapping via `role_id`), with regression verification on `/open_sign` (`74 tests, 0 failed`) and module/runtime validation for `/open_sign_web` (known frontend test discovery remains deferred to `T26`). |
 | `2026-03-01` | Codex | Applied `T23` hardening follow-up from holistic review: removed silent role reassignment on template switch, removed misleading `Unassigned` assignment path, gated field creation on template-role availability, guarded against stale async role-load responses, and expanded JS utility coverage for role-validity semantics. |
+| `2026-03-01` | Codex | Completed `T26` by adding explicit `open_sign_web` frontend runner wiring (`tests/test_js.py` with HOOT `browser_js` + asset registration assertion), tagging module HOOT tests for scoped execution (`open_sign_web`), expanding geometry/validation edge-case coverage, fixing an OWL XML parse blocker (`&amp;&amp;`), and revalidating with `/open_sign_web` (non-zero post-tests) plus `/open_sign` regression (`74 tests, 0 failed`). |

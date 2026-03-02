@@ -1,4 +1,4 @@
-import { expect, test } from "@odoo/hoot";
+import { describe, expect, test } from "@odoo/hoot";
 
 import {
     normalizeFieldProperties,
@@ -7,6 +7,8 @@ import {
     supportsLengthBounds,
     toTemplateFieldVals,
 } from "@open_sign_web/js/field_properties_panel";
+
+describe.current.tags("headless", "open_sign_web");
 
 test("normalizeFieldProperties applies scalar normalization and bounds", () => {
     const normalized = normalizeFieldProperties(

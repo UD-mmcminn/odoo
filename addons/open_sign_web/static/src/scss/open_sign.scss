@@ -71,7 +71,8 @@
 
 .o_open_sign_web_canvas_page {
     position: relative;
-    width: min(100%, 860px);
+    width: 100%;
+    max-width: 860px;
     min-width: 420px;
     background: #ffffff;
     border: 1px solid #cfd3d7;
@@ -174,6 +175,20 @@
 
 .o_open_sign_web_role_help {
     font-size: 12px;
+}
+
+.o_open_sign_web_signature_adoption_section {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.o_open_sign_web_signature_dialog_hint {
+    line-height: 1.3;
+}
+
+.o_open_sign_web_signature_dialog_consent {
+    line-height: 1.35;
 }
 
 @media (max-width: 1280px) {

@@ -33,6 +33,7 @@ class OpenSignTemplate(models.Model):
         tracking=True,
     )
     active = fields.Boolean(default=True, index=True)
+    deleted_at = fields.Datetime(index=True)
     company_id = fields.Many2one(
         'res.company',
         required=True,
@@ -116,7 +117,30 @@ class OpenSignTemplate(models.Model):
         return versions
 
     def action_archive(self):
-        self.write({'state': 'archived', 'active': False})
+        self.write({
+            'state': 'archived',
+            'active': False,
+            'deleted_at': fields.Datetime.now(),
+        })
 
     def action_set_draft(self):
-        self.write({'state': 'draft', 'active': True})
+        self.write({
+            'state': 'draft',
+            'active': True,
+            'deleted_at': False,
+        })
+
+    @api.model
+    def _can_hard_delete_template(self):
+        return self.env.su and self.env.context.get('open_sign_allow_template_hard_delete')
+
+    def unlink(self):
+        self.check_access('unlink')
+        if self._can_hard_delete_template():
+            return super().unlink()
+        self.write({
+            'state': 'archived',
+            'active': False,
+            'deleted_at': fields.Datetime.now(),
+        })
+        return True

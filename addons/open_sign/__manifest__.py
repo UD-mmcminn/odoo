@@ -6,6 +6,7 @@
     'category': 'Productivity',
     'version': '1.1',
     'depends': ['base', 'mail'],
+    'application': True,
     'data': [
         'security/open_sign_groups.xml',
         'security/ir.model.access.csv',

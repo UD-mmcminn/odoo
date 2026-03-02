@@ -1,11 +1,16 @@
-import { expect, test } from "@odoo/hoot";
+import { describe, expect, test } from "@odoo/hoot";
 
 import {
+    applyMoveDelta,
+    applyResizeDelta,
     countInvalidFieldRoles,
     isFieldRoleValid,
     serializeFieldGeometry,
     serializeTemplateFieldsForBackend,
+    supportsSignatureAdoption,
 } from "@open_sign_web/js/template_canvas";
+
+describe.current.tags("headless", "open_sign_web");
 
 test("serializeFieldGeometry normalizes negative and invalid values", () => {
     const geometry = serializeFieldGeometry({
@@ -46,6 +51,10 @@ test("serializeTemplateFieldsForBackend maps to backend-safe keys only", () => {
             optionList: " A \n\nB ",
             placeholder: "editor-only",
             helpText: "editor-only",
+            signatureAdoptionPayload: {
+                method: "draw",
+                signed_payload_attachment_id: 42,
+            },
         },
     ]);
 
@@ -109,4 +118,66 @@ test("serializeTemplateFieldsForBackend can enforce valid role assignment", () =
     }
 
     expect(Boolean(thrownError)).toBe(true);
+});
+
+test("supportsSignatureAdoption recognizes signature payload field types", () => {
+    expect(supportsSignatureAdoption("signature")).toBe(true);
+    expect(supportsSignatureAdoption("stamp")).toBe(true);
+    expect(supportsSignatureAdoption("text")).toBe(false);
+});
+
+test("applyMoveDelta keeps geometry inside page bounds", () => {
+    const movedDownRight = applyMoveDelta(
+        { page: 1, x: 0.95, y: 0.95, width: 0.1, height: 0.1 },
+        0.25,
+        0.3
+    );
+    expect(movedDownRight).toEqual({
+        page: 1,
+        x: 0.9,
+        y: 0.9,
+        width: 0.1,
+        height: 0.1,
+    });
+
+    const movedUpLeft = applyMoveDelta(
+        { page: 1, x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+        -0.5,
+        -0.2
+    );
+    expect(movedUpLeft).toEqual({
+        page: 1,
+        x: 0,
+        y: 0,
+        width: 0.2,
+        height: 0.2,
+    });
+});
+
+test("applyResizeDelta enforces minimum field size and edge limits", () => {
+    const resizedAtEdge = applyResizeDelta(
+        { page: 1, x: 0.98, y: 0.98, width: 0.01, height: 0.01 },
+        0.5,
+        0.5
+    );
+    expect(resizedAtEdge).toEqual({
+        page: 1,
+        x: 0.98,
+        y: 0.98,
+        width: 0.02,
+        height: 0.02,
+    });
+
+    const resizedBelowMin = applyResizeDelta(
+        { page: 1, x: 0.1, y: 0.2, width: 0.3, height: 0.3 },
+        -0.9,
+        -0.9
+    );
+    expect(resizedBelowMin).toEqual({
+        page: 1,
+        x: 0.1,
+        y: 0.2,
+        width: 0.02,
+        height: 0.02,
+    });
 });

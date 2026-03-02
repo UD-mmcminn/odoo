@@ -1,4 +1,4 @@
-import { expect, test } from "@odoo/hoot";
+import { describe, expect, test } from "@odoo/hoot";
 
 import {
     buildSignatureAdoptionPayload,
@@ -10,6 +10,8 @@ import {
     normalizeSignatureAdoptionMethod,
     validateSignatureImageDataUrl,
 } from "@open_sign_web/js/signature_adoption_dialog";
+
+describe.current.tags("headless", "open_sign_web");
 
 const VALID_SIGNATURE_DATA_URL =
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4//8/AwAI/AL+X2VINwAAAABJRU5ErkJggg==";
