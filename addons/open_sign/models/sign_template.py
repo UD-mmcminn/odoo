@@ -77,6 +77,19 @@ class OpenSignTemplate(models.Model):
             },
         }
 
+    def action_open_pdf_editor(self):
+        self.ensure_one()
+        self.check_access('read')
+        return {
+            'type': 'ir.actions.client',
+            'name': _('Template PDF Editor'),
+            'tag': 'open_sign_web.template_canvas_action',
+            'context': {
+                'active_model': self._name,
+                'active_id': self.id,
+            },
+        }
+
     def _build_role_snapshot(self):
         self.ensure_one()
         return [

@@ -66,6 +66,7 @@
             <field name="arch" type="xml">
                 <form string="Sign Template">
                     <header>
+                        <button name="action_open_pdf_editor" string="Open PDF Editor" type="object" invisible="not id"/>
                         <button name="action_publish" string="Publish" type="object" class="btn-primary" invisible="state != 'draft'"/>
                         <button name="action_archive" string="Archive" type="object" invisible="state == 'archived'"/>
                         <button name="action_set_draft" string="Set to Draft" type="object" invisible="state == 'draft'"/>

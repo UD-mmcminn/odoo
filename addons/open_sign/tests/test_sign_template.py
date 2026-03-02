@@ -147,3 +147,22 @@ class TestOpenSignTemplate(TransactionCase):
         )
         self.assertEqual(action['target'], 'new')
         self.assertEqual(action['context']['default_template_id'], template.id)
+
+    def test_action_open_pdf_editor_is_template_scoped(self):
+        pdf_attachment = self._create_attachment(
+            'template_pdf_editor_action.pdf',
+            'application/pdf',
+            b'%PDF-1.4\n%%EOF\n',
+        )
+        template = self.env['open.sign.template'].create({
+            'name': 'PDF Editor Template',
+            'source_attachment_id': pdf_attachment.id,
+        })
+
+        action = template.action_open_pdf_editor()
+
+        self.assertEqual(action['type'], 'ir.actions.client')
+        self.assertEqual(action['name'], 'Template PDF Editor')
+        self.assertEqual(action['tag'], 'open_sign_web.template_canvas_action')
+        self.assertEqual(action['context']['active_model'], 'open.sign.template')
+        self.assertEqual(action['context']['active_id'], template.id)
