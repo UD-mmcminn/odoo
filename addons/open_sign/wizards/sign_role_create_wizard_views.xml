@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data>
+        <record id="view_open_sign_role_create_wizard_form" model="ir.ui.view">
+            <field name="name">open.sign.role.create.wizard.form</field>
+            <field name="model">open.sign.role.create.wizard</field>
+            <field name="arch" type="xml">
+                <form string="New Signer Role">
+                    <group>
+                        <field name="template_id"/>
+                        <field name="name" placeholder="e.g. Signer"/>
+                        <field name="required"/>
+                        <field name="sequence"/>
+                        <field name="color" widget="color_picker"/>
+                    </group>
+                    <footer>
+                        <button
+                            name="action_create_role"
+                            string="Add Role"
+                            type="object"
+                            class="btn-primary"
+                            data-hotkey="q"
+                        />
+                        <button string="Cancel" class="btn-secondary" special="cancel" data-hotkey="x"/>
+                    </footer>
+                </form>
+            </field>
+        </record>
+    </data>
+</odoo>

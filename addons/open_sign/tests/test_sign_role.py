@@ -195,3 +195,25 @@ class TestOpenSignRole(TransactionCase):
         role_id = created_role.id
         created_role.unlink()
         self.assertFalse(self.env['open.sign.role'].browse(role_id).exists())
+
+    def test_role_create_wizard_creates_role_and_reloads(self):
+        template = self._create_template('Wizard Role Template')
+        wizard = self.env['open.sign.role.create.wizard'].with_user(self.open_sign_user).create({
+            'template_id': template.id,
+            'name': 'Wizard Signer',
+            'required': False,
+            'sequence': 25,
+            'color': 3,
+        })
+
+        action = wizard.action_create_role()
+
+        self.assertEqual(action['type'], 'ir.actions.client')
+        self.assertEqual(action['tag'], 'reload')
+        created_role = self.env['open.sign.role'].search([
+            ('template_id', '=', template.id),
+            ('name', '=', 'Wizard Signer'),
+        ], limit=1)
+        self.assertTrue(created_role)
+        self.assertFalse(created_role.required)
+        self.assertEqual(created_role.sequence, 25)

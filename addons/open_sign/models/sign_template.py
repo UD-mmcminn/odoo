@@ -62,6 +62,21 @@ class OpenSignTemplate(models.Model):
     def action_publish(self):
         self.write({'state': 'published'})
 
+    def action_open_new_role_wizard(self):
+        self.ensure_one()
+        self.check_access('write')
+        return {
+            'type': 'ir.actions.act_window',
+            'name': _('New Signer Role'),
+            'res_model': 'open.sign.role.create.wizard',
+            'view_mode': 'form',
+            'view_id': self.env.ref('open_sign.view_open_sign_role_create_wizard_form').id,
+            'target': 'new',
+            'context': {
+                'default_template_id': self.id,
+            },
+        }
+
     def _build_role_snapshot(self):
         self.ensure_one()
         return [

@@ -12,6 +12,7 @@
         'security/ir.model.access.csv',
         'security/open_sign_security.xml',
         'data/ir_cron.xml',
+        'wizards/sign_role_create_wizard_views.xml',
         'views/sign_template_views.xml',
         'views/sign_role_views.xml',
         'views/sign_template_field_views.xml',

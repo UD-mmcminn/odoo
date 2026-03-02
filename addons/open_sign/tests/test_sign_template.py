@@ -123,3 +123,27 @@ class TestOpenSignTemplate(TransactionCase):
         self.assertTrue(template_reloaded.exists())
         self.assertFalse(template_reloaded.active)
         self.assertEqual(template_reloaded.state, 'archived')
+
+    def test_action_open_new_role_wizard_is_template_scoped(self):
+        pdf_attachment = self._create_attachment(
+            'template_role_wizard_action.pdf',
+            'application/pdf',
+            b'%PDF-1.4\n%%EOF\n',
+        )
+        template = self.env['open.sign.template'].create({
+            'name': 'Role Wizard Template',
+            'source_attachment_id': pdf_attachment.id,
+        })
+
+        action = template.action_open_new_role_wizard()
+
+        self.assertEqual(action['type'], 'ir.actions.act_window')
+        self.assertEqual(action['name'], 'New Signer Role')
+        self.assertEqual(action['res_model'], 'open.sign.role.create.wizard')
+        self.assertEqual(action['view_mode'], 'form')
+        self.assertEqual(
+            action['view_id'],
+            self.env.ref('open_sign.view_open_sign_role_create_wizard_form').id,
+        )
+        self.assertEqual(action['target'], 'new')
+        self.assertEqual(action['context']['default_template_id'], template.id)

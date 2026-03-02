@@ -91,8 +91,17 @@
                 <xpath expr="//sheet/group" position="after">
                     <notebook>
                         <page string="Signer Roles" name="signer_roles">
+                            <div class="d-flex justify-content-end mb-2" invisible="not id">
+                                <button
+                                    name="action_open_new_role_wizard"
+                                    type="object"
+                                    string="New Role"
+                                    class="btn btn-primary"
+                                    groups="open_sign.group_open_sign_user"
+                                />
+                            </div>
                             <field name="role_ids">
-                                <list editable="bottom" default_order="sequence asc">
+                                <list editable="bottom" default_order="sequence asc" create="0">
                                     <field name="sequence" widget="handle"/>
                                     <field name="name"/>
                                     <field name="required"/>
