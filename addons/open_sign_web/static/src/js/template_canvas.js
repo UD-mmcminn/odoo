@@ -3,6 +3,8 @@
 import { registry } from "@web/core/registry";
 import { _t } from "@web/core/l10n/translation";
 import { useService } from "@web/core/utils/hooks";
+import { loadPDFJSAssets } from "@web/core/utils/pdfjs";
+import { url } from "@web/core/utils/urls";
 import { standardActionServiceProps } from "@web/webclient/actions/action_service";
 
 import {
@@ -23,7 +25,6 @@ import {
     onWillStart,
     onWillUnmount,
     useExternalListener,
-    useRef,
     useState,
 } from "@odoo/owl";
 
@@ -112,6 +113,26 @@ export function serializeFieldGeometry(geometry = {}) {
     const width = Math.max(0, asNumber(geometry.width));
     const height = Math.max(0, asNumber(geometry.height));
     return { page, x, y, width, height };
+}
+
+export function normalizePageNumber(pageNumber, pages = [], fallback = 1) {
+    const normalizedFallback = Math.max(1, Math.trunc(asNumber(fallback, 1)));
+    const pageCandidate =
+        pageNumber === null || pageNumber === undefined || pageNumber === ""
+            ? normalizedFallback
+            : pageNumber;
+    const normalizedPageNumber = Math.max(
+        1,
+        Math.trunc(asNumber(pageCandidate, normalizedFallback))
+    );
+    const normalizedPages = (Array.isArray(pages) ? pages : [])
+        .map((page) => Math.max(1, Math.trunc(asNumber(page?.number ?? page, normalizedFallback))))
+        .filter((value, index, values) => values.indexOf(value) === index)
+        .sort((left, right) => left - right);
+    if (!normalizedPages.length) {
+        return normalizedPageNumber;
+    }
+    return normalizedPages.includes(normalizedPageNumber) ? normalizedPageNumber : normalizedPages[0];
 }
 
 export function normalizeCanvasToPdfCoordinates(geometry = {}, canvasSize = {}, pdfSize = {}) {
@@ -218,7 +239,6 @@ export class TemplateCanvas extends Component {
     static props = { ...standardActionServiceProps };
 
     setup() {
-        this.pageRef = useRef("page");
         this.orm = useService("orm");
         this.dialog = useService("dialog");
         this.notification = useService("notification");
@@ -229,6 +249,7 @@ export class TemplateCanvas extends Component {
         this.onResizePointerDown = this.onResizePointerDown.bind(this);
         this._roleOptionsLoadToken = 0;
         this._templateFieldLoadToken = 0;
+        this._pdfLoadToken = 0;
         this.paletteEntries = getFieldPaletteEntries();
         this.paletteByType = new Map(this.paletteEntries.map((entry) => [entry.type, entry]));
         const actionContext = this.props.action?.context || {};
@@ -249,6 +270,7 @@ export class TemplateCanvas extends Component {
             interaction: null,
             isDirty: false,
             isSaving: false,
+            pdfPages: [],
         });
 
         onWillStart(async () => {
@@ -257,6 +279,7 @@ export class TemplateCanvas extends Component {
                 this.state.templateId = this.state.templateOptions[0].id;
             }
             await this._loadRoleOptions();
+            await this._loadTemplatePdfPages();
             await this._loadTemplateFields();
         });
 
@@ -272,8 +295,26 @@ export class TemplateCanvas extends Component {
         return `aspect-ratio: ${this.state.pageSize.width} / ${this.state.pageSize.height};`;
     }
 
+    get canvasPages() {
+        if (this.state.pdfPages.length) {
+            return this.state.pdfPages;
+        }
+        return [
+            {
+                number: 1,
+                width: this.state.pageSize.width,
+                height: this.state.pageSize.height,
+                imageDataUrl: null,
+            },
+        ];
+    }
+
     get fieldPaletteEntries() {
         return this.paletteEntries;
+    }
+
+    get totalPageCount() {
+        return this.canvasPages.length;
     }
 
     get templateOptions() {
@@ -359,11 +400,13 @@ export class TemplateCanvas extends Component {
         if (!this.canAddFields) {
             return;
         }
+        const activePage = normalizePageNumber(this.state.activePage, this.canvasPages, 1);
+        this.state.activePage = activePage;
         const fieldId = this.state.nextId;
         this.state.nextId += 1;
         const field = buildFieldRecord(
             fieldId,
-            this.state.activePage,
+            activePage,
             fieldType,
             fieldId * 10,
             this.defaultRoleId
@@ -389,7 +432,10 @@ export class TemplateCanvas extends Component {
         this.state.nextId = 1;
         this.state.roleOptions = [];
         this.state.isDirty = false;
+        this.state.pdfPages = [];
+        this.state.activePage = 1;
         await this._loadRoleOptions();
+        await this._loadTemplatePdfPages();
         await this._loadTemplateFields();
     }
 
@@ -441,6 +487,19 @@ export class TemplateCanvas extends Component {
     getFieldStyle(field) {
         const geometry = coerceRenderableGeometry(field);
         return `left:${geometry.x * 100}%;top:${geometry.y * 100}%;width:${geometry.width * 100}%;height:${geometry.height * 100}%;`;
+    }
+
+    getPageStyle(page) {
+        const width = Math.max(1, asNumber(page.width, this.state.pageSize.width));
+        const height = Math.max(1, asNumber(page.height, this.state.pageSize.height));
+        return `aspect-ratio: ${width} / ${height};`;
+    }
+
+    getFieldsForPage(pageNumber) {
+        const normalizedPageNumber = Math.max(1, Math.trunc(asNumber(pageNumber, 1)));
+        return this.state.fields.filter(
+            (field) => serializeFieldGeometry(field).page === normalizedPageNumber
+        );
     }
 
     updateSelectedFieldLabel(ev) {
@@ -598,6 +657,7 @@ export class TemplateCanvas extends Component {
             return;
         }
         ev.preventDefault();
+        this.state.activePage = normalizePageNumber(field.page, this.canvasPages, this.state.activePage);
         this.selectField(field.id);
         this._startInteraction("move", field, ev);
     }
@@ -608,12 +668,47 @@ export class TemplateCanvas extends Component {
         }
         ev.preventDefault();
         ev.stopPropagation();
+        this.state.activePage = normalizePageNumber(field.page, this.canvasPages, this.state.activePage);
         this.selectField(field.id);
         this._startInteraction("resize", field, ev);
     }
 
     onCanvasPointerDown() {
         this.state.selectedFieldId = null;
+    }
+
+    onCanvasPagePointerDown(pageNumber, ev) {
+        if (ev?.target?.closest?.(".o_open_sign_web_field")) {
+            return;
+        }
+        this.state.activePage = normalizePageNumber(pageNumber, this.canvasPages, this.state.activePage);
+        this.state.selectedFieldId = null;
+    }
+
+    goToPreviousPage() {
+        const pageNumbers = this.canvasPages
+            .map((page) => Math.max(1, Math.trunc(asNumber(page.number, 1))))
+            .sort((left, right) => left - right);
+        const currentIndex = pageNumbers.indexOf(
+            normalizePageNumber(this.state.activePage, pageNumbers, 1)
+        );
+        if (currentIndex > 0) {
+            this.state.activePage = pageNumbers[currentIndex - 1];
+            this.state.selectedFieldId = null;
+        }
+    }
+
+    goToNextPage() {
+        const pageNumbers = this.canvasPages
+            .map((page) => Math.max(1, Math.trunc(asNumber(page.number, 1))))
+            .sort((left, right) => left - right);
+        const currentIndex = pageNumbers.indexOf(
+            normalizePageNumber(this.state.activePage, pageNumbers, 1)
+        );
+        if (currentIndex !== -1 && currentIndex < pageNumbers.length - 1) {
+            this.state.activePage = pageNumbers[currentIndex + 1];
+            this.state.selectedFieldId = null;
+        }
     }
 
     onPointerMove(ev) {
@@ -648,7 +743,8 @@ export class TemplateCanvas extends Component {
     }
 
     _startInteraction(type, field, ev) {
-        const pageRect = this.pageRef.el && this.pageRef.el.getBoundingClientRect();
+        const pageElement = ev.target.closest(".o_open_sign_web_canvas_page");
+        const pageRect = pageElement && pageElement.getBoundingClientRect();
         if (!pageRect || !pageRect.width || !pageRect.height) {
             return;
         }
@@ -688,6 +784,90 @@ export class TemplateCanvas extends Component {
             return;
         }
         this.state.roleOptions = roleOptions;
+    }
+
+    async _loadTemplatePdfPages() {
+        const loadToken = ++this._pdfLoadToken;
+        const selectedTemplateId = this.state.templateId;
+        if (!selectedTemplateId) {
+            this.state.pdfPages = [];
+            this.state.activePage = 1;
+            this.state.pageSize = { ...DEFAULT_PAGE_SIZE };
+            return;
+        }
+
+        const [template] = await this.orm.searchRead(
+            TEMPLATE_MODEL,
+            [["id", "=", selectedTemplateId]],
+            ["source_attachment_id"],
+            { limit: 1 }
+        );
+        if (loadToken !== this._pdfLoadToken) {
+            return;
+        }
+        const attachmentId = this._extractMany2OneId(template?.source_attachment_id);
+        if (!attachmentId) {
+            this.state.pdfPages = [];
+            this.state.activePage = 1;
+            this.state.pageSize = { ...DEFAULT_PAGE_SIZE };
+            return;
+        }
+
+        const pdfUrl = url(`/web/content/${attachmentId}`);
+        let initialWorkerSrc = null;
+        try {
+            await loadPDFJSAssets();
+            initialWorkerSrc = globalThis.pdfjsLib.GlobalWorkerOptions.workerSrc;
+            globalThis.pdfjsLib.GlobalWorkerOptions.workerSrc =
+                "/web/static/lib/pdfjs/build/pdf.worker.js";
+            const pdf = await globalThis.pdfjsLib.getDocument(pdfUrl).promise;
+            if (loadToken !== this._pdfLoadToken) {
+                return;
+            }
+            const pages = [];
+            for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+                const page = await pdf.getPage(pageNumber);
+                if (loadToken !== this._pdfLoadToken) {
+                    return;
+                }
+                const baseViewport = page.getViewport({ scale: 1 });
+                const renderScale = Math.max(1, Math.min(1.5, 1100 / Math.max(1, baseViewport.width)));
+                const viewport = page.getViewport({ scale: renderScale });
+                const canvas = document.createElement("canvas");
+                canvas.width = Math.max(1, Math.floor(viewport.width));
+                canvas.height = Math.max(1, Math.floor(viewport.height));
+                const canvasContext = canvas.getContext("2d");
+                await page.render({ canvasContext, viewport }).promise;
+                pages.push({
+                    number: pageNumber,
+                    width: viewport.width,
+                    height: viewport.height,
+                    imageDataUrl: canvas.toDataURL("image/png"),
+                });
+            }
+            if (loadToken !== this._pdfLoadToken) {
+                return;
+            }
+            this.state.pdfPages = pages;
+            if (pages[0]) {
+                this.state.pageSize = { width: pages[0].width, height: pages[0].height };
+            } else {
+                this.state.pageSize = { ...DEFAULT_PAGE_SIZE };
+            }
+            this.state.activePage = normalizePageNumber(this.state.activePage, pages, 1);
+        } catch (_error) {
+            if (loadToken !== this._pdfLoadToken) {
+                return;
+            }
+            this.state.pdfPages = [];
+            this.state.activePage = 1;
+            this.state.pageSize = { ...DEFAULT_PAGE_SIZE };
+            this.notification.add(_t("Could not display the selected pdf"), { type: "danger" });
+        } finally {
+            if (globalThis.pdfjsLib && initialWorkerSrc !== null) {
+                globalThis.pdfjsLib.GlobalWorkerOptions.workerSrc = initialWorkerSrc;
+            }
+        }
     }
 
     async _loadTemplateFields() {
@@ -755,6 +935,7 @@ export class TemplateCanvas extends Component {
         this.state.fields = templateFields.map((field) => this._toCanvasField(field, optionMapByFieldId));
         this.state.selectedFieldId = this.state.fields[0] ? this.state.fields[0].id : null;
         this.state.nextId = this._computeNextFieldId(this.state.fields);
+        this.state.activePage = normalizePageNumber(this.state.activePage, this.canvasPages, 1);
         this.state.isDirty = false;
     }
 

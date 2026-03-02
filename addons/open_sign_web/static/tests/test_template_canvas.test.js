@@ -5,6 +5,7 @@ import {
     applyResizeDelta,
     countInvalidFieldRoles,
     isFieldRoleValid,
+    normalizePageNumber,
     serializeFieldGeometry,
     serializeTemplateFieldsForBackend,
     supportsSignatureAdoption,
@@ -124,6 +125,13 @@ test("supportsSignatureAdoption recognizes signature payload field types", () =>
     expect(supportsSignatureAdoption("signature")).toBe(true);
     expect(supportsSignatureAdoption("stamp")).toBe(true);
     expect(supportsSignatureAdoption("text")).toBe(false);
+});
+
+test("normalizePageNumber keeps active page on valid page and falls back safely", () => {
+    expect(normalizePageNumber(2, [{ number: 1 }, { number: 2 }, { number: 3 }], 1)).toBe(2);
+    expect(normalizePageNumber(9, [{ number: 1 }, { number: 2 }, { number: 3 }], 1)).toBe(1);
+    expect(normalizePageNumber("3", [1, 2, 3], 1)).toBe(3);
+    expect(normalizePageNumber(null, [], 2)).toBe(2);
 });
 
 test("applyMoveDelta keeps geometry inside page bounds", () => {
