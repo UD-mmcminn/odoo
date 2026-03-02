@@ -32,6 +32,8 @@ const DEFAULT_PAGE_SIZE = Object.freeze({ width: 800, height: 1132 });
 const DEFAULT_FIELD_TYPE = "text";
 const TEMPLATE_MODEL = "open.sign.template";
 const ROLE_MODEL = "open.sign.role";
+const TEMPLATE_FIELD_MODEL = "open.sign.template.field";
+const TEMPLATE_FIELD_OPTION_MODEL = "open.sign.template.field.option";
 const ROLE_REQUIRED_LABEL = _t("Role required");
 const INVALID_ROLE_LABEL = _t("Invalid role");
 const SIGNATURE_ADOPTION_FIELD_TYPES = new Set(["signature", "stamp"]);
@@ -219,12 +221,14 @@ export class TemplateCanvas extends Component {
         this.pageRef = useRef("page");
         this.orm = useService("orm");
         this.dialog = useService("dialog");
+        this.notification = useService("notification");
         this.onPointerMove = this.onPointerMove.bind(this);
         this.onPointerUp = this.onPointerUp.bind(this);
         this.onCanvasPointerDown = this.onCanvasPointerDown.bind(this);
         this.onFieldPointerDown = this.onFieldPointerDown.bind(this);
         this.onResizePointerDown = this.onResizePointerDown.bind(this);
         this._roleOptionsLoadToken = 0;
+        this._templateFieldLoadToken = 0;
         this.paletteEntries = getFieldPaletteEntries();
         this.paletteByType = new Map(this.paletteEntries.map((entry) => [entry.type, entry]));
         const actionContext = this.props.action?.context || {};
@@ -243,6 +247,8 @@ export class TemplateCanvas extends Component {
             fields: [],
             selectedFieldId: null,
             interaction: null,
+            isDirty: false,
+            isSaving: false,
         });
 
         onWillStart(async () => {
@@ -251,6 +257,7 @@ export class TemplateCanvas extends Component {
                 this.state.templateId = this.state.templateOptions[0].id;
             }
             await this._loadRoleOptions();
+            await this._loadTemplateFields();
         });
 
         useExternalListener(window, "pointermove", this.onPointerMove);
@@ -320,6 +327,10 @@ export class TemplateCanvas extends Component {
         return Boolean(this.state.templateId) && !this.hasInvalidRoleAssignments;
     }
 
+    get canSaveFields() {
+        return this.canSerializeBackendPayload && this.state.isDirty && !this.state.isSaving;
+    }
+
     get backendFieldPayload() {
         if (!this.canSerializeBackendPayload) {
             return null;
@@ -357,8 +368,13 @@ export class TemplateCanvas extends Component {
             fieldId * 10,
             this.defaultRoleId
         );
+        field.backendId = null;
+        field.backendType = null;
+        field.backendOptionList = "";
+        field.backendHadOptions = false;
         this.state.fields.push(field);
         this.state.selectedFieldId = field.id;
+        this.state.isDirty = true;
     }
 
     addFieldFromPalette(fieldType) {
@@ -372,7 +388,9 @@ export class TemplateCanvas extends Component {
         this.state.interaction = null;
         this.state.nextId = 1;
         this.state.roleOptions = [];
+        this.state.isDirty = false;
         await this._loadRoleOptions();
+        await this._loadTemplateFields();
     }
 
     removeSelectedField() {
@@ -384,6 +402,7 @@ export class TemplateCanvas extends Component {
         this.state.fields = this.state.fields.filter((field) => field.id !== selectedField.id);
         this.state.selectedFieldId = this.state.fields[0] ? this.state.fields[0].id : null;
         this.state.interaction = null;
+        this.state.isDirty = true;
     }
 
     selectField(fieldId) {
@@ -507,6 +526,71 @@ export class TemplateCanvas extends Component {
             signature_image_mime_type: payload.signature_image_mime_type || "",
             signature_image_byte_size: Number.parseInt(payload.signature_image_byte_size, 10) || 0,
         };
+        this.state.isDirty = true;
+    }
+
+    async saveTemplateFields() {
+        if (!this.canSaveFields) {
+            return;
+        }
+        this.state.isSaving = true;
+        try {
+            const selectedTemplateId = this.state.templateId;
+            const persistedFieldRows = await this.orm.searchRead(
+                TEMPLATE_FIELD_MODEL,
+                [["template_id", "=", selectedTemplateId]],
+                ["id"],
+                { order: "id" }
+            );
+            const existingBackendFieldIds = new Set(
+                persistedFieldRows.map((row) => asPositiveInteger(row.id)).filter(Boolean)
+            );
+            const retainedBackendFieldIds = new Set();
+
+            for (const field of this.state.fields) {
+                const fieldVals = this._serializeFieldForBackendWrite(field);
+                if (field.backendId) {
+                    await this.orm.write(TEMPLATE_FIELD_MODEL, [field.backendId], fieldVals);
+                    retainedBackendFieldIds.add(field.backendId);
+                } else {
+                    const [createdFieldId] = await this.orm.create(TEMPLATE_FIELD_MODEL, [
+                        {
+                            ...fieldVals,
+                            template_id: selectedTemplateId,
+                        },
+                    ]);
+                    const previousFieldId = field.id;
+                    field.id = createdFieldId;
+                    field.backendId = createdFieldId;
+                    if (this.state.selectedFieldId === previousFieldId) {
+                        this.state.selectedFieldId = createdFieldId;
+                    }
+                    retainedBackendFieldIds.add(createdFieldId);
+                }
+                field.backendType = field.type;
+                field.backendOptionList = field.optionList;
+                field.backendHadOptions = supportsFieldOptions(field.type) && Boolean(field.optionList);
+            }
+
+            const removedFieldIds = [...existingBackendFieldIds].filter(
+                (fieldId) => !retainedBackendFieldIds.has(fieldId)
+            );
+            if (removedFieldIds.length) {
+                await this.orm.unlink(TEMPLATE_FIELD_MODEL, removedFieldIds);
+            }
+
+            this.state.nextId = this._computeNextFieldId(this.state.fields);
+            this.state.isDirty = false;
+            this.notification.add(_t("Template fields saved."), { type: "success" });
+        } catch (error) {
+            this.notification.add(
+                _t("Unable to save template fields. Review values and try again."),
+                { type: "danger" }
+            );
+            throw error;
+        } finally {
+            this.state.isSaving = false;
+        }
     }
 
     onFieldPointerDown(field, ev) {
@@ -560,6 +644,7 @@ export class TemplateCanvas extends Component {
         }
         this.state.interaction = null;
         document.body.classList.remove("o_open_sign_web_unselectable");
+        this.state.isDirty = true;
     }
 
     _startInteraction(type, field, ev) {
@@ -605,6 +690,156 @@ export class TemplateCanvas extends Component {
         this.state.roleOptions = roleOptions;
     }
 
+    async _loadTemplateFields() {
+        const loadToken = ++this._templateFieldLoadToken;
+        const selectedTemplateId = this.state.templateId;
+        if (!selectedTemplateId) {
+            this.state.fields = [];
+            this.state.selectedFieldId = null;
+            this.state.nextId = 1;
+            this.state.isDirty = false;
+            return;
+        }
+
+        const templateFields = await this.orm.searchRead(
+            TEMPLATE_FIELD_MODEL,
+            [["template_id", "=", selectedTemplateId]],
+            [
+                "id",
+                "role_id",
+                "type",
+                "label",
+                "required",
+                "page",
+                "x",
+                "y",
+                "width",
+                "height",
+                "sequence",
+                "default_value",
+                "validation_regex",
+                "min_length",
+                "max_length",
+            ],
+            { order: "page, sequence, id" }
+        );
+        if (loadToken !== this._templateFieldLoadToken) {
+            return;
+        }
+
+        const templateFieldIds = templateFields
+            .map((field) => asPositiveInteger(field.id))
+            .filter(Boolean);
+        const optionMapByFieldId = new Map();
+        if (templateFieldIds.length) {
+            const fieldOptions = await this.orm.searchRead(
+                TEMPLATE_FIELD_OPTION_MODEL,
+                [["field_id", "in", templateFieldIds]],
+                ["id", "field_id", "value", "sequence"],
+                { order: "field_id, sequence, id" }
+            );
+            if (loadToken !== this._templateFieldLoadToken) {
+                return;
+            }
+            for (const option of fieldOptions) {
+                const fieldId = this._extractMany2OneId(option.field_id);
+                if (!fieldId) {
+                    continue;
+                }
+                const existingOptions = optionMapByFieldId.get(fieldId) || [];
+                existingOptions.push(option);
+                optionMapByFieldId.set(fieldId, existingOptions);
+            }
+        }
+
+        this.state.fields = templateFields.map((field) => this._toCanvasField(field, optionMapByFieldId));
+        this.state.selectedFieldId = this.state.fields[0] ? this.state.fields[0].id : null;
+        this.state.nextId = this._computeNextFieldId(this.state.fields);
+        this.state.isDirty = false;
+    }
+
+    _computeNextFieldId(fields = []) {
+        const maxId = fields.reduce((acc, field) => Math.max(acc, asPositiveInteger(field.id) || 0), 0);
+        return maxId + 1;
+    }
+
+    _extractMany2OneId(value) {
+        if (Array.isArray(value)) {
+            return asPositiveInteger(value[0]);
+        }
+        return asPositiveInteger(value);
+    }
+
+    _toCanvasField(field, optionMapByFieldId) {
+        const backendFieldId = asPositiveInteger(field.id);
+        const fieldType = field.type || DEFAULT_FIELD_TYPE;
+        const optionList = (optionMapByFieldId.get(backendFieldId) || [])
+            .map((option) => String(option.value || "").trim())
+            .filter(Boolean)
+            .join("\n");
+        const normalizedProperties = normalizeFieldProperties(
+            {
+                required: field.required,
+                sequence: field.sequence,
+                defaultValue: field.default_value ?? "",
+                validationRegex: field.validation_regex || "",
+                minLength: field.min_length,
+                maxLength: field.max_length,
+                optionList,
+            },
+            fieldType
+        );
+        return {
+            id: backendFieldId,
+            backendId: backendFieldId,
+            backendType: fieldType,
+            backendOptionList: normalizedProperties.optionList,
+            backendHadOptions: optionList.length > 0,
+            roleId: this._extractMany2OneId(field.role_id),
+            type: fieldType,
+            label: sanitizeFieldLabel(field.label, `${this.getPaletteLabel(fieldType)} ${backendFieldId}`),
+            required: normalizedProperties.required,
+            sequence: normalizedProperties.sequence,
+            placeholder: "",
+            helpText: "",
+            defaultValue: normalizedProperties.defaultValue,
+            validationRegex: normalizedProperties.validationRegex,
+            minLength: normalizedProperties.minLength,
+            maxLength: normalizedProperties.maxLength,
+            optionList: normalizedProperties.optionList,
+            ...coerceRenderableGeometry({
+                page: field.page,
+                x: field.x,
+                y: field.y,
+                width: field.width,
+                height: field.height,
+            }),
+        };
+    }
+
+    _serializeFieldForBackendWrite(field) {
+        const [fieldVals] = serializeTemplateFieldsForBackend([field], {
+            requireValidRoles: true,
+            availableRoleIds: this.state.roleOptions,
+        });
+        const backendWasOptionField = supportsFieldOptions(field.backendType);
+        const backendHasId = Boolean(field.backendId);
+        const optionsChanged = field.optionList !== (field.backendOptionList || "");
+        const typeChanged = field.type !== field.backendType;
+        if (supportsFieldOptions(field.type)) {
+            if (backendHasId && (optionsChanged || typeChanged)) {
+                fieldVals.option_ids = [[5, 0, 0], ...fieldVals.option_ids];
+            } else if (backendHasId) {
+                delete fieldVals.option_ids;
+            }
+        } else if (backendHasId && (field.backendHadOptions || backendWasOptionField)) {
+            fieldVals.option_ids = [[5, 0, 0]];
+        } else {
+            delete fieldVals.option_ids;
+        }
+        return fieldVals;
+    }
+
     _updateSelectedFieldProperties(patch = {}) {
         const field = this.selectedField;
         if (!field) {
@@ -632,6 +867,7 @@ export class TemplateCanvas extends Component {
             maxLength: normalized.maxLength,
             optionList: normalized.optionList,
         });
+        this.state.isDirty = true;
     }
 }
 

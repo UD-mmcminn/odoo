@@ -23,6 +23,11 @@
                     <span class="text-muted small">
                         <t t-esc="state.fields.length"/> field(s)
                     </span>
+                    <t t-if="state.isDirty">
+                        <span class="text-warning small">
+                            Unsaved changes
+                        </span>
+                    </t>
                     <t t-if="hasInvalidRoleAssignments">
                         <span class="o_open_sign_web_canvas_notice text-warning">
                             <t t-esc="invalidRoleFieldCount"/> field(s) need role reassignment
@@ -37,9 +42,18 @@
                         class="btn btn-sm btn-primary"
                         type="button"
                         t-att-disabled="!canAddFields"
-                        t-on-click="() => addField()"
+                        t-on-click="() => this.addField()"
                     >
                         Add Default Field
+                    </button>
+                    <button
+                        class="btn btn-sm btn-success"
+                        type="button"
+                        t-att-disabled="!canSaveFields"
+                        t-on-click="this.saveTemplateFields"
+                    >
+                        <t t-if="state.isSaving">Saving...</t>
+                        <t t-else="">Save Fields</t>
                     </button>
                 </div>
             </header>
@@ -52,7 +66,7 @@
                                 class="btn btn-outline-secondary btn-sm o_open_sign_web_palette_button"
                                 type="button"
                                 t-att-disabled="!canAddFields"
-                                t-on-click="() => addFieldFromPalette(entry.type)"
+                                t-on-click="() => this.addFieldFromPalette(entry.type)"
                             >
                                 <span class="o_open_sign_web_palette_label">
                                     <t t-esc="entry.label"/>
@@ -65,13 +79,13 @@
                     </div>
                 </aside>
                 <div class="o_open_sign_web_canvas_body">
-                    <div class="o_open_sign_web_canvas_page" t-ref="page" t-att-style="pageStyle" t-on-pointerdown.self="onCanvasPointerDown">
+                    <div class="o_open_sign_web_canvas_page" t-ref="page" t-att-style="pageStyle" t-on-pointerdown.self="this.onCanvasPointerDown">
                         <t t-foreach="state.fields" t-as="field" t-key="field.id">
                             <div
                                 class="o_open_sign_web_field"
                                 t-att-class="getFieldClasses(field)"
                                 t-att-style="getFieldStyle(field)"
-                                t-on-pointerdown="(ev) => onFieldPointerDown(field, ev)"
+                                t-on-pointerdown="(ev) => this.onFieldPointerDown(field, ev)"
                             >
                                 <span class="o_open_sign_web_field_label">
                                     <t t-esc="field.label"/>
@@ -82,7 +96,7 @@
                                 <span
                                     class="o_open_sign_web_field_resize_handle"
                                     title="Resize"
-                                    t-on-pointerdown.stop.prevent="(ev) => onResizePointerDown(field, ev)"
+                                    t-on-pointerdown.stop.prevent="(ev) => this.onResizePointerDown(field, ev)"
                                 />
                             </div>
                         </t>
