@@ -723,3 +723,44 @@ class TestOpenSignRequest(TransactionCase):
         self.assertTrue(retained_request)
         self.assertFalse(retained_request.active)
         self.assertTrue(retained_request.deleted_at)
+
+    def test_signer_access_link_generation_and_open_action(self):
+        request = self._create_request(self.acl_template, name='Signer Access Link Request')
+        role = self._create_role(self.acl_template, name='Signer Access Link Role', sequence=100)
+        signer = self._create_signer(request, role=role, email='access.link.signer@example.com')
+
+        self.assertTrue(signer.sign_access_url)
+        self.assertIn(f"id={signer.id}", signer.sign_access_url)
+        self.assertIn("model=open.sign.request.signer", signer.sign_access_url)
+        self.assertIn("view_type=form", signer.sign_access_url)
+
+        action = signer.action_open_sign_access_link()
+        self.assertEqual(action['type'], 'ir.actions.act_url')
+        self.assertEqual(action['target'], 'new')
+        self.assertEqual(action['url'], signer.sign_access_url)
+
+    def test_resend_signer_request_link_requires_manager_and_logs_event(self):
+        request = self._create_request(self.acl_template, name='Signer Resend Request')
+        role = self._create_role(self.acl_template, name='Signer Resend Role', sequence=110)
+        signer = self._create_signer(request, role=role, email='resend.signer@example.com')
+
+        with self.assertRaises(AccessError):
+            signer.with_user(self.open_sign_user).action_resend_signer_request()
+
+        message_count_before = len(request.message_ids)
+        notification = signer.with_user(self.open_sign_manager).action_resend_signer_request()
+
+        self.assertEqual(notification['type'], 'ir.actions.client')
+        self.assertEqual(notification['tag'], 'display_notification')
+        self.assertEqual(notification['params']['type'], 'success')
+
+        request.invalidate_recordset(['last_event_at', 'message_ids'])
+        self.assertTrue(request.last_event_at)
+        self.assertEqual(len(request.message_ids), message_count_before + 1)
+        self.assertTrue(
+            any('resend triggered' in (message.body or '').lower() for message in request.message_ids)
+        )
+
+        request.action_cancel()
+        with self.assertRaisesRegex(ValidationError, 'Cannot resend signer links once the request is completed, cancelled, or voided.'):
+            signer.with_user(self.open_sign_manager).action_resend_signer_request()

@@ -10,6 +10,22 @@
                     <field name="sequence"/>
                     <field name="role_id"/>
                     <field name="email"/>
+                    <field name="sign_access_url" string="Copy Link" widget="CopyClipboardURL" readonly="1" optional="show"/>
+                    <button
+                        name="action_open_sign_access_link"
+                        type="object"
+                        string="Open Link"
+                        class="btn-link"
+                        icon="fa-external-link"
+                    />
+                    <button
+                        name="action_resend_signer_request"
+                        type="object"
+                        string="Resend"
+                        class="btn-link"
+                        icon="fa-refresh"
+                        groups="open_sign.group_open_sign_manager"
+                    />
                     <field name="partner_id" optional="hide"/>
                     <field name="state" widget="badge"/>
                     <field name="last_opened_at" optional="hide"/>
@@ -83,6 +99,7 @@
                                 <field name="sequence"/>
                                 <field name="partner_id"/>
                                 <field name="email"/>
+                                <field name="sign_access_url" string="Copy Link" widget="CopyClipboardURL" readonly="1"/>
                             </group>
                             <group>
                                 <field name="state" readonly="1"/>

@@ -5,7 +5,7 @@ import re
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from odoo import _, api, fields, models, tools
-from odoo.exceptions import ValidationError
+from odoo.exceptions import AccessError, ValidationError
 
 
 SIGNER_STATE_SELECTION = [
@@ -63,6 +63,11 @@ class OpenSignRequestSigner(models.Model):
     consent_accepted_at = fields.Datetime(index=True)
     consent_text_hash = fields.Char()
     signer_timezone = fields.Char()
+    sign_access_url = fields.Char(
+        compute="_compute_sign_access_url",
+        readonly=True,
+        compute_sudo=True,
+    )
     value_ids = fields.One2many('open.sign.request.value', 'signer_id', string='Captured Values')
     company_id = fields.Many2one(
         'res.company',
@@ -84,6 +89,21 @@ class OpenSignRequestSigner(models.Model):
         "CHECK(state != 'signed' OR signed_at IS NOT NULL)",
         'Signed signer state requires signed_at timestamp.',
     )
+
+    def _compute_sign_access_url(self):
+        base_url = self.env["ir.config_parameter"].sudo().get_param("web.base.url", "").rstrip("/")
+        action = self.env.ref("open_sign.action_open_sign_request_signer", raise_if_not_found=False)
+        action_fragment = f"&action={action.id}" if action else ""
+        for signer in self:
+            if not signer.id or not base_url:
+                signer.sign_access_url = False
+                continue
+            signer.sign_access_url = (
+                f"{base_url}/web#id={signer.id}"
+                "&model=open.sign.request.signer"
+                "&view_type=form"
+                f"{action_fragment}"
+            )
 
     @api.model
     def _get_effective_create_vals(self, vals, field_names):
@@ -266,6 +286,42 @@ class OpenSignRequestSigner(models.Model):
         if not self.env.su and self.filtered(lambda signer: signer.request_id.status in TERMINAL_MUTATION_STATUSES):
             raise ValidationError(_("Signer records cannot be modified once the request is completed, cancelled, or voided."))
         return super().unlink()
+
+    def action_open_sign_access_link(self):
+        self.ensure_one()
+        if not self.sign_access_url:
+            raise ValidationError(_("Signer access URL is not available."))
+        return {
+            "type": "ir.actions.act_url",
+            "url": self.sign_access_url,
+            "target": "new",
+        }
+
+    def action_resend_signer_request(self):
+        self.ensure_one()
+        if not self.env.user.has_group("open_sign.group_open_sign_manager"):
+            raise AccessError(_("Only Open Sign Managers can resend signer request links."))
+        if self.request_id.status in TERMINAL_MUTATION_STATUSES:
+            raise ValidationError(
+                _("Cannot resend signer links once the request is completed, cancelled, or voided.")
+            )
+        self.request_id.message_post(
+            body=_("Signer request link resend triggered for %(email)s.", email=self.email)
+        )
+        self.request_id.write({"last_event_at": fields.Datetime.now()})
+        return {
+            "type": "ir.actions.client",
+            "tag": "display_notification",
+            "params": {
+                "title": _("Signer Link Ready"),
+                "message": _(
+                    "Use Copy Link on signer %(email)s to share the signing URL.",
+                    email=self.email,
+                ),
+                "type": "success",
+                "sticky": False,
+            },
+        }
 
     @api.constrains('email')
     def _check_email_format(self):
