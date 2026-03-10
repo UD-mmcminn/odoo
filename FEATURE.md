@@ -8,7 +8,7 @@
 | Version | `1.1.0` |
 | Status | `Active (Living Document)` |
 | Created | `2026-02-26` |
-| Last Updated | `2026-03-01` |
+| Last Updated | `2026-03-10` |
 | Product Area | `Open Sign Odoo Addons` |
 | Primary Owner | `Engineering` |
 | Review Cadence | `Weekly or at milestone close` |
@@ -16,9 +16,11 @@
 ## How To Use This Document
 
 - Keep this file in source control and update it for feature-branch implementation PRs.
+- Follow `AGENTS.md` start/closeout gates for each coding task.
 - Use task checkboxes as the source of truth for completed and pending work.
 - When scope changes, add a Change Request entry under `Design Control` before implementation.
 - Do not mark a task complete unless its acceptance criteria and tests are complete.
+- Run `scripts/review_gate_open_sign.sh` and complete `REVIEW_CHECKLIST.md` before closeout.
 - Keep requirement, task, and milestone references consistent when adding/removing scope.
 
 ## M0 Deliverables Index
@@ -164,6 +166,8 @@ Rollback/Migration Impact:
 - Public endpoints include abuse and replay test coverage.
 - New tests are imported in `tests/__init__.py`.
 - Manifest `data` ordering and asset declarations are validated.
+- `scripts/review_gate_open_sign.sh` has been run (or any deferral is tracked with task ID and risk).
+- `REVIEW_CHECKLIST.md` is completed and reviewed before task closure.
 - For feature branches: `FEATURE.md` updated (task status, traceability, and update log).
 
 ## Odoo Design Data Collection Map
@@ -1207,12 +1211,16 @@ Legend:
 
 ### Phase 3: Portal Addon (`open_sign_portal`)
 
-- [ ] `T30` Scaffold addon with controller/routes and portal templates.
-- [ ] `T31` Extend signer model with `portal.mixin` and standard access-token URL flow.
-- [ ] `T32` Implement signing session open/save/submit flows.
-- [ ] `T33` Enforce signer order (sequential and parallel policies).
+- [x] `T30` Scaffold addon with controller/routes and portal templates.
+- [x] `T31` Extend signer model with `portal.mixin` and standard access-token URL flow.
+- [x] `T32a` Harden signer portal access/session rules with a separate internal preview route, signer-only session mutation, and signer-facing request-state gating.
+- [x] `T32b` Make portal save/submit flows atomic with savepoint-backed rollback on handled errors and lock/revision guards.
+- [x] `T32c` Bind portal rendering/validation to immutable request-version snapshots, including legacy snapshot fallback and fail-closed contract handling.
+- [x] `T32d` Clean up portal field serialization/evidence semantics, add regression coverage, and complete T32 closeout review.
+- [x] `T32` Implement signing session open/save/submit flows, including explicit signer-action auth policy for token-based access vs authenticated internal fallback on save/submit endpoints.
+- [x] `T33` Enforce signer order (sequential and parallel policies).
 - [ ] `T34` Implement decline flow and reason capture.
-- [ ] `T35` Add reminder/invitation/completion notifications.
+- [ ] `T35` Add reminder/invitation/completion notifications, and make portal token URL generation the canonical source for resend/copy-link/invitation/reminder/completion flows.
 - [ ] `T36` Add portal security tests for replay and token abuse.
 - [ ] `T37` Implement optional OTP verification flow.
 - [ ] `T38` Implement endpoint response envelope/error codes and contract tests.
@@ -1450,3 +1458,11 @@ Counts below track only `T*` development tasks in the phase task board.
 | `2026-03-01` | Codex | Completed `T23` by adding template-aware signer-role assignment in `open_sign_web` editor (template selector, role selector in field properties, role normalization against template roles, and backend payload role mapping via `role_id`), with regression verification on `/open_sign` (`74 tests, 0 failed`) and module/runtime validation for `/open_sign_web` (known frontend test discovery remains deferred to `T26`). |
 | `2026-03-01` | Codex | Applied `T23` hardening follow-up from holistic review: removed silent role reassignment on template switch, removed misleading `Unassigned` assignment path, gated field creation on template-role availability, guarded against stale async role-load responses, and expanded JS utility coverage for role-validity semantics. |
 | `2026-03-01` | Codex | Completed `T26` by adding explicit `open_sign_web` frontend runner wiring (`tests/test_js.py` with HOOT `browser_js` + asset registration assertion), tagging module HOOT tests for scoped execution (`open_sign_web`), expanding geometry/validation edge-case coverage, fixing an OWL XML parse blocker (`&amp;&amp;`), and revalidating with `/open_sign_web` (non-zero post-tests) plus `/open_sign` regression (`74 tests, 0 failed`). |
+| `2026-03-05` | Codex | Completed `T30` by scaffolding `open_sign_portal` addon structure (`controllers/models/security/views/tests`), adding secure portal route shells (`/my/sign` + signer endpoints) with deny-by-default token posture until `T31`, adding portal page templates, and adding scaffold HTTP/transaction tests; validated with `-i/-u open_sign_portal`, `/open_sign_portal` tests (`0 failed`), and `/open_sign` regression (`0 failed`). |
+| `2026-03-05` | Codex | Completed `T31` by extending `open.sign.request.signer` with `portal.mixin` token flow (`access_url` + `get_portal_url()`), adding signer portal link helpers/fields with restricted visibility for non-signing roles, switching portal controller access checks to standard `_document_check_access`, and expanding portal tests for valid-token public access + endpoint envelope consistency; validated with `/open_sign_portal` and `/open_sign` regressions (`0 failed`). |
+| `2026-03-05` | Codex | Applied post-`T31` hardening by making signer `access_token` server-authoritative (non-superusers cannot set/mutate portal token fields), adding regression coverage for user/manager token-write denial, and clarifying Phase 3 scope so `T32` must lock signer-action auth policy and `T35` must centralize resend/invitation/reminder/completion links on portal token URLs. |
+| `2026-03-09` | Codex | Completed `T32` via remediation subtasks `T32a`-`T32d`: split internal preview from real signer sessions, enforced signer-facing state gates and signer-only mutation auth, made save/submit atomic with rollback-safe locking/revision checks, bound portal rendering/validation to immutable template-version snapshots with legacy fallback/fail-closed handling, blocked active-request field role/delete drift, prevented unsupported portal fields from clearing stored values, and revalidated with `/open_sign_portal`, `/open_sign`, and `scripts/review_gate_open_sign.sh --skip-web` (all green). |
+| `2026-03-09` | Codex | Reopened and reclosed `T32d` to align terminal read-only review behavior: real signer and tokenized document routes now support read-only review for `completed`, `declined`, and `expired` requests without mutating evidence; internal preview explicitly allows historical review for `versioned` plus active and reviewable terminal states; `cancelled` and `voided` remain denied; action routes keep returning deterministic `validation_error` responses for authorized-but-immutable requests. |
+| `2026-03-09` | Codex | Closed the final `T32` proof gaps with test-only hardening: added explicit regression coverage proving terminal historical preview remains non-mutating and scaffold action endpoints (`decline`, `otp/request`, `otp/verify`) reject terminal requests without mutating signer state, request revision, or audit evidence. `T32` and sub-tasks `T32a`-`T32d` are now closed. |
+| `2026-03-10` | Codex | Completed `T33` by hardening ordered-signing portal behavior and the underlying signer contract: sequential out-of-turn signers now receive a read-only waiting session with refresh-to-unlock UX, `save` and `submit` now both return `signing_order_blocked` when out of turn, waiting-page visits do not create `signer_opened` evidence, same-sequence waves remain actionable together, and parallel requests explicitly allow open/save/submit for all mutable signers. To make portal ordering audit-stable, signer contract fields (`request_id`, `partner_id`, `email`, `role_id`, `sequence`) are now frozen for non-superusers once a request reaches `versioned`, and save/submit now re-check mutable-state and ordering under request lock so `stale_revision` takes precedence over order blocking. Validated with `/open_sign`, `/open_sign_portal`, and `scripts/review_gate_open_sign.sh --skip-web` (all green). |
+| `2026-03-10` | Codex | Clarified the Phase 3 boundary after `T33`: post-versioning signer contact correction and truthful resend delivery semantics are intentionally deferred to `T35`. Current resend/copy-link behavior is not treated as legal proof of email delivery; `T35` must introduce the controlled manager-only pending-signer email correction path with required reason, token rotation/old-link invalidation, audit evidence, and actual invitation/reminder/completion delivery semantics. |

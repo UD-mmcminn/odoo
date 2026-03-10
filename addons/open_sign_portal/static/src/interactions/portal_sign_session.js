@@ -1,0 +1,162 @@
+/** @odoo-module **/
+
+import { registry } from "@web/core/registry";
+import { rpc } from "@web/core/network/rpc";
+import { Interaction } from "@web/public/interaction";
+import { redirect } from "@web/core/utils/urls";
+
+export class OpenSignPortalSession extends Interaction {
+    static selector = ".o_open_sign_session";
+
+    dynamicContent = {
+        ".o_open_sign_save": { "t-on-click.prevent": this.locked(this.onClickSave, true) },
+        ".o_open_sign_submit": { "t-on-click.prevent": this.locked(this.onClickSubmit, true) },
+    };
+
+    setup() {
+        this.saveUrl = this.el.dataset.saveUrl;
+        this.submitUrl = this.el.dataset.submitUrl;
+        this.accessToken = this.el.dataset.accessToken || false;
+        this.requestRevision = Number.parseInt(this.el.dataset.requestRevision || "0", 10) || 0;
+        this.consentHash = this.el.dataset.consentHash || "";
+
+        this.errorNode = this.el.querySelector(".o_open_sign_error");
+        this.successNode = this.el.querySelector(".o_open_sign_success");
+        this.statusNode = this.el.querySelector(".o_open_sign_request_status");
+        this.consentCheckbox = this.el.querySelector(".o_open_sign_consent");
+    }
+
+    _newIdempotencyKey() {
+        if (window.crypto?.randomUUID) {
+            return window.crypto.randomUUID();
+        }
+        const template = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx";
+        return template.replace(/[xy]/g, (char) => {
+            const rand = Math.floor(Math.random() * 16);
+            const value = char === "x" ? rand : (rand & 0x3) | 0x8;
+            return value.toString(16);
+        });
+    }
+
+    _collectValueForField(fieldNode) {
+        const fieldType = fieldNode.dataset.fieldType;
+        if (["text", "name", "company", "initials", "email", "phone", "multiline", "selection"].includes(fieldType)) {
+            const input = fieldNode.querySelector(".o_open_sign_input");
+            return input ? input.value : "";
+        }
+        if (fieldType === "radio") {
+            const checked = fieldNode.querySelector(".o_open_sign_radio:checked");
+            return checked ? checked.value : false;
+        }
+        if (fieldType === "checkbox") {
+            const checkbox = fieldNode.querySelector(".o_open_sign_checkbox");
+            return Boolean(checkbox?.checked);
+        }
+        if (fieldType === "date") {
+            const input = fieldNode.querySelector(".o_open_sign_input");
+            return input?.value || false;
+        }
+        if (fieldType === "strikethrough") {
+            const checkbox = fieldNode.querySelector(".o_open_sign_checkbox");
+            return Boolean(checkbox?.checked);
+        }
+        return false;
+    }
+
+    _collectValuesPayload() {
+        const values = [];
+        for (const fieldNode of this.el.querySelectorAll(".o_open_sign_field")) {
+            const fieldId = Number.parseInt(fieldNode.dataset.fieldId || "0", 10);
+            if (!fieldId) {
+                continue;
+            }
+            values.push({
+                field_id: fieldId,
+                value: this._collectValueForField(fieldNode),
+            });
+        }
+        return values;
+    }
+
+    _buildPayload() {
+        const payload = {
+            values: this._collectValuesPayload(),
+            idempotency_key: this._newIdempotencyKey(),
+            request_revision: this.requestRevision,
+        };
+        if (this.accessToken) {
+            payload.access_token = this.accessToken;
+        }
+        return payload;
+    }
+
+    _resetAlerts() {
+        this.errorNode?.classList.add("d-none");
+        this.successNode?.classList.add("d-none");
+    }
+
+    _showError(message) {
+        if (!this.errorNode) {
+            return;
+        }
+        this.errorNode.textContent = message || "An unexpected error occurred.";
+        this.errorNode.classList.remove("d-none");
+    }
+
+    _showSuccess(message) {
+        if (!this.successNode) {
+            return;
+        }
+        this.successNode.textContent = message;
+        this.successNode.classList.remove("d-none");
+    }
+
+    _updateRevisionAndStatus(response) {
+        if (Number.isInteger(response?.request_revision)) {
+            this.requestRevision = response.request_revision;
+            this.el.dataset.requestRevision = String(this.requestRevision);
+        }
+        if (this.statusNode && response?.state) {
+            this.statusNode.textContent = response.state;
+        }
+    }
+
+    async onClickSave() {
+        this._resetAlerts();
+        const payload = this._buildPayload();
+        const response = await rpc(this.saveUrl, payload);
+        if (!response?.ok) {
+            this._showError(response?.message);
+            return;
+        }
+        this._updateRevisionAndStatus(response);
+        this._showSuccess("Draft saved.");
+    }
+
+    async onClickSubmit() {
+        this._resetAlerts();
+        const payload = this._buildPayload();
+        payload.consent = {
+            accepted: Boolean(this.consentCheckbox?.checked),
+            text_hash: this.consentHash,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "",
+        };
+        const response = await rpc(this.submitUrl, payload);
+        if (!response?.ok) {
+            this._showError(response?.message);
+            return;
+        }
+        this._updateRevisionAndStatus(response);
+        if (response.force_refresh && response.redirect_url) {
+            redirect(response.redirect_url);
+            return;
+        }
+        if (response.force_refresh) {
+            window.location.reload();
+            return;
+        }
+        this._showSuccess("Submission completed.");
+    }
+}
+
+registry.category("public.interactions").add("open_sign_portal.session", OpenSignPortalSession);

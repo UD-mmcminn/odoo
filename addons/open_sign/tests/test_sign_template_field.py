@@ -411,3 +411,32 @@ class TestOpenSignTemplateField(TransactionCase):
 
         self.assertFalse(self.env['open.sign.template.field'].browse(field_id).exists())
         self.assertFalse(self.env['open.sign.template.field.option'].browse(option_id).exists())
+
+    def test_field_role_change_and_unlink_blocked_for_active_versioned_requests(self):
+        template = self._create_template('Versioned Field Guard')
+        role_a = self._create_role(template, 'Signer A')
+        role_b = self.env['open.sign.role'].create({
+            'template_id': template.id,
+            'name': 'Signer B',
+            'sequence': 20,
+        })
+        field = self._create_field(template, role_a, label='Guarded Field')
+        request = self.env['open.sign.request'].create({
+            'name': 'Guarded Request',
+            'template_id': template.id,
+        })
+        self.env['open.sign.request.signer'].create({
+            'request_id': request.id,
+            'role_id': role_a.id,
+            'email': 'guarded@example.com',
+            'sequence': 10,
+        })
+        template.action_publish()
+        request.action_version()
+        request.action_send()
+
+        with self.assertRaisesRegex(ValidationError, 'Cannot change the role for field Guarded Field because it is referenced by active sign requests.'):
+            field.write({'role_id': role_b.id})
+
+        with self.assertRaisesRegex(ValidationError, 'Cannot delete field Guarded Field because it is referenced by active sign requests.'):
+            field.unlink()

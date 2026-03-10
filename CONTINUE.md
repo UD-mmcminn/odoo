@@ -1,7 +1,7 @@
 # Open Sign Continuation Notes
 
-Last updated: 2026-03-01
-Scope checkpoint: T118/T610 hardening re-audit closed on Odoo 19
+Last updated: 2026-03-10
+Scope checkpoint: T33 ordered-signing hardening closed on Odoo 19
 
 ## Why This Exists
 
@@ -39,8 +39,11 @@ Scope checkpoint: T118/T610 hardening re-audit closed on Odoo 19
 ## Practical Working Rules Per Session
 
 - Start by reading `CONTINUE.md` and then `FEATURE.md` task deltas.
+- Follow `AGENTS.md` workflow guardrails for every coding session.
 - Pick one coherent task slice and finish it end-to-end (code + tests + doc updates).
 - Every code-change session must end with a comprehensive post-change review (scope intent, diff correctness, cross-model impact, security/authority boundaries, and regression checks).
+- Run `scripts/review_gate_open_sign.sh` (or document why a step is deferred) before marking a task complete.
+- Execute `REVIEW_CHECKLIST.md` line-by-line during closeout.
 - When adding behavior, add tests that could fail for real regressions.
 - Keep server-side rules authoritative; client-side checks are convenience only.
 - If something is intentionally deferred, document where/why (task ID + risk).
@@ -60,6 +63,7 @@ Use this before marking any task complete (especially model/state/security work)
 - Verify ACL expectations with tests for user/manager/auditor behavior.
 - Validate invariants at DB/model layer (SQL constraints and Python constraints) rather than relying on client behavior.
 - Re-run task test scope and confirm no regression in adjacent flows.
+- Record review-gate results (`scripts/review_gate_open_sign.sh`) in closeout notes.
 - If any guard is intentionally deferred, log task ID + risk + owner in `FEATURE.md`/`CONTINUE.md`.
 - Re-run this checklist as a recurring re-audit after each major phase slice and after every 3 completed implementation tasks.
 
@@ -110,6 +114,10 @@ Use this before marking any task complete (especially model/state/security work)
 - `T111` implementation and closeout are complete (scheduled actions + reminder/expiration cron handlers + dedicated cron tests); full `/open_sign` suite is green.
 - `T112` implementation and closeout are complete (upgrade scripts in `upgrades/1.1`, addon version bump to `1.1`, migration-time data normalization for new schema constraints); full `/open_sign` suite is green.
 - `T118` (`FEATURE.md` `T610`) recurring hardening re-audit is complete with no new blocking findings; server-authority controls, denial paths, ACL/rule expectations, and UI/server alignment remain intact across completed M1 scope.
+- `T30` implementation and closeout are complete (new `open_sign_portal` addon scaffold with controller route shells, portal templates, model helper, security placeholders, and dedicated scaffold tests), with `/open_sign_portal` and `/open_sign` regression green.
+- `T31` implementation and closeout are complete (`open.sign.request.signer` now inherits `portal.mixin` with standard tokenized access URL flow, controller access checks now use `CustomerPortal._document_check_access`, and portal-token visibility is restricted away from auditor-only roles), with `/open_sign_portal` and `/open_sign` regression green.
+- `T33` implementation and closeout are complete (ordered-signing portal policy/UX hardening): sequential out-of-turn signers now get a read-only waiting page with refresh-to-unlock behavior, `save` and `submit` now both return `signing_order_blocked` when out of turn, waiting-page visits do not create signer-open evidence, same-sequence signers remain actionable together, and parallel requests explicitly allow mutable signers to open/save/submit immediately.
+- `T33` post-review hardening is applied: signer contract fields (`request_id`, `partner_id`, `email`, `role_id`, `sequence`) now freeze for non-superusers once a request reaches `versioned`, portal `save`/`submit` re-check mutable-state and order under request lock so `stale_revision` beats `signing_order_blocked`, waiting-page assertions now verify the actual disabled signer control, and full `/open_sign`, `/open_sign_portal`, and `scripts/review_gate_open_sign.sh --skip-web` validation are green.
 
 ## What Was Implemented For T12
 
@@ -631,16 +639,50 @@ Use this before marking any task complete (especially model/state/security work)
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign/tests/test_sign_security_rules.py --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign --stop-after-init`
    - `./odoo-bin -d <db> -u open_sign_web --test-enable --test-tags /open_sign_web --stop-after-init`
-2. If tests pass, begin Phase 3 implementation (`T30`).
+   - `./odoo-bin -d <db> -i open_sign_portal --stop-after-init`
+   - `./odoo-bin -d <db> --test-enable --test-tags /open_sign_portal --stop-after-init`
+   - `scripts/review_gate_open_sign.sh --skip-web -d <db>`
+2. If tests pass, continue Phase 3 with `T34` decline flow and reason capture on top of the now-closed `T32`/`T33` portal session baseline.
 3. Re-run recurring hardening re-audit (`T610`) after each major phase slice and after every 3 completed implementation tasks.
 
 ## Next Tasks (Planned Order)
 
-1. `T30` Scaffold addon with portal routes/templates and baseline security posture (`open_sign_portal`).
-2. `T35` (deferred reminder email scope) implement invitation/reminder/completion notifications after portal flow foundations.
+1. `T34` Implement decline flow and reason capture.
+2. `T35` Add reminder/invitation/completion notifications, canonical portal token URL generation, and the controlled pending-signer contact-correction/resend flow deferred from `T33`.
 
 ## Notes For Next Chat
 
+- `T32` is closed. The portal session implementation now includes:
+  - separate internal preview route (`/my/sign/<id>/preview`) with no signer evidence mutation
+  - signer-only session open/save/submit auth on real signer routes
+  - real signer read-only review for `completed`, `declined`, and `expired` requests, while mutation remains limited to `sent`, `opened`, `in_progress`, and `partially_signed`
+  - internal preview intentionally supports historical review for `versioned`, active signer-session states, and `completed`/`declined`/`expired`
+  - `cancelled` and `voided` remain denied on signer, preview, and tokenized document routes
+  - save/submit savepoints with rollback-safe lock/revision handling
+  - request-version snapshot-backed portal rendering/validation, including legacy snapshot fallback and fail-closed contract errors
+  - unsupported portal fields excluded from serialization so existing stored values are preserved
+  - active-request field role/delete guards to prevent live template drift from breaking in-flight contracts
+  - tokenized document access aligned with read-only review states and still serving the source PDF until `T40`/`T41`
+  - explicit regression coverage proving terminal preview remains non-mutating and scaffold action endpoints stay immutable on terminal requests
+- `T33` is now closed. Additional portal ordering guarantees now include:
+  - sequential out-of-turn signers render as read-only waiting sessions instead of failing only at submit time
+  - sequential out-of-turn `save` and `submit` both return `signing_order_blocked`
+  - waiting-page visits do not stamp `signer_opened`, `last_opened_at`, `ip_last`, or request revision
+  - same-sequence signers remain actionable together and parallel requests explicitly allow all mutable signers to open/save/submit
+  - signer contract fields (`request_id`, `partner_id`, `email`, `role_id`, `sequence`) are frozen for non-superusers from `versioned` onward so ordered-signing no longer depends on mutable active signer rows
+  - portal ordering is re-evaluated under request lock during `save` and `submit`, so `stale_revision` wins over `signing_order_blocked`
+- `T32`/`T33` deferred items remain deferred exactly as planned:
+  - `T35`: reminder/invitation/completion link canonicalization
+  - `T316`/`T317`: durable idempotency storage and replay/race semantics
+  - `T40`/`T41`: final completion/final PDF generation
+- `T35` must now also own the controlled post-versioning contact-correction/resend exception:
+  - manager-only
+  - pending signer only
+  - email change only
+  - required reason
+  - token rotation / old-link invalidation
+  - truthful audit events and actual invitation/reminder/completion delivery semantics
+- Current resend/copy-link behavior is not treated as legal proof of email delivery; do not blur that boundary before `T35`.
 - If the next session starts at recurring hardening re-audit (`T610` / continuation `T118`), preserve `T17`/`T18`/`T19` invariants:
   - no direct mutation of existing audit rows outside privileged repair context
   - request-local uniqueness on audit sequence/hash

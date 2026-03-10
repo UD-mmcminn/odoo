@@ -347,6 +347,99 @@ class TestOpenSignRequest(TransactionCase):
                 sequence=-1,
             )
 
+    def test_signer_actionable_and_waiting_helpers_follow_sequence_waves(self):
+        template = self._create_template('Signer Actionable Helpers')
+        request = self._create_request(template, name='Signer Actionable Helpers Request')
+        role_first = self._create_role(template, name='Wave First', sequence=10)
+        role_same_wave = self._create_role(template, name='Wave Same', sequence=10)
+        role_second = self._create_role(template, name='Wave Second', sequence=20)
+
+        signer_first = self._create_signer(request, role_first, email='wave.first@example.com')
+        signer_same_wave = self._create_signer(request, role_same_wave, email='wave.same@example.com')
+        signer_second = self._create_signer(request, role_second, email='wave.second@example.com')
+
+        self.assertTrue(request._is_signer_actionable(signer_first))
+        self.assertTrue(request._is_signer_actionable(signer_same_wave))
+        self.assertFalse(request._is_signer_actionable(signer_second))
+        self.assertFalse(request._is_signer_waiting(signer_first))
+        self.assertFalse(request._is_signer_waiting(signer_same_wave))
+        self.assertTrue(request._is_signer_waiting(signer_second))
+
+        signer_first.write({'state': 'signed', 'signed_at': fields.Datetime.now()})
+        signer_same_wave.write({'state': 'declined'})
+
+        self.assertTrue(request._is_signer_actionable(signer_second))
+        self.assertFalse(request._is_signer_waiting(signer_second))
+
+    def test_signer_actionable_helper_supports_parallel_and_terminal_wave_unblocking(self):
+        template = self._create_template('Signer Actionable Parallel')
+
+        parallel_request = self._create_request(template, name='Parallel Actionable Request')
+        parallel_request.write({'ordered_signing': False})
+        parallel_role_first = self._create_role(template, name='Parallel First', sequence=10)
+        parallel_role_second = self._create_role(template, name='Parallel Second', sequence=20)
+        parallel_signer_first = self._create_signer(
+            parallel_request, parallel_role_first, email='parallel.first@example.com'
+        )
+        parallel_signer_second = self._create_signer(
+            parallel_request, parallel_role_second, email='parallel.second@example.com'
+        )
+
+        self.assertTrue(parallel_request._is_signer_actionable(parallel_signer_first))
+        self.assertTrue(parallel_request._is_signer_actionable(parallel_signer_second))
+        self.assertFalse(parallel_request._is_signer_waiting(parallel_signer_first))
+        self.assertFalse(parallel_request._is_signer_waiting(parallel_signer_second))
+
+        declined_request = self._create_request(template, name='Declined Unblocks Next Wave')
+        declined_role_first = self._create_role(template, name='Declined First', sequence=30)
+        declined_role_second = self._create_role(template, name='Declined Second', sequence=40)
+        declined_signer_first = self._create_signer(
+            declined_request, declined_role_first, email='declined.first@example.com'
+        )
+        declined_signer_second = self._create_signer(
+            declined_request, declined_role_second, email='declined.second@example.com'
+        )
+        declined_signer_first.write({'state': 'declined'})
+
+        self.assertTrue(declined_request._is_signer_actionable(declined_signer_second))
+        self.assertFalse(declined_request._is_signer_waiting(declined_signer_second))
+
+        expired_request = self._create_request(template, name='Expired Unblocks Next Wave')
+        expired_role_first = self._create_role(template, name='Expired First', sequence=50)
+        expired_role_second = self._create_role(template, name='Expired Second', sequence=60)
+        expired_signer_first = self._create_signer(
+            expired_request, expired_role_first, email='expired.first@example.com'
+        )
+        expired_signer_second = self._create_signer(
+            expired_request, expired_role_second, email='expired.second@example.com'
+        )
+        expired_signer_first.write({'state': 'expired'})
+
+        self.assertTrue(expired_request._is_signer_actionable(expired_signer_second))
+        self.assertFalse(expired_request._is_signer_waiting(expired_signer_second))
+
+    def test_signer_actionable_and_waiting_require_request_membership(self):
+        template_a = self._create_template('Signer Membership A')
+        template_b = self._create_template('Signer Membership B')
+        request_a = self._create_request(template_a, name='Signer Membership Request A')
+        request_b = self._create_request(template_b, name='Signer Membership Request B')
+        signer_a = self._create_signer(
+            request_a,
+            self._create_role(template_a, name='Membership A', sequence=10),
+            email='membership.a@example.com',
+        )
+        signer_b = self._create_signer(
+            request_b,
+            self._create_role(template_b, name='Membership B', sequence=10),
+            email='membership.b@example.com',
+        )
+
+        self.assertTrue(request_a._is_signer_actionable(signer_a))
+        with self.assertRaisesRegex(ValidationError, 'Signer does not belong to this request.'):
+            request_a._is_signer_actionable(signer_b)
+        with self.assertRaisesRegex(ValidationError, 'Signer does not belong to this request.'):
+            request_a._is_signer_waiting(signer_b)
+
     def test_signer_default_context_cannot_bypass_lifecycle_guard(self):
         template = self._create_template('Signer Default Context Guard')
         request = self._create_request(
@@ -464,8 +557,14 @@ class TestOpenSignRequest(TransactionCase):
         self.assertEqual(version_1.version_number, 1)
         self.assertEqual(len(version_1.role_snapshot_json), 1)
         self.assertEqual(version_1.role_snapshot_json[0]['name'], 'Signer')
+        self.assertEqual(version_1.role_snapshot_json[0]['role_id'], role.id)
+        self.assertEqual(version_1.role_snapshot_json[0]['name_normalized'], role.name_normalized)
         self.assertEqual(len(version_1.field_snapshot_json), 1)
         self.assertEqual(version_1.field_snapshot_json[0]['type'], 'selection')
+        self.assertEqual(version_1.field_snapshot_json[0]['template_field_id'], template.field_ids.id)
+        self.assertEqual(version_1.field_snapshot_json[0]['role_id'], role.id)
+        self.assertEqual(version_1.field_snapshot_json[0]['role_name'], role.name)
+        self.assertEqual(version_1.field_snapshot_json[0]['role_name_normalized'], role.name_normalized)
         self.assertEqual(len(version_1.field_snapshot_json[0]['options']), 2)
 
         version_2 = template.action_publish_version()
@@ -577,10 +676,10 @@ class TestOpenSignRequest(TransactionCase):
             signer = self._create_signer(request, role_a, email=f'terminal.signer.{status}@example.com')
             self._set_request_terminal_status(request, status)
 
-            with self.assertRaisesRegex(ValidationError, 'Signer records cannot be modified once the request is completed, cancelled, or voided.'):
+            with self.assertRaisesRegex(ValidationError, 'Signer contract cannot be modified once the request is versioned.'):
                 signer.with_user(self.open_sign_user).write({'email': f'terminal.signer.updated.{status}@example.com'})
 
-            with self.assertRaisesRegex(ValidationError, 'Signer records cannot be modified once the request is completed, cancelled, or voided.'):
+            with self.assertRaisesRegex(ValidationError, 'Signer contract cannot be modified once the request is versioned.'):
                 self.env['open.sign.request.signer'].with_user(self.open_sign_user).create({
                     'request_id': request.id,
                     'role_id': role_b.id,
@@ -588,7 +687,7 @@ class TestOpenSignRequest(TransactionCase):
                     'sequence': 20,
                 })
 
-            with self.assertRaisesRegex(ValidationError, 'Signer records cannot be modified once the request is completed, cancelled, or voided.'):
+            with self.assertRaisesRegex(ValidationError, 'Signer contract cannot be modified once the request is versioned.'):
                 signer.with_user(self.open_sign_manager).unlink()
 
     def test_manager_can_unlink_signer(self):
@@ -738,6 +837,94 @@ class TestOpenSignRequest(TransactionCase):
         self.assertEqual(action['type'], 'ir.actions.act_url')
         self.assertEqual(action['target'], 'new')
         self.assertEqual(action['url'], signer.sign_access_url)
+
+    def test_signer_contract_create_is_blocked_once_request_is_versioned_or_sent(self):
+        template = self._create_template('Signer Contract Create Freeze')
+        request = self._create_request(
+            template,
+            name='Signer Contract Create Freeze Request',
+            owner_id=self.open_sign_user.id,
+        )
+        role_versioned = self._create_role(template, name='Versioned Role', sequence=10)
+        role_sent = self._create_role(template, name='Sent Role', sequence=20)
+        signer_model = self.env['open.sign.request.signer'].with_user(self.open_sign_user)
+
+        request.action_version()
+        with self.assertRaisesRegex(ValidationError, 'Signer contract cannot be modified once the request is versioned.'):
+            signer_model.create({
+                'request_id': request.id,
+                'role_id': role_versioned.id,
+                'email': 'versioned.freeze@example.com',
+                'sequence': 10,
+            })
+
+        self._create_signer(request, role=role_versioned, email='existing.versioned.freeze@example.com')
+        request.action_send()
+        with self.assertRaisesRegex(ValidationError, 'Signer contract cannot be modified once the request is versioned.'):
+            signer_model.create({
+                'request_id': request.id,
+                'role_id': role_sent.id,
+                'email': 'sent.freeze@example.com',
+                'sequence': 20,
+            })
+
+    def test_signer_contract_write_and_unlink_are_blocked_once_request_is_versioned(self):
+        template = self._create_template('Signer Contract Write Freeze')
+        request = self._create_request(
+            template,
+            name='Signer Contract Write Freeze Request',
+            owner_id=self.open_sign_user.id,
+        )
+        role_primary = self._create_role(template, name='Primary Freeze Role', sequence=10)
+        role_secondary = self._create_role(template, name='Secondary Freeze Role', sequence=20)
+        signer = self._create_signer(
+            request,
+            role=role_primary,
+            email='frozen.contract@example.com',
+            partner_id=self.open_sign_user.partner_id.id,
+        )
+        target_request = self._create_request(
+            template,
+            name='Signer Contract Move Target',
+            owner_id=self.open_sign_user.id,
+        )
+
+        request.action_version()
+        signer_user = signer.with_user(self.open_sign_user)
+        mutation_cases = (
+            {'email': 'changed.contract@example.com'},
+            {'role_id': role_secondary.id},
+            {'sequence': 99},
+            {'partner_id': self.open_sign_manager.partner_id.id},
+            {'request_id': target_request.id},
+        )
+        for vals in mutation_cases:
+            with self.subTest(vals=vals):
+                with self.assertRaisesRegex(ValidationError, 'Signer contract cannot be modified once the request is versioned.'):
+                    signer_user.write(vals)
+
+        with self.assertRaisesRegex(ValidationError, 'Signer contract cannot be modified once the request is versioned.'):
+            signer_user.unlink()
+
+    def test_sudo_signer_lifecycle_writes_still_work_after_request_is_sent(self):
+        template = self._create_template('Signer Lifecycle Sudo')
+        request = self._create_request(template, name='Signer Lifecycle Sudo Request')
+        role = self._create_role(template, name='Lifecycle Sudo Role', sequence=10)
+        signer = self._create_signer(request, role=role, email='lifecycle.sudo@example.com')
+
+        request.action_version()
+        request.action_send()
+
+        opened_at = fields.Datetime.now()
+        signer.sudo().write({
+            'state': 'opened',
+            'last_opened_at': opened_at,
+            'ip_last': '127.0.0.1',
+        })
+        signer.invalidate_recordset(['state', 'last_opened_at', 'ip_last'])
+        self.assertEqual(signer.state, 'opened')
+        self.assertEqual(signer.last_opened_at, opened_at)
+        self.assertEqual(signer.ip_last, '127.0.0.1')
 
     def test_resend_signer_request_link_requires_manager_and_logs_event(self):
         request = self._create_request(self.acl_template, name='Signer Resend Request')

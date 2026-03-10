@@ -1,5 +1,7 @@
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 
+import hashlib
+import json
 import re
 
 from odoo import _, api, fields, models
@@ -111,6 +113,71 @@ class OpenSignAuditLog(models.Model):
         if normalized_sequence <= 0:
             raise ValidationError(_("Audit event sequence must be greater than zero."))
         return normalized_sequence
+
+    @api.model
+    def _build_hash_chain(self, payload):
+        canonical_payload = json.dumps(payload, sort_keys=True, separators=(',', ':'))
+        return hashlib.sha256(canonical_payload.encode('utf-8')).hexdigest()
+
+    @api.model
+    def append_event(
+        self,
+        *,
+        request_id,
+        event_type,
+        signer_id=False,
+        metadata=None,
+        ip=False,
+        user_agent=False,
+        consent_text_hash=False,
+        event_at=None,
+    ):
+        sign_request = self.env['open.sign.request'].browse(request_id).exists()
+        if not sign_request:
+            raise ValidationError(_("Audit request does not exist."))
+
+        signer = False
+        if signer_id:
+            signer = self.env['open.sign.request.signer'].browse(signer_id).exists()
+            if not signer or signer.request_id != sign_request:
+                raise ValidationError(_("Audit signer must belong to the same request."))
+
+        event_at = event_at or fields.Datetime.now()
+        event_at_text = fields.Datetime.to_string(event_at)
+        metadata_json = metadata if isinstance(metadata, dict) else {}
+
+        previous_event = self.sudo().search(
+            [('request_id', '=', sign_request.id)],
+            order='event_sequence desc, id desc',
+            limit=1,
+        )
+        next_sequence = (previous_event.event_sequence or 0) + 1
+        previous_hash = previous_event.hash_chain or False
+        hash_chain = self._build_hash_chain({
+            'request_id': sign_request.id,
+            'signer_id': signer.id if signer else False,
+            'event_type': event_type,
+            'event_sequence': next_sequence,
+            'event_at': event_at_text,
+            'ip': ip or False,
+            'user_agent': user_agent or False,
+            'metadata_json': metadata_json,
+            'previous_hash': previous_hash or False,
+            'consent_text_hash': consent_text_hash or False,
+        })
+        return self.sudo().create({
+            'request_id': sign_request.id,
+            'signer_id': signer.id if signer else False,
+            'event_type': event_type,
+            'event_sequence': next_sequence,
+            'event_at': event_at_text,
+            'ip': ip or False,
+            'user_agent': user_agent or False,
+            'metadata_json': metadata_json,
+            'previous_hash': previous_hash or False,
+            'hash_chain': hash_chain,
+            'consent_text_hash': consent_text_hash or False,
+        })
 
     @api.model_create_multi
     def create(self, vals_list):

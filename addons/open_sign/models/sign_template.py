@@ -92,47 +92,11 @@ class OpenSignTemplate(models.Model):
 
     def _build_role_snapshot(self):
         self.ensure_one()
-        return [
-            {
-                'name': role.name,
-                'name_normalized': role.name_normalized,
-                'sequence': role.sequence,
-                'required': role.required,
-                'color': role.color,
-            }
-            for role in self.role_ids.sorted('sequence, id')
-        ]
+        return [role._build_snapshot_payload() for role in self.role_ids.sorted('sequence, id')]
 
     def _build_field_snapshot(self):
         self.ensure_one()
-        snapshot = []
-        for template_field in self.field_ids.sorted('page, sequence, id'):
-            snapshot.append({
-                'type': template_field.type,
-                'label': template_field.label,
-                'required': template_field.required,
-                'page': template_field.page,
-                'x': template_field.x,
-                'y': template_field.y,
-                'width': template_field.width,
-                'height': template_field.height,
-                'sequence': template_field.sequence,
-                'default_value': template_field.default_value,
-                'validation_regex': template_field.validation_regex,
-                'min_length': template_field.min_length,
-                'max_length': template_field.max_length,
-                'role_name': template_field.role_id.name,
-                'options': [
-                    {
-                        'value': option.value,
-                        'label': option.label,
-                        'sequence': option.sequence,
-                        'is_default': option.is_default,
-                    }
-                    for option in template_field.option_ids.sorted('sequence, id')
-                ],
-            })
-        return snapshot
+        return [template_field._build_snapshot_payload() for template_field in self.field_ids.sorted('page, sequence, id')]
 
     def action_publish_version(self):
         versions = self.env['open.sign.template.version']

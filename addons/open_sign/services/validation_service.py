@@ -170,7 +170,14 @@ def _normalize_json_value(template_field, value_json):
     return value_json
 
 
-def normalize_and_validate_field_value(template_field, value_text, value_json, signed_payload_attachment):
+def normalize_and_validate_field_value(
+    template_field,
+    value_text,
+    value_json,
+    signed_payload_attachment,
+    *,
+    enforce_required=True,
+):
     field_type = template_field.type
     normalized_text = value_text
     normalized_json = value_json
@@ -190,7 +197,7 @@ def normalize_and_validate_field_value(template_field, value_text, value_json, s
     has_value = _is_present(normalized_text) or _is_present(normalized_json) or bool(signed_payload_attachment)
     if field_type in FIELD_TYPES_JSON_BOOL and isinstance(value_json, bool):
         has_value = True
-    if template_field.required and not has_value:
+    if enforce_required and template_field.required and not has_value:
         raise ValidationError(f"Required field {template_field.label} must have a value.")
 
     if field_type in FIELD_TYPES_JSON_DICT and has_value:

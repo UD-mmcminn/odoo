@@ -26,6 +26,19 @@ LIFECYCLE_FIELDS = {
     'consent_text_hash',
     'signer_timezone',
 }
+SIGNER_CONTRACT_FIELDS = {'request_id', 'partner_id', 'email', 'role_id', 'sequence'}
+SIGNER_CONTRACT_FROZEN_STATUSES = {
+    'versioned',
+    'sent',
+    'opened',
+    'in_progress',
+    'partially_signed',
+    'completed',
+    'declined',
+    'expired',
+    'cancelled',
+    'voided',
+}
 TERMINAL_MUTATION_STATUSES = {'completed', 'cancelled', 'voided'}
 
 
@@ -142,19 +155,21 @@ class OpenSignRequestSigner(models.Model):
         if not request_id:
             return
         request = self.env['open.sign.request'].browse(request_id).exists()
-        if request and request.status in TERMINAL_MUTATION_STATUSES:
-            raise ValidationError(_("Signer records cannot be modified once the request is completed, cancelled, or voided."))
+        if request and request.status in SIGNER_CONTRACT_FROZEN_STATUSES:
+            raise ValidationError(_("Signer contract cannot be modified once the request is versioned."))
 
     def _guard_request_state_on_write(self, vals):
         if self.env.su:
             return
+        if not SIGNER_CONTRACT_FIELDS.intersection(vals):
+            return
         target_request = None
         if 'request_id' in vals and vals.get('request_id'):
             target_request = self.env['open.sign.request'].browse(vals['request_id']).exists()
-        if target_request and target_request.status in TERMINAL_MUTATION_STATUSES:
-            raise ValidationError(_("Signer records cannot be modified once the request is completed, cancelled, or voided."))
-        if self.filtered(lambda signer: signer.request_id.status in TERMINAL_MUTATION_STATUSES):
-            raise ValidationError(_("Signer records cannot be modified once the request is completed, cancelled, or voided."))
+        if target_request and target_request.status in SIGNER_CONTRACT_FROZEN_STATUSES:
+            raise ValidationError(_("Signer contract cannot be modified once the request is versioned."))
+        if self.filtered(lambda signer: signer.request_id.status in SIGNER_CONTRACT_FROZEN_STATUSES):
+            raise ValidationError(_("Signer contract cannot be modified once the request is versioned."))
 
     @api.model
     def _sanitize_email(self, email):
@@ -283,8 +298,8 @@ class OpenSignRequestSigner(models.Model):
         return super().write(vals)
 
     def unlink(self):
-        if not self.env.su and self.filtered(lambda signer: signer.request_id.status in TERMINAL_MUTATION_STATUSES):
-            raise ValidationError(_("Signer records cannot be modified once the request is completed, cancelled, or voided."))
+        if not self.env.su and self.filtered(lambda signer: signer.request_id.status in SIGNER_CONTRACT_FROZEN_STATUSES):
+            raise ValidationError(_("Signer contract cannot be modified once the request is versioned."))
         return super().unlink()
 
     def action_open_sign_access_link(self):

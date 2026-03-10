@@ -23,6 +23,7 @@ FIELD_TYPE_SELECTION = [
     ('stamp', 'Stamp'),
 ]
 OPTION_FIELD_TYPES = {'radio', 'selection'}
+REQUEST_FIELD_DELETE_BLOCKING_STATUSES = {'versioned', 'sent', 'opened', 'in_progress', 'partially_signed'}
 
 
 class OpenSignTemplateField(models.Model):
@@ -119,6 +120,158 @@ class OpenSignTemplateField(models.Model):
         if min_length is not None and max_length is not None and max_length < min_length:
             raise ValidationError(_("Maximum length must be greater than or equal to minimum length."))
 
+    @api.model
+    def _sanitize_sequence(self, sequence):
+        try:
+            normalized_sequence = int(sequence)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(_("Field sequence must be zero or greater.")) from exc
+        if normalized_sequence < 0:
+            raise ValidationError(_("Field sequence must be zero or greater."))
+        return normalized_sequence
+
+    @api.model
+    def _normalize_snapshot_sequence(self, sequence):
+        return self._sanitize_sequence(sequence or 0)
+
+    @api.model
+    def _normalize_snapshot_page(self, page):
+        try:
+            normalized_page = int(page)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(_("Field page must be 1 or greater.")) from exc
+        if normalized_page < 1:
+            raise ValidationError(_("Field page must be 1 or greater."))
+        return normalized_page
+
+    @api.model
+    def _normalize_snapshot_float(self, value, label):
+        try:
+            return float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(_("%(label)s must be a valid number.", label=label)) from exc
+
+    @api.model
+    def _normalize_snapshot_length_bound(self, value):
+        if value in (None, False, ''):
+            return False
+        try:
+            normalized_value = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(_("Field length bounds must be valid.")) from exc
+        if normalized_value < 0:
+            raise ValidationError(_("Field length bounds must be valid."))
+        return normalized_value
+
+    @api.model
+    def _build_snapshot_option_payload(self, option):
+        if hasattr(option, 'value'):
+            return {
+                'value': option.value,
+                'label': option.label,
+                'sequence': option.sequence,
+                'is_default': option.is_default,
+            }
+        return {
+            'value': (option.get('value') or '').strip(),
+            'label': (option.get('label') or option.get('value') or '').strip(),
+            'sequence': int(option.get('sequence') or 0),
+            'is_default': bool(option.get('is_default')),
+        }
+
+    @api.model
+    def _build_snapshot_option_fingerprint(self, option):
+        payload = self._build_snapshot_option_payload(option)
+        return (
+            payload['value'],
+            payload['label'],
+            int(payload['sequence']),
+            bool(payload['is_default']),
+        )
+
+    def _build_snapshot_payload(self):
+        self.ensure_one()
+        return {
+            'template_field_id': self.id,
+            'role_id': self.role_id.id,
+            'role_name': self.role_id.name,
+            'role_name_normalized': self.role_id.name_normalized,
+            'type': self.type,
+            'label': self.label,
+            'required': self.required,
+            'page': self.page,
+            'x': self.x,
+            'y': self.y,
+            'width': self.width,
+            'height': self.height,
+            'sequence': self.sequence,
+            'default_value': self.default_value,
+            'validation_regex': self.validation_regex,
+            'min_length': self.min_length,
+            'max_length': self.max_length,
+            'options': [
+                self._build_snapshot_option_payload(option)
+                for option in self.option_ids.sorted(lambda option: (option.sequence, option.id))
+            ],
+        }
+
+    @api.model
+    def _build_snapshot_fingerprint(self, snapshot_field):
+        role_model = self.env['open.sign.role']
+        min_length = self._normalize_snapshot_length_bound(snapshot_field.get('min_length'))
+        max_length = self._normalize_snapshot_length_bound(snapshot_field.get('max_length'))
+        if min_length not in (False, None) and max_length not in (False, None) and max_length < min_length:
+            raise ValidationError(_("Field length bounds must be valid."))
+        return (
+            snapshot_field.get('type') or False,
+            self._sanitize_label(snapshot_field.get('label')),
+            bool(snapshot_field.get('required')),
+            self._normalize_snapshot_page(snapshot_field.get('page')),
+            self._normalize_snapshot_float(snapshot_field.get('x'), _('Field x coordinate')),
+            self._normalize_snapshot_float(snapshot_field.get('y'), _('Field y coordinate')),
+            self._normalize_snapshot_float(snapshot_field.get('width'), _('Field width')),
+            self._normalize_snapshot_float(snapshot_field.get('height'), _('Field height')),
+            self._normalize_snapshot_sequence(snapshot_field.get('sequence')),
+            snapshot_field.get('default_value') or False,
+            snapshot_field.get('validation_regex') or False,
+            min_length,
+            max_length,
+            role_model._normalize_role_name_key(
+                snapshot_field.get('role_name_normalized') or snapshot_field.get('role_name')
+            ),
+            tuple(
+                self._build_snapshot_option_fingerprint(option)
+                for option in snapshot_field.get('options', [])
+            ),
+        )
+
+    @api.model
+    def _find_snapshot_matches(self, template, snapshot_field):
+        template.ensure_one()
+        expected_fingerprint = self._build_snapshot_fingerprint(snapshot_field)
+        return template.field_ids.filtered(
+            lambda field: self._build_snapshot_fingerprint(field._build_snapshot_payload()) == expected_fingerprint
+        )
+
+    def _get_blocking_versioned_requests(self):
+        return self.env['open.sign.request'].sudo().search([
+            ('template_id', 'in', self.mapped('template_id').ids),
+            ('template_version_id', '!=', False),
+            ('status', 'in', list(REQUEST_FIELD_DELETE_BLOCKING_STATUSES)),
+        ])
+
+    def _is_referenced_by_request_snapshot(self, sign_request, template_field):
+        snapshot_fields = sign_request.template_version_id.field_snapshot_json or []
+        for snapshot_field in snapshot_fields:
+            if snapshot_field.get('template_field_id'):
+                if int(snapshot_field['template_field_id']) == template_field.id:
+                    return True
+                continue
+            matches = self._find_snapshot_matches(sign_request.template_id, snapshot_field)
+            if len(matches) == 1 and matches[0] == template_field:
+                return True
+        return False
+
     @api.model_create_multi
     def create(self, vals_list):
         default_vals = self.default_get(['label', 'page', 'x', 'y', 'width', 'height', 'sequence', 'min_length', 'max_length'])
@@ -156,7 +309,27 @@ class OpenSignTemplateField(models.Model):
                     min_length=vals.get('min_length', field.min_length),
                     max_length=vals.get('max_length', field.max_length),
                 )
+        if 'role_id' in vals:
+            blocking_requests = self._get_blocking_versioned_requests()
+            for template_field in self:
+                for sign_request in blocking_requests.filtered(lambda request: request.template_id == template_field.template_id):
+                    if self._is_referenced_by_request_snapshot(sign_request, template_field):
+                        raise ValidationError(_(
+                            "Cannot change the role for field %(label)s because it is referenced by active sign requests. Archive the template or publish a new version instead.",
+                            label=template_field.label,
+                        ))
         return super().write(vals)
+
+    def unlink(self):
+        blocking_requests = self._get_blocking_versioned_requests()
+        for template_field in self:
+            for sign_request in blocking_requests.filtered(lambda request: request.template_id == template_field.template_id):
+                if self._is_referenced_by_request_snapshot(sign_request, template_field):
+                    raise ValidationError(_(
+                        "Cannot delete field %(label)s because it is referenced by active sign requests. Archive the template or publish a new version instead.",
+                        label=template_field.label,
+                    ))
+        return super().unlink()
 
     @api.constrains('label')
     def _check_label_invariant(self):

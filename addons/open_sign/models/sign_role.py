@@ -78,6 +78,34 @@ class OpenSignRole(models.Model):
             raise ValidationError(_("Role sequence must be zero or greater."))
         return normalized_sequence
 
+    def _build_snapshot_payload(self):
+        self.ensure_one()
+        return {
+            'role_id': self.id,
+            'name': self.name,
+            'name_normalized': self.name_normalized,
+            'sequence': self.sequence,
+            'required': self.required,
+            'color': self.color,
+        }
+
+    @api.model
+    def _build_snapshot_fingerprint(self, snapshot_role):
+        return (
+            self._normalize_role_name_key(snapshot_role.get('name_normalized') or snapshot_role.get('name')),
+            self._sanitize_sequence(snapshot_role.get('sequence', 0)),
+            bool(snapshot_role.get('required', True)),
+            int(snapshot_role.get('color') or 0),
+        )
+
+    @api.model
+    def _find_snapshot_matches(self, template, snapshot_role):
+        template.ensure_one()
+        expected_fingerprint = self._build_snapshot_fingerprint(snapshot_role)
+        return template.role_ids.filtered(
+            lambda role: self._build_snapshot_fingerprint(role._build_snapshot_payload()) == expected_fingerprint
+        )
+
     @api.depends('name')
     def _compute_name_normalized(self):
         for role in self:

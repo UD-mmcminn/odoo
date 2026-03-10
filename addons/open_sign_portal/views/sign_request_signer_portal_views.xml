@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data>
+        <record id="view_open_sign_request_signer_list_portal_link" model="ir.ui.view">
+            <field name="name">open.sign.request.signer.view.list.portal.link</field>
+            <field name="model">open.sign.request.signer</field>
+            <field name="inherit_id" ref="open_sign.view_open_sign_request_signer_list"/>
+            <field name="arch" type="xml">
+                <xpath expr="//field[@name='sign_access_url']" position="after">
+                    <field
+                        name="portal_sign_url"
+                        string="Portal Link"
+                        widget="CopyClipboardURL"
+                        readonly="1"
+                        optional="show"
+                        groups="open_sign.group_open_sign_user,open_sign.group_open_sign_manager"
+                    />
+                </xpath>
+            </field>
+        </record>
+
+        <record id="view_open_sign_request_signer_form_portal_link" model="ir.ui.view">
+            <field name="name">open.sign.request.signer.view.form.portal.link</field>
+            <field name="model">open.sign.request.signer</field>
+            <field name="inherit_id" ref="open_sign.view_open_sign_request_signer_form"/>
+            <field name="arch" type="xml">
+                <xpath expr="//field[@name='sign_access_url']" position="after">
+                    <field
+                        name="portal_sign_url"
+                        string="Portal Link"
+                        widget="CopyClipboardURL"
+                        readonly="1"
+                        groups="open_sign.group_open_sign_user,open_sign.group_open_sign_manager"
+                    />
+                </xpath>
+            </field>
+        </record>
+    </data>
+</odoo>

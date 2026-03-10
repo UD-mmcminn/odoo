@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <template id="portal_my_sign" name="My Sign Documents">
+        <t t-call="portal.portal_layout">
+            <t t-set="breadcrumbs_searchbar" t-value="True"/>
+            <t t-call="portal.portal_searchbar">
+                <t t-set="title">Sign Documents</t>
+            </t>
+            <div class="alert alert-info" role="alert">
+                Portal signing list view is scaffolded. Tokenized signer access is introduced in T31.
+            </div>
+        </t>
+    </template>
+
+    <template id="portal_sign_page" name="Open Sign Portal Document">
+        <t t-call="portal.portal_layout">
+            <div
+                class="o_open_sign_session card border-0 shadow-sm"
+                t-att-data-signer-id="signer.id"
+                t-att-data-save-url="save_route or ''"
+                t-att-data-submit-url="submit_route or ''"
+                t-att-data-request-revision="request_revision"
+                t-att-data-access-token="access_token or ''"
+                t-att-data-consent-hash="consent_hash"
+            >
+                <div class="card-body">
+                    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+                        <div>
+                            <h3 class="mb-1">Sign Document</h3>
+                            <p class="text-muted mb-0" t-if="preview_mode">
+                                Previewing the signer experience without changing signer evidence.
+                            </p>
+                            <p class="text-muted mb-0" t-elif="waiting_mode">
+                                This signer session is waiting for its turn.
+                            </p>
+                            <p class="text-muted mb-0" t-elif="readonly_mode">
+                                This signer session is available for review only.
+                            </p>
+                            <p class="text-muted mb-0" t-else="">
+                                Complete your fields, save progress, then submit when ready.
+                            </p>
+                        </div>
+                        <a
+                            t-if="document_url"
+                            t-att-href="document_url"
+                            class="btn btn-outline-secondary"
+                            target="_blank"
+                        >View PDF</a>
+                    </div>
+
+                    <div class="alert alert-info" t-if="preview_mode">
+                        Preview Mode: this page is read-only and does not change signer activity state.
+                    </div>
+                    <div class="alert alert-info" t-elif="waiting_mode and waiting_message">
+                        <t t-esc="waiting_message"/>
+                    </div>
+                    <div class="alert alert-info" t-elif="readonly_message">
+                        <t t-esc="readonly_message"/>
+                    </div>
+                    <dl class="row mb-3">
+                        <dt class="col-sm-3">Request</dt>
+                        <dd class="col-sm-9" t-esc="sign_request.name"/>
+                        <dt class="col-sm-3">Signer</dt>
+                        <dd class="col-sm-9" t-esc="signer.email"/>
+                        <dt class="col-sm-3">Signer State</dt>
+                        <dd class="col-sm-9" t-esc="signer.state"/>
+                        <dt class="col-sm-3">Request Status</dt>
+                        <dd class="col-sm-9">
+                            <span class="o_open_sign_request_status" t-esc="sign_request.status"/>
+                        </dd>
+                    </dl>
+
+                    <div class="alert alert-success" t-if="request.params.get('submitted')">
+                        Your submission was recorded.
+                    </div>
+                    <div class="alert alert-danger" t-if="portal_error_message">
+                        <t t-esc="portal_error_message"/>
+                    </div>
+                    <div class="alert alert-warning" t-if="submit_blocked_reason">
+                        <t t-esc="submit_blocked_reason"/>
+                    </div>
+                    <div class="alert alert-danger d-none o_open_sign_error"/>
+                    <div class="alert alert-success d-none o_open_sign_success"/>
+
+                    <t t-if="not portal_error_message">
+                        <h5 class="mb-2">Your Fields</h5>
+                        <div class="o_open_sign_fields mb-3">
+                            <t t-if="portal_fields">
+                                <t t-foreach="portal_fields" t-as="field">
+                                    <div
+                                        t-attf-class="mb-3 #{'o_open_sign_field' if field['supported_on_portal'] else ''}"
+                                        t-att-data-field-id="field['id'] if field['supported_on_portal'] else None"
+                                        t-att-data-field-type="field['type'] if field['supported_on_portal'] else None"
+                                    >
+                                        <label class="form-label">
+                                            <span t-esc="field['label']"/>
+                                            <span t-if="field['required']" class="text-danger"> *</span>
+                                        </label>
+                                        <t t-if="field['supported_on_portal'] and field['type'] in ['text', 'name', 'company', 'initials']">
+                                            <input type="text" class="form-control o_open_sign_input" t-att-value="field['value'] or ''" t-att-disabled="'disabled' if readonly_mode else None"/>
+                                        </t>
+                                        <t t-elif="field['supported_on_portal'] and field['type'] == 'email'">
+                                            <input type="email" class="form-control o_open_sign_input" t-att-value="field['value'] or ''" t-att-disabled="'disabled' if readonly_mode else None"/>
+                                        </t>
+                                        <t t-elif="field['supported_on_portal'] and field['type'] == 'phone'">
+                                            <input type="tel" class="form-control o_open_sign_input" t-att-value="field['value'] or ''" t-att-disabled="'disabled' if readonly_mode else None"/>
+                                        </t>
+                                        <t t-elif="field['supported_on_portal'] and field['type'] == 'multiline'">
+                                            <textarea class="form-control o_open_sign_input" rows="3" t-att-disabled="'disabled' if readonly_mode else None" t-esc="field['value'] or ''"/>
+                                        </t>
+                                        <t t-elif="field['supported_on_portal'] and field['type'] == 'selection'">
+                                            <select class="form-select o_open_sign_input" t-att-disabled="'disabled' if readonly_mode else None">
+                                                <option value="">Select...</option>
+                                                <t t-foreach="field['options']" t-as="option">
+                                                    <option
+                                                        t-att-value="option['value']"
+                                                        t-att-selected="'selected' if field['value'] == option['value'] else None"
+                                                        t-esc="option['label']"
+                                                    />
+                                                </t>
+                                            </select>
+                                        </t>
+                                        <t t-elif="field['supported_on_portal'] and field['type'] == 'radio'">
+                                            <div class="d-flex flex-column gap-1">
+                                                <t t-foreach="field['options']" t-as="option">
+                                                    <div class="form-check">
+                                                        <input
+                                                            class="form-check-input o_open_sign_radio"
+                                                            type="radio"
+                                                            t-att-name="'open_sign_radio_%s' % field['id']"
+                                                            t-att-value="option['value']"
+                                                            t-att-checked="'checked' if field['value'] == option['value'] else None"
+                                                            t-att-disabled="'disabled' if readonly_mode else None"
+                                                        />
+                                                        <label class="form-check-label" t-esc="option['label']"/>
+                                                    </div>
+                                                </t>
+                                            </div>
+                                        </t>
+                                        <t t-elif="field['supported_on_portal'] and field['type'] == 'checkbox'">
+                                            <div class="form-check">
+                                                <input class="form-check-input o_open_sign_checkbox" type="checkbox" t-att-checked="'checked' if field['value'] else None" t-att-disabled="'disabled' if readonly_mode else None"/>
+                                                <label class="form-check-label">
+                                                    Checked
+                                                </label>
+                                            </div>
+                                        </t>
+                                        <t t-elif="field['supported_on_portal'] and field['type'] == 'date'">
+                                            <input type="date" class="form-control o_open_sign_input" t-att-value="field['value'] or ''" t-att-disabled="'disabled' if readonly_mode else None"/>
+                                        </t>
+                                        <t t-elif="field['supported_on_portal'] and field['type'] == 'strikethrough'">
+                                            <div class="form-check">
+                                                <input class="form-check-input o_open_sign_checkbox" type="checkbox" t-att-checked="'checked' if field['value'] else None" t-att-disabled="'disabled' if readonly_mode else None"/>
+                                                <label class="form-check-label">
+                                                    Apply strikethrough
+                                                </label>
+                                            </div>
+                                        </t>
+                                        <t t-else="">
+                                            <div class="text-muted">
+                                                This field type is not supported on the portal yet.
+                                            </div>
+                                        </t>
+                                    </div>
+                                </t>
+                            </t>
+                            <t t-else="">
+                                <div class="text-muted">No fields are assigned to this signer.</div>
+                            </t>
+                        </div>
+
+                        <div class="border rounded p-3 mb-3" t-if="not readonly_mode">
+                            <div class="form-check mb-2">
+                                <input id="open_sign_consent" class="form-check-input o_open_sign_consent" type="checkbox"/>
+                                <label class="form-check-label" for="open_sign_consent">
+                                    I consent to electronic signing.
+                                </label>
+                            </div>
+                            <p class="mb-0 text-muted" t-esc="consent_text"/>
+                        </div>
+
+                        <div class="d-flex gap-2" t-if="not readonly_mode">
+                            <button type="button" class="btn btn-outline-primary o_open_sign_save">Save Draft</button>
+                            <button type="button" class="btn btn-primary o_open_sign_submit" t-att-disabled="'disabled' if submit_blocked_reason else None">Submit</button>
+                        </div>
+                        <div class="mt-3" t-if="waiting_mode and refresh_url">
+                            <a t-att-href="refresh_url" class="btn btn-outline-primary">Refresh status</a>
+                        </div>
+                    </t>
+                </div>
+            </div>
+        </t>
+    </template>
+</odoo>

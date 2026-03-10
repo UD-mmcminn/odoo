@@ -318,6 +318,18 @@ class OpenSignRequest(models.Model):
         first_sequence = min(candidates.mapped('sequence'))
         return candidates.filtered(lambda signer: signer.sequence == first_sequence).sorted(lambda signer: (signer.sequence, signer.id))
 
+    def _is_signer_actionable(self, signer):
+        self.ensure_one()
+        if not signer or signer.request_id != self:
+            raise ValidationError(_("Signer does not belong to this request."))
+        return signer in self._get_actionable_signers()
+
+    def _is_signer_waiting(self, signer):
+        self.ensure_one()
+        if not signer or signer.request_id != self:
+            raise ValidationError(_("Signer does not belong to this request."))
+        return signer.state in {'pending', 'opened'} and not self._is_signer_actionable(signer)
+
     @api.model
     def _get_reminder_interval(self):
         config = self.env['ir.config_parameter'].sudo()

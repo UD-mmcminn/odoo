@@ -69,6 +69,10 @@ class OpenSignRequestValue(models.Model):
         return self.env.su
 
     @api.model
+    def _can_trust_prevalidated_portal_values(self):
+        return self.env.su and self.env.context.get('open_sign_trusted_portal_value_payload')
+
+    @api.model
     def _guard_is_valid_on_create(self, vals):
         if self._can_manage_validation_state():
             return
@@ -117,6 +121,8 @@ class OpenSignRequestValue(models.Model):
 
     @api.model
     def _normalize_payload(self, vals, record=None):
+        if self._can_trust_prevalidated_portal_values():
+            return vals
         template_field = None
         template_field_id = vals.get('template_field_id')
         if template_field_id:
