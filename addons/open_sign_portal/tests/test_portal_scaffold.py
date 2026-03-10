@@ -329,6 +329,16 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
             payload['access_token'] = access_token
         return payload
 
+    def _build_decline_payload(self, *, revision, reason, access_token=False):
+        payload = {
+            'idempotency_key': str(uuid4()),
+            'request_revision': revision,
+            'reason': reason,
+        }
+        if access_token:
+            payload['access_token'] = access_token
+        return payload
+
     def _extract_consent_hash_and_revision(self, html):
         hash_match = CONSENT_HASH_RE.search(html or '')
         revision_match = REQUEST_REVISION_RE.search(html or '')
@@ -478,6 +488,7 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
         self.assertNotIn('o_open_sign_save', response.text)
         self.assertNotIn('o_open_sign_submit', response.text)
         self.assertNotIn('open_sign_consent', response.text)
+        self.assertIn('Decline to Sign', response.text)
         self.assertIn('Refresh status', response.text)
         self.assertIn('View PDF', response.text)
         self.assertRegex(
@@ -2259,6 +2270,506 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
         )
         self.assertEqual(response.status_code, 303)
 
+    def test_jsonrpc_decline_accepts_valid_public_token(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Decline Public Token',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        sign_request = signer.request_id
+
+        self.authenticate(None, None)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/decline",
+            self._build_decline_payload(
+                revision=0,
+                reason='  I cannot approve these terms.  ',
+                access_token=bundle['token'],
+            ),
+        )
+        self.assertTrue(response['ok'])
+        self.assertTrue(response['force_refresh'])
+        self.assertIn('declined=1', response['redirect_url'])
+
+        signer.invalidate_recordset(['state', 'declined_reason', 'ip_last', 'last_opened_at'])
+        sign_request.invalidate_recordset(['status', 'lock_version'])
+        self.assertEqual(signer.state, 'declined')
+        self.assertEqual(signer.declined_reason, 'I cannot approve these terms.')
+        self.assertTrue(signer.ip_last)
+        self.assertFalse(signer.last_opened_at)
+        self.assertEqual(sign_request.status, 'declined')
+        self.assertEqual(sign_request.lock_version, response['request_revision'])
+
+        decline_audit = self.env['open.sign.audit.log'].search([
+            ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer.id),
+            ('event_type', '=', 'signer_declined'),
+        ], limit=1)
+        self.assertTrue(decline_audit)
+        self.assertEqual(decline_audit.metadata_json['reason'], 'I cannot approve these terms.')
+        self.assertEqual(decline_audit.metadata_json['request_status_before'], 'sent')
+        self.assertEqual(decline_audit.metadata_json['signer_state_before'], 'pending')
+
+    def test_jsonrpc_decline_accepts_internal_partner_binding(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Decline Internal Binding',
+            owner=self.open_sign_user,
+            signer_partner=self.open_sign_user.partner_id,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        sign_request = signer.request_id
+
+        self.authenticate(self.open_sign_user.login, self.open_sign_user.login)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/decline",
+            self._build_decline_payload(
+                revision=0,
+                reason='Internal decline reason',
+            ),
+        )
+        self.assertTrue(response['ok'])
+        self.assertEqual(response['redirect_url'], f'/my/sign/{signer.id}?declined=1')
+
+        signer.invalidate_recordset(['state', 'declined_reason'])
+        sign_request.invalidate_recordset(['status', 'lock_version'])
+        self.assertEqual(signer.state, 'declined')
+        self.assertEqual(signer.declined_reason, 'Internal decline reason')
+        self.assertEqual(sign_request.status, 'declined')
+
+    def test_jsonrpc_decline_denies_public_without_token(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Decline Public Deny',
+            owner=self.open_sign_user,
+        )
+        self.authenticate(None, None)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{bundle['signer'].id}/decline",
+            self._build_decline_payload(
+                revision=0,
+                reason='Public without token',
+            ),
+        )
+        self.assertFalse(response['ok'])
+        self.assertEqual(response['error_code'], 'invalid_token')
+
+    def test_jsonrpc_decline_rejects_internal_without_partner_binding(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Decline Internal Deny',
+            owner=self.open_sign_user,
+        )
+        self.authenticate(self.open_sign_outsider.login, self.open_sign_outsider.login)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{bundle['signer'].id}/decline",
+            self._build_decline_payload(
+                revision=0,
+                reason='Outsider decline',
+            ),
+        )
+        self.assertFalse(response['ok'])
+        self.assertEqual(response['error_code'], 'invalid_token')
+
+    def test_jsonrpc_decline_requires_reason(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Decline Reason Required',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        sign_request = signer.request_id
+
+        self.authenticate(None, None)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/decline",
+            {
+                'idempotency_key': str(uuid4()),
+                'request_revision': 0,
+                'access_token': bundle['token'],
+            },
+        )
+        self.assertFalse(response['ok'])
+        self.assertEqual(response['error_code'], 'validation_error')
+        self.assertEqual(response['message'], 'Decline reason is required.')
+
+        signer.invalidate_recordset(['state', 'declined_reason'])
+        sign_request.invalidate_recordset(['status', 'lock_version'])
+        self.assertEqual(signer.state, 'pending')
+        self.assertFalse(signer.declined_reason)
+        self.assertEqual(sign_request.status, 'sent')
+        self.assertEqual(sign_request.lock_version, 0)
+        self.assertFalse(self.env['open.sign.audit.log'].search_count([
+            ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer.id),
+            ('event_type', '=', 'signer_declined'),
+        ]))
+
+    def test_jsonrpc_decline_rejects_blank_reason(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Decline Blank Reason',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        sign_request = signer.request_id
+
+        self.authenticate(None, None)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/decline",
+            self._build_decline_payload(
+                revision=0,
+                reason=' \r\n\t ',
+                access_token=bundle['token'],
+            ),
+        )
+        self.assertFalse(response['ok'])
+        self.assertEqual(response['error_code'], 'validation_error')
+        self.assertEqual(response['message'], 'Decline reason is required.')
+
+        signer.invalidate_recordset(['state', 'declined_reason'])
+        sign_request.invalidate_recordset(['status', 'lock_version'])
+        self.assertEqual(signer.state, 'pending')
+        self.assertFalse(signer.declined_reason)
+        self.assertEqual(sign_request.status, 'sent')
+        self.assertEqual(sign_request.lock_version, 0)
+
+    def test_jsonrpc_decline_rejects_reason_too_long(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Decline Long Reason',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        sign_request = signer.request_id
+
+        self.authenticate(None, None)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/decline",
+            self._build_decline_payload(
+                revision=0,
+                reason='a' * 4001,
+                access_token=bundle['token'],
+            ),
+        )
+        self.assertFalse(response['ok'])
+        self.assertEqual(response['error_code'], 'validation_error')
+        self.assertEqual(response['message'], 'Decline reason cannot exceed 4000 characters.')
+
+        signer.invalidate_recordset(['state', 'declined_reason'])
+        sign_request.invalidate_recordset(['status', 'lock_version'])
+        self.assertEqual(signer.state, 'pending')
+        self.assertFalse(signer.declined_reason)
+        self.assertEqual(sign_request.status, 'sent')
+        self.assertEqual(sign_request.lock_version, 0)
+
+    def test_jsonrpc_decline_stale_revision(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Decline Stale Revision',
+            owner=self.open_sign_user,
+        )
+        self.authenticate(None, None)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{bundle['signer'].id}/decline",
+            self._build_decline_payload(
+                revision=99,
+                reason='Stale decline',
+                access_token=bundle['token'],
+            ),
+        )
+        self.assertFalse(response['ok'])
+        self.assertEqual(response['error_code'], 'stale_revision')
+
+    def test_jsonrpc_decline_lock_conflict_returns_request_locked(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Decline Lock Conflict',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        sign_request = signer.request_id
+
+        self.authenticate(None, None)
+        with patch(
+            'odoo.addons.open_sign_portal.controllers.portal_sign.OpenSignPortalController._lock_request_for_update',
+            side_effect=LockNotAvailable(),
+        ):
+            response = self.make_jsonrpc_request(
+                f"/my/sign/{signer.id}/decline",
+                self._build_decline_payload(
+                    revision=0,
+                    reason='Lock conflict',
+                    access_token=bundle['token'],
+                ),
+            )
+        self.assertFalse(response['ok'])
+        self.assertEqual(response['error_code'], 'request_locked')
+
+        signer.invalidate_recordset(['state', 'declined_reason'])
+        sign_request.invalidate_recordset(['status', 'lock_version'])
+        self.assertEqual(signer.state, 'pending')
+        self.assertFalse(signer.declined_reason)
+        self.assertEqual(sign_request.status, 'sent')
+        self.assertEqual(sign_request.lock_version, 0)
+
+    def test_jsonrpc_decline_rejected_after_signer_submitted(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Decline After Submit',
+            owner=self.open_sign_user,
+            signer_partner=self.open_sign_user.partner_id,
+        )
+        _text_field, _consent_hash, submit_response = self._submit_text_signer_successfully(bundle)
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        sign_request = signer.request_id
+        signer_declined_count = self.env['open.sign.audit.log'].search_count([
+            ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer.id),
+            ('event_type', '=', 'signer_declined'),
+        ])
+
+        self.authenticate(None, None)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/decline",
+            self._build_decline_payload(
+                revision=submit_response['request_revision'],
+                reason='Too late',
+                access_token=bundle['token'],
+            ),
+        )
+        self.assertFalse(response['ok'])
+        self.assertEqual(response['error_code'], 'validation_error')
+        self.assertEqual(response['message'], 'This signing session is read-only because it has already been submitted.')
+
+        signer.invalidate_recordset(['state', 'declined_reason'])
+        sign_request.invalidate_recordset(['status', 'lock_version'])
+        self.assertEqual(signer.state, 'signed')
+        self.assertFalse(signer.declined_reason)
+        self.assertEqual(sign_request.status, 'partially_signed')
+        self.assertEqual(sign_request.lock_version, submit_response['request_revision'])
+        self.assertEqual(self.env['open.sign.audit.log'].search_count([
+            ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer.id),
+            ('event_type', '=', 'signer_declined'),
+        ]), signer_declined_count)
+
+    def test_jsonrpc_decline_rejected_on_terminal_request_with_valid_token(self):
+        expected_messages = {
+            'completed': 'This signing request has already been completed and is now read-only.',
+            'declined': 'This signing request has already been declined and is now read-only.',
+            'expired': 'This signing request has expired and is now read-only.',
+        }
+        for status, expected_message in expected_messages.items():
+            with self.subTest(status=status):
+                bundle = self._create_portal_session(
+                    self.env,
+                    name=f'Portal Decline Terminal {status}',
+                    owner=self.open_sign_user,
+                    signer_partner=self.open_sign_user.partner_id if status == 'completed' else False,
+                )
+                sign_request = self._transition_bundle_request_to_status(bundle, status)
+                signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+                signer_declined_count = self.env['open.sign.audit.log'].search_count([
+                    ('request_id', '=', sign_request.id),
+                    ('signer_id', '=', signer.id),
+                    ('event_type', '=', 'signer_declined'),
+                ])
+
+                self.authenticate(None, None)
+                response = self.make_jsonrpc_request(
+                    f"/my/sign/{signer.id}/decline",
+                    self._build_decline_payload(
+                        revision=sign_request.lock_version,
+                        reason='Terminal decline attempt',
+                        access_token=bundle['token'],
+                    ),
+                )
+                self.assertFalse(response['ok'])
+                self.assertEqual(response['error_code'], 'validation_error')
+                self.assertEqual(response['message'], expected_message)
+
+                signer.invalidate_recordset(['state', 'declined_reason'])
+                sign_request.invalidate_recordset(['status', 'lock_version'])
+                self.assertEqual(sign_request.status, status)
+                self.assertEqual(self.env['open.sign.audit.log'].search_count([
+                    ('request_id', '=', sign_request.id),
+                    ('signer_id', '=', signer.id),
+                    ('event_type', '=', 'signer_declined'),
+                ]), signer_declined_count)
+
+    def test_ordered_waiting_signer_decline_is_allowed(self):
+        bundle = self._create_ordered_two_signer_session(
+            self.env,
+            name='Portal Waiting Decline Allowed',
+            owner=self.open_sign_user,
+        )
+        sign_request = self.env['open.sign.request'].browse(bundle['request'].id)
+        signer_second = self.env['open.sign.request.signer'].browse(bundle['signer_second'].id)
+        signer_first = self.env['open.sign.request.signer'].browse(bundle['signer_first'].id)
+
+        self.authenticate(None, None)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{signer_second.id}/decline",
+            self._build_decline_payload(
+                revision=0,
+                reason='Waiting signer decline',
+                access_token=bundle['token_second'],
+            ),
+        )
+        self.assertTrue(response['ok'])
+
+        signer_second.invalidate_recordset(['state', 'declined_reason', 'last_opened_at'])
+        signer_first.invalidate_recordset(['state'])
+        sign_request.invalidate_recordset(['status', 'lock_version'])
+        self.assertEqual(signer_second.state, 'declined')
+        self.assertEqual(signer_second.declined_reason, 'Waiting signer decline')
+        self.assertFalse(signer_second.last_opened_at)
+        self.assertEqual(signer_first.state, 'pending')
+        self.assertEqual(sign_request.status, 'declined')
+        self.assertFalse(self.env['open.sign.audit.log'].search_count([
+            ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer_second.id),
+            ('event_type', '=', 'signer_opened'),
+        ]))
+        self.assertTrue(self.env['open.sign.audit.log'].search_count([
+            ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer_second.id),
+            ('event_type', '=', 'signer_declined'),
+        ]))
+
+    def test_ordered_waiting_signer_decline_keeps_waiting_page_non_opening(self):
+        bundle = self._create_ordered_two_signer_session(
+            self.env,
+            name='Portal Waiting Decline Non Opening',
+            owner=self.open_sign_user,
+        )
+        signer_second = self.env['open.sign.request.signer'].browse(bundle['signer_second'].id)
+        sign_request = signer_second.request_id
+
+        self.authenticate(None, None)
+        waiting_response = self.url_open(
+            f"/my/sign/{signer_second.id}?access_token={bundle['token_second']}",
+            allow_redirects=False,
+        )
+        self.assertEqual(waiting_response.status_code, 200)
+
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{signer_second.id}/decline",
+            self._build_decline_payload(
+                revision=0,
+                reason='Waiting page decline',
+                access_token=bundle['token_second'],
+            ),
+        )
+        self.assertTrue(response['ok'])
+
+        signer_second.invalidate_recordset(['state', 'declined_reason', 'last_opened_at', 'ip_last'])
+        sign_request.invalidate_recordset(['status'])
+        self.assertEqual(signer_second.state, 'declined')
+        self.assertEqual(signer_second.declined_reason, 'Waiting page decline')
+        self.assertFalse(signer_second.last_opened_at)
+        self.assertTrue(signer_second.ip_last)
+        self.assertEqual(sign_request.status, 'declined')
+        self.assertFalse(self.env['open.sign.audit.log'].search_count([
+            ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer_second.id),
+            ('event_type', '=', 'signer_opened'),
+        ]))
+        self.assertTrue(self.env['open.sign.audit.log'].search_count([
+            ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer_second.id),
+            ('event_type', '=', 'signer_declined'),
+        ]))
+
+    def test_parallel_signer_decline_is_allowed(self):
+        bundle = self._create_ordered_two_signer_session(
+            self.env,
+            name='Portal Parallel Decline',
+            owner=self.open_sign_user,
+            ordered_signing=False,
+        )
+        signer_second = self.env['open.sign.request.signer'].browse(bundle['signer_second'].id)
+        sign_request = signer_second.request_id
+
+        self.authenticate(None, None)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{signer_second.id}/decline",
+            self._build_decline_payload(
+                revision=0,
+                reason='Parallel signer decline',
+                access_token=bundle['token_second'],
+            ),
+        )
+        self.assertTrue(response['ok'])
+
+        signer_second.invalidate_recordset(['state', 'declined_reason'])
+        sign_request.invalidate_recordset(['status'])
+        self.assertEqual(signer_second.state, 'declined')
+        self.assertEqual(signer_second.declined_reason, 'Parallel signer decline')
+        self.assertEqual(sign_request.status, 'declined')
+
+    def test_declined_signer_page_shows_decline_success_and_reason(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Decline Review Page',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+
+        self.authenticate(None, None)
+        decline_response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/decline",
+            self._build_decline_payload(
+                revision=0,
+                reason='  First line\r\nSecond line \r ',
+                access_token=bundle['token'],
+            ),
+        )
+        self.assertTrue(decline_response['ok'])
+
+        page_response = self.url_open(decline_response['redirect_url'], allow_redirects=False)
+        self.assertEqual(page_response.status_code, 200)
+        self.assertIn('Your decline was recorded.', page_response.text)
+        self.assertIn('This signing request has already been declined and is now read-only.', page_response.text)
+        self.assertIn('Decline Reason', page_response.text)
+        self.assertIn('First line', page_response.text)
+        self.assertIn('Second line', page_response.text)
+        self.assertNotIn('Decline to Sign', page_response.text)
+
+        signer.invalidate_recordset(['declined_reason'])
+        self.assertEqual(signer.declined_reason, 'First line\nSecond line')
+
+    def test_other_signer_page_after_request_declined_is_readonly(self):
+        bundle = self._create_ordered_two_signer_session(
+            self.env,
+            name='Portal Other Signer After Decline',
+            owner=self.open_sign_user,
+        )
+        self.authenticate(None, None)
+        decline_response = self.make_jsonrpc_request(
+            f"/my/sign/{bundle['signer_first'].id}/decline",
+            self._build_decline_payload(
+                revision=0,
+                reason='Declined by first signer',
+                access_token=bundle['token_first'],
+            ),
+        )
+        self.assertTrue(decline_response['ok'])
+
+        response = self.url_open(
+            f"/my/sign/{bundle['signer_second'].id}?access_token={bundle['token_second']}",
+            allow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('This signing request has already been declined and is now read-only.', response.text)
+        self.assertNotIn('o_open_sign_save', response.text)
+        self.assertNotIn('o_open_sign_submit', response.text)
+        self.assertNotIn('Decline to Sign', response.text)
+        self.assertNotIn('Decline Reason', response.text)
+        self.assertNotIn('Declined by first signer', response.text)
+
     def test_jsonrpc_scaffold_endpoints_allow_valid_public_token(self):
         bundle = self._create_portal_session(
             self.env,
@@ -2267,7 +2778,6 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
         )
         self.authenticate(None, None)
         expected = {
-            'decline': 'T34',
             'otp/request': 'T37',
             'otp/verify': 'T37',
         }
@@ -2287,7 +2797,7 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
             'expired': 'This signing request has expired and is now read-only.',
         }
         for status, expected_message in expected_messages.items():
-            for endpoint in ('decline', 'otp/request', 'otp/verify'):
+            for endpoint in ('otp/request', 'otp/verify'):
                 with self.subTest(status=status, endpoint=endpoint):
                     bundle = self._create_portal_session(
                         self.env,

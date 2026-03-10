@@ -11,11 +11,13 @@ export class OpenSignPortalSession extends Interaction {
     dynamicContent = {
         ".o_open_sign_save": { "t-on-click.prevent": this.locked(this.onClickSave, true) },
         ".o_open_sign_submit": { "t-on-click.prevent": this.locked(this.onClickSubmit, true) },
+        ".o_open_sign_decline_confirm": { "t-on-click.prevent": this.locked(this.onClickDecline, true) },
     };
 
     setup() {
         this.saveUrl = this.el.dataset.saveUrl;
         this.submitUrl = this.el.dataset.submitUrl;
+        this.declineUrl = this.el.dataset.declineUrl;
         this.accessToken = this.el.dataset.accessToken || false;
         this.requestRevision = Number.parseInt(this.el.dataset.requestRevision || "0", 10) || 0;
         this.consentHash = this.el.dataset.consentHash || "";
@@ -24,6 +26,8 @@ export class OpenSignPortalSession extends Interaction {
         this.successNode = this.el.querySelector(".o_open_sign_success");
         this.statusNode = this.el.querySelector(".o_open_sign_request_status");
         this.consentCheckbox = this.el.querySelector(".o_open_sign_consent");
+        this.declineReasonInput = this.el.parentElement?.querySelector(".o_open_sign_decline_reason")
+            || this.el.querySelector(".o_open_sign_decline_reason");
     }
 
     _newIdempotencyKey() {
@@ -83,6 +87,18 @@ export class OpenSignPortalSession extends Interaction {
             values: this._collectValuesPayload(),
             idempotency_key: this._newIdempotencyKey(),
             request_revision: this.requestRevision,
+        };
+        if (this.accessToken) {
+            payload.access_token = this.accessToken;
+        }
+        return payload;
+    }
+
+    _buildDeclinePayload() {
+        const payload = {
+            idempotency_key: this._newIdempotencyKey(),
+            request_revision: this.requestRevision,
+            reason: this.declineReasonInput?.value || "",
         };
         if (this.accessToken) {
             payload.access_token = this.accessToken;
@@ -156,6 +172,29 @@ export class OpenSignPortalSession extends Interaction {
             return;
         }
         this._showSuccess("Submission completed.");
+    }
+
+    async onClickDecline() {
+        this._resetAlerts();
+        if (!this.declineUrl) {
+            this._showError("Decline is not available.");
+            return;
+        }
+        const response = await rpc(this.declineUrl, this._buildDeclinePayload());
+        if (!response?.ok) {
+            this._showError(response?.message);
+            return;
+        }
+        this._updateRevisionAndStatus(response);
+        if (response.force_refresh && response.redirect_url) {
+            redirect(response.redirect_url);
+            return;
+        }
+        if (response.force_refresh) {
+            window.location.reload();
+            return;
+        }
+        this._showSuccess("Decline recorded.");
     }
 }
 

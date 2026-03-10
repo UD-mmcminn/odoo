@@ -642,13 +642,12 @@ Use this before marking any task complete (especially model/state/security work)
    - `./odoo-bin -d <db> -i open_sign_portal --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign_portal --stop-after-init`
    - `scripts/review_gate_open_sign.sh --skip-web -d <db>`
-2. If tests pass, continue Phase 3 with `T34` decline flow and reason capture on top of the now-closed `T32`/`T33` portal session baseline.
+2. If tests pass, continue Phase 3 with `T35` reminder/invitation/completion notification delivery and the deferred pending-signer contact-correction/resend flow on top of the now-closed `T32`/`T33`/`T34` portal baseline.
 3. Re-run recurring hardening re-audit (`T610`) after each major phase slice and after every 3 completed implementation tasks.
 
 ## Next Tasks (Planned Order)
 
-1. `T34` Implement decline flow and reason capture.
-2. `T35` Add reminder/invitation/completion notifications, canonical portal token URL generation, and the controlled pending-signer contact-correction/resend flow deferred from `T33`.
+1. `T35` Add reminder/invitation/completion notifications, canonical portal token URL generation, and the controlled pending-signer contact-correction/resend flow deferred from `T33`.
 
 ## Notes For Next Chat
 
@@ -671,6 +670,13 @@ Use this before marking any task complete (especially model/state/security work)
   - same-sequence signers remain actionable together and parallel requests explicitly allow all mutable signers to open/save/submit
   - signer contract fields (`request_id`, `partner_id`, `email`, `role_id`, `sequence`) are frozen for non-superusers from `versioned` onward so ordered-signing no longer depends on mutable active signer rows
   - portal ordering is re-evaluated under request lock during `save` and `submit`, so `stale_revision` wins over `signing_order_blocked`
+- `T34` is now closed. Additional portal decline guarantees now include:
+  - authorized signers can decline through the real signer session with a required normalized reason via `POST /my/sign/<id>/decline`
+  - sequential out-of-turn signers may decline from the waiting page even though `save` and `submit` remain order-blocked
+  - successful decline sets only the acting signer to `declined`, stores `declined_reason`, updates `ip_last`, and transitions the request to `declined` without mass-overwriting other signer states
+  - each successful decline appends exactly one `signer_declined` audit event with reason and pre-transition request/signer state metadata
+  - waiting-page decline remains non-opening evidence: it does not stamp `signer_opened` or `last_opened_at`
+  - post-decline signer review uses the existing readonly terminal-review contract, shows a success flash, and exposes the decliner's own reason block without leaking it to other signers
 - `T32`/`T33` deferred items remain deferred exactly as planned:
   - `T35`: reminder/invitation/completion link canonicalization
   - `T316`/`T317`: durable idempotency storage and replay/race semantics

@@ -19,6 +19,7 @@
                 t-att-data-signer-id="signer.id"
                 t-att-data-save-url="save_route or ''"
                 t-att-data-submit-url="submit_route or ''"
+                t-att-data-decline-url="decline_route or ''"
                 t-att-data-request-revision="request_revision"
                 t-att-data-access-token="access_token or ''"
                 t-att-data-consent-hash="consent_hash"
@@ -72,6 +73,9 @@
 
                     <div class="alert alert-success" t-if="request.params.get('submitted')">
                         Your submission was recorded.
+                    </div>
+                    <div class="alert alert-success" t-if="request.params.get('declined')">
+                        Your decline was recorded.
                     </div>
                     <div class="alert alert-danger" t-if="portal_error_message">
                         <t t-esc="portal_error_message"/>
@@ -169,6 +173,11 @@
                             </t>
                         </div>
 
+                        <div class="border rounded p-3 mb-3" t-if="declined_reason_display">
+                            <h5 class="mb-2">Decline Reason</h5>
+                            <pre class="mb-0 text-wrap" t-esc="declined_reason_display"/>
+                        </div>
+
                         <div class="border rounded p-3 mb-3" t-if="not readonly_mode">
                             <div class="form-check mb-2">
                                 <input id="open_sign_consent" class="form-check-input o_open_sign_consent" type="checkbox"/>
@@ -183,10 +192,49 @@
                             <button type="button" class="btn btn-outline-primary o_open_sign_save">Save Draft</button>
                             <button type="button" class="btn btn-primary o_open_sign_submit" t-att-disabled="'disabled' if submit_blocked_reason else None">Submit</button>
                         </div>
-                        <div class="mt-3" t-if="waiting_mode and refresh_url">
-                            <a t-att-href="refresh_url" class="btn btn-outline-primary">Refresh status</a>
+                        <div class="d-flex gap-2 flex-wrap mt-3" t-if="decline_available or (waiting_mode and refresh_url)">
+                            <button
+                                t-if="decline_available"
+                                type="button"
+                                class="btn btn-outline-danger"
+                                data-bs-toggle="modal"
+                                t-attf-data-bs-target="#o_open_sign_decline_modal_#{signer.id}"
+                            >Decline to Sign</button>
+                            <a t-if="waiting_mode and refresh_url" t-att-href="refresh_url" class="btn btn-outline-primary">Refresh status</a>
                         </div>
                     </t>
+                    <div
+                        t-if="decline_available"
+                        class="modal fade"
+                        t-attf-id="o_open_sign_decline_modal_#{signer.id}"
+                        tabindex="-1"
+                        aria-hidden="true"
+                    >
+                        <div class="modal-dialog">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 class="modal-title">Decline This Signing Request</h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <p class="mb-3">Tell the sender why you are declining this request.</p>
+                                    <label class="form-label" t-attf-for="o_open_sign_decline_reason_#{signer.id}">
+                                        Decline reason
+                                    </label>
+                                    <textarea
+                                        t-attf-id="o_open_sign_decline_reason_#{signer.id}"
+                                        class="form-control o_open_sign_decline_reason"
+                                        rows="4"
+                                        required="required"
+                                    />
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                                    <button type="button" class="btn btn-danger o_open_sign_decline_confirm">Decline</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </t>

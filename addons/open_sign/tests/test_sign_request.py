@@ -418,6 +418,59 @@ class TestOpenSignRequest(TransactionCase):
         self.assertTrue(expired_request._is_signer_actionable(expired_signer_second))
         self.assertFalse(expired_request._is_signer_waiting(expired_signer_second))
 
+    def test_request_can_transition_to_declined_from_active_portal_states(self):
+        template = self._create_template('Decline Active Portal States')
+        statuses = ('sent', 'opened', 'in_progress', 'partially_signed')
+
+        for status in statuses:
+            with self.subTest(status=status):
+                request = self._create_request(template, name=f'Decline {status}')
+                role = self._create_role(template, name=f'Decline {status} Signer', sequence=10)
+                self._create_signer(request, role, email=f'decline.{status}@example.com')
+                request.action_version()
+                request.action_send()
+                if status in {'opened', 'in_progress', 'partially_signed'}:
+                    request._transition_to('opened', {'last_event_at': fields.Datetime.now()})
+                if status in {'in_progress', 'partially_signed'}:
+                    request._transition_to('in_progress', {'last_event_at': fields.Datetime.now()})
+                if status == 'partially_signed':
+                    request._transition_to('partially_signed', {'last_event_at': fields.Datetime.now()})
+
+                request._transition_to('declined', {'last_event_at': fields.Datetime.now()})
+                self.assertEqual(request.status, 'declined')
+
+    def test_declining_signer_preserves_other_signer_states(self):
+        template = self._create_template('Decline Preserves Other Signers')
+        request = self._create_request(template, name='Decline Preserve Request')
+        role_signed = self._create_role(template, name='Signed Signer', sequence=10)
+        role_declining = self._create_role(template, name='Declining Signer', sequence=20)
+        role_pending = self._create_role(template, name='Pending Signer', sequence=30)
+
+        signer_signed = self._create_signer(request, role_signed, email='signed.preserve@example.com')
+        signer_declining = self._create_signer(request, role_declining, email='declining.preserve@example.com')
+        signer_pending = self._create_signer(request, role_pending, email='pending.preserve@example.com')
+
+        request.action_version()
+        request.action_send()
+        request._transition_to('opened', {'last_event_at': fields.Datetime.now()})
+        request._transition_to('in_progress', {'last_event_at': fields.Datetime.now()})
+
+        signer_signed.write({'state': 'signed', 'signed_at': fields.Datetime.now()})
+        signer_declining.write({'state': 'opened'})
+        signer_declining.write({'state': 'declined', 'declined_reason': 'Portal decline test'})
+        request._transition_to('declined', {'last_event_at': fields.Datetime.now()})
+
+        signer_signed.invalidate_recordset(['state'])
+        signer_declining.invalidate_recordset(['state', 'declined_reason'])
+        signer_pending.invalidate_recordset(['state'])
+        request.invalidate_recordset(['status'])
+
+        self.assertEqual(signer_signed.state, 'signed')
+        self.assertEqual(signer_declining.state, 'declined')
+        self.assertEqual(signer_declining.declined_reason, 'Portal decline test')
+        self.assertEqual(signer_pending.state, 'pending')
+        self.assertEqual(request.status, 'declined')
+
     def test_signer_actionable_and_waiting_require_request_membership(self):
         template_a = self._create_template('Signer Membership A')
         template_b = self._create_template('Signer Membership B')

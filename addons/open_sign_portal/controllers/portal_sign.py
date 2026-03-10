@@ -30,6 +30,7 @@ STALE_REVISION_MARKER = 'STALE_REVISION'
 SIGNING_ORDER_BLOCKED_MARKER = 'SIGNING_ORDER_BLOCKED'
 CONSENT_REQUIRED_MARKER = 'CONSENT_REQUIRED'
 CONTRACT_UNAVAILABLE_MARKER = 'CONTRACT_UNAVAILABLE'
+DECLINE_REASON_MAX_LENGTH = 4000
 
 
 class OpenSignPortalController(CustomerPortal):
@@ -151,6 +152,10 @@ class OpenSignPortalController(CustomerPortal):
         self._assert_signer_mutation_allowed(signer)
         self._assert_signer_order_allows_mutation(signer)
 
+    def _assert_locked_signer_decline_allowed(self, signer):
+        self._assert_request_action_access_allowed(signer.request_id)
+        self._assert_signer_mutation_allowed(signer)
+
     def _check_signer_document_access(self, signer_id, access_token=None):
         if access_token:
             return self._check_signer_read_access(signer_id, access_token=access_token)
@@ -257,6 +262,20 @@ class OpenSignPortalController(CustomerPortal):
         request_revision = self._ensure_request_revision(payload)
         parsed_values = self._ensure_values_payload(payload)
         return request_revision, parsed_values
+
+    def _normalize_decline_reason(self, reason):
+        normalized_reason = self._normalize_line_endings(reason or '').strip()
+        if not normalized_reason:
+            raise ValidationError(_("Decline reason is required."))
+        if len(normalized_reason) > DECLINE_REASON_MAX_LENGTH:
+            raise ValidationError(_("Decline reason cannot exceed 4000 characters."))
+        return normalized_reason
+
+    def _validate_decline_payload(self, payload):
+        self._ensure_uuid(payload.get('idempotency_key'), field_name='idempotency_key')
+        request_revision = self._ensure_request_revision(payload)
+        normalized_reason = self._normalize_decline_reason(payload.get('reason'))
+        return request_revision, normalized_reason
 
     def _lock_request_for_update(self, sign_request):
         request.env.cr.execute(
@@ -679,6 +698,14 @@ class OpenSignPortalController(CustomerPortal):
 
         portal_fields = []
         submit_blocked_reason = False
+        decline_available = (
+            not preview_mode
+            and not portal_error_message
+            and sign_request.status in SIGNER_MUTATION_REQUEST_STATUSES
+            and signer_sudo.state in SIGNER_MUTABLE_STATES
+        )
+        decline_route = f'/my/sign/{signer_sudo.id}/decline' if decline_available else False
+        declined_reason_display = signer_sudo.declined_reason if signer_sudo.state == 'declined' else False
         if not portal_error_message:
             portal_fields, unsupported_required_fields = self._build_portal_fields(signer_sudo)
             if unsupported_required_fields:
@@ -710,6 +737,9 @@ class OpenSignPortalController(CustomerPortal):
                 'access_token': access_token,
                 'save_route': False if readonly_mode else f'/my/sign/{signer_sudo.id}/save',
                 'submit_route': False if readonly_mode else f'/my/sign/{signer_sudo.id}/submit',
+                'decline_available': decline_available,
+                'decline_route': decline_route,
+                'declined_reason_display': declined_reason_display,
             },
             'my_open_sign_history',
             True,
@@ -932,19 +962,65 @@ class OpenSignPortalController(CustomerPortal):
                 return self._build_error_response('validation_error', contract_message)
             return self._build_error_response('validation_error', message)
 
-    @http.route(['/my/sign/<int:signer_id>/decline'], type='jsonrpc', auth='public', readonly=True)
+    @http.route(['/my/sign/<int:signer_id>/decline'], type='jsonrpc', auth='public')
     def portal_sign_decline(self, signer_id, access_token=None, **payload):
         access_token = self._resolve_access_token(access_token, payload=payload)
         try:
-            self._check_signer_action_access(signer_id, access_token=access_token)
+            signer_sudo = self._check_signer_identity_access(signer_id, access_token=access_token)
+            request_revision, normalized_reason = self._validate_decline_payload(payload)
+            sign_request = signer_sudo.request_id.sudo()
+            with request.env.cr.savepoint():
+                self._lock_request_for_update(sign_request)
+                self._assert_request_revision(sign_request, request_revision)
+                self._assert_locked_signer_decline_allowed(signer_sudo)
+
+                event_at = fields.Datetime.now()
+                request_status_before = sign_request.status
+                signer_state_before = signer_sudo.state
+                signer_sudo.sudo().write({
+                    'state': 'declined',
+                    'declined_reason': normalized_reason,
+                    'ip_last': self._extract_request_ip(),
+                })
+                sign_request._transition_to('declined', {'last_event_at': event_at})
+                sign_request.sudo().write({
+                    'lock_version': sign_request.lock_version + 1,
+                    'last_event_at': event_at,
+                })
+                self._append_audit_event(
+                    signer_sudo,
+                    'signer_declined',
+                    event_at=event_at,
+                    metadata={
+                        'reason': normalized_reason,
+                        'request_status_before': request_status_before,
+                        'signer_state_before': signer_state_before,
+                    },
+                )
+
+            redirect_url = f'/my/sign/{signer_sudo.id}'
+            if access_token:
+                redirect_url = f'{redirect_url}?access_token={access_token}&declined=1'
+            else:
+                redirect_url = f'{redirect_url}?declined=1'
+            return {
+                'ok': True,
+                'force_refresh': True,
+                'redirect_url': redirect_url,
+                'request_revision': sign_request.lock_version,
+            }
         except (AccessError, MissingError):
             return self._invalid_token_response()
+        except LockNotAvailable:
+            return self._build_error_response('request_locked', _("The signing request is currently locked. Try again."))
         except ValidationError as exc:
-            return self._build_error_response('validation_error', str(exc))
-        return self._build_error_response(
-            'validation_error',
-            _("This endpoint is scaffolded and will be implemented in T34."),
-        )
+            message = str(exc)
+            if self._extract_marked_message(message, STALE_REVISION_MARKER):
+                return self._build_error_response('stale_revision', message.split('::', 1)[1])
+            contract_message = self._extract_marked_message(message, CONTRACT_UNAVAILABLE_MARKER)
+            if contract_message:
+                return self._build_error_response('validation_error', contract_message)
+            return self._build_error_response('validation_error', message)
 
     @http.route(['/my/sign/<int:signer_id>/otp/request'], type='jsonrpc', auth='public', readonly=True)
     def portal_sign_otp_request(self, signer_id, access_token=None, **payload):
