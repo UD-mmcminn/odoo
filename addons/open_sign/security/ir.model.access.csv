@@ -27,3 +27,4 @@ access_open_sign_template_field_option_user,open.sign.template.field.option.user
 access_open_sign_template_field_option_manager,open.sign.template.field.option.manager,model_open_sign_template_field_option,open_sign.group_open_sign_manager,1,1,1,1
 access_open_sign_template_field_option_auditor,open.sign.template.field.option.auditor,model_open_sign_template_field_option,open_sign.group_open_sign_auditor,1,0,0,0
 access_open_sign_role_create_wizard_user,open.sign.role.create.wizard.user,model_open_sign_role_create_wizard,open_sign.group_open_sign_user,1,1,1,1
+access_open_sign_signer_contact_correction_wizard_manager,open.sign.signer.contact_correction.wizard.manager,model_open_sign_signer_contact_correction_wizard,open_sign.group_open_sign_manager,1,1,1,1

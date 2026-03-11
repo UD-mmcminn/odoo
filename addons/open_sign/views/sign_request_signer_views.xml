@@ -10,7 +10,7 @@
                     <field name="sequence"/>
                     <field name="role_id"/>
                     <field name="email"/>
-                    <field name="sign_access_url" string="Copy Link" widget="CopyClipboardURL" readonly="1" optional="show"/>
+                    <field name="sign_access_url" string="Internal Link" widget="CopyClipboardURL" readonly="1" optional="show"/>
                     <button
                         name="action_open_sign_access_link"
                         type="object"
@@ -99,7 +99,7 @@
                                 <field name="sequence"/>
                                 <field name="partner_id"/>
                                 <field name="email"/>
-                                <field name="sign_access_url" string="Copy Link" widget="CopyClipboardURL" readonly="1"/>
+                                <field name="sign_access_url" string="Internal Link" widget="CopyClipboardURL" readonly="1"/>
                             </group>
                             <group>
                                 <field name="state" readonly="1"/>

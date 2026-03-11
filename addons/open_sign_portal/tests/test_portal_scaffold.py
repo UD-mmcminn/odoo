@@ -9,7 +9,7 @@ from uuid import uuid4
 from psycopg2.errors import LockNotAvailable
 
 from odoo import Command, fields
-from odoo.exceptions import AccessError
+from odoo.exceptions import AccessError, ValidationError
 from odoo.tests.common import HttpCase, TransactionCase, new_test_user, tagged
 
 from odoo.addons.open_sign_portal.controllers.portal_sign import OpenSignPortalController
@@ -20,6 +20,8 @@ REQUEST_REVISION_RE = re.compile(r'data-request-revision="(\d+)"')
 
 
 class OpenSignPortalTestMixin:
+    QUEUE_FAILURE_WITH_TOKEN = 'SMTP failure for https://example.test/my/sign/42?access_token=abc123'
+
 
     @classmethod
     def _create_attachment_static(cls, env, name='portal_template.pdf', *, res_model='open.sign.template'):
@@ -92,6 +94,11 @@ class OpenSignPortalTestMixin:
         if send:
             sign_request.action_send()
         return sign_request
+
+    def _assert_no_url_or_token_leak(self, metadata):
+        serialized = str(metadata)
+        self.assertNotIn('access_token=', serialized)
+        self.assertNotIn('https://example.test/my/sign/42', serialized)
 
     @classmethod
     def _create_portal_session(
@@ -242,6 +249,8 @@ class TestOpenSignPortalScaffold(TransactionCase, OpenSignPortalTestMixin):
             password='open_sign_portal_token_manager',
             groups='open_sign.group_open_sign_manager',
         )
+        cls.open_sign_user.partner_id.email = 'open.sign.portal.token.user@example.com'
+        cls.open_sign_manager.partner_id.email = 'open.sign.portal.token.manager@example.com'
         cls.open_sign_auditor = new_test_user(
             cls.env,
             login='open_sign_portal_auditor',
@@ -276,6 +285,44 @@ class TestOpenSignPortalScaffold(TransactionCase, OpenSignPortalTestMixin):
         self.assertNotIn('access_token', signer_fields)
         self.assertNotIn('portal_sign_url', signer_fields)
 
+    def test_manager_backend_views_expose_copy_link_and_resend(self):
+        signer_view = self.env['open.sign.request.signer'].with_user(self.open_sign_manager).get_view(
+            self.env.ref('open_sign.view_open_sign_request_signer_form').id,
+            'form',
+        )
+        signer_arch = signer_view['arch']
+        self.assertIn('name="portal_sign_url"', signer_arch)
+        self.assertIn('string="Copy Link"', signer_arch)
+        self.assertIn('name="sign_access_url"', signer_arch)
+        self.assertIn('string="Internal Link"', signer_arch)
+
+        request_view = self.env['open.sign.request'].with_user(self.open_sign_manager).get_view(
+            self.env.ref('open_sign.view_open_sign_request_form').id,
+            'form',
+        )
+        request_arch = request_view['arch']
+        self.assertIn('name="portal_sign_url"', request_arch)
+        self.assertIn('name="action_resend_signer_request"', request_arch)
+
+    def test_user_backend_views_hide_resend_and_keep_copy_link(self):
+        signer_view = self.env['open.sign.request.signer'].with_user(self.open_sign_user).get_view(
+            self.env.ref('open_sign.view_open_sign_request_signer_form').id,
+            'form',
+        )
+        signer_arch = signer_view['arch']
+        self.assertIn('name="portal_sign_url"', signer_arch)
+        self.assertIn('string="Copy Link"', signer_arch)
+        self.assertIn('name="sign_access_url"', signer_arch)
+        self.assertIn('string="Internal Link"', signer_arch)
+
+        request_view = self.env['open.sign.request'].with_user(self.open_sign_user).get_view(
+            self.env.ref('open_sign.view_open_sign_request_form').id,
+            'form',
+        )
+        request_arch = request_view['arch']
+        self.assertIn('name="portal_sign_url"', request_arch)
+        self.assertNotIn('name="action_resend_signer_request"', request_arch)
+
     def test_non_superusers_cannot_write_access_token(self):
         signer = self.owner_scoped_bundle['signer']
         token_before = signer._portal_ensure_token()
@@ -284,6 +331,245 @@ class TestOpenSignPortalScaffold(TransactionCase, OpenSignPortalTestMixin):
                 with self.assertRaises(AccessError):
                     signer.with_user(user).write({'access_token': 'forced-token'})
         self.assertEqual(signer.access_token, token_before)
+
+    def _create_contact_correction_wizard(self, signer, *, user, target_email=False, reason='Retry invitation'):
+        return self.env['open.sign.signer.contact_correction.wizard'].with_user(user).create({
+            'signer_id': signer.id,
+            'target_email': target_email or signer.email,
+            'reason': reason,
+        })
+
+    def test_contact_correction_same_email_resend_rotates_token_and_queues_invitation(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Contact Correction Immediate',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        sign_request = signer.request_id
+        old_token = signer.access_token
+        mail_model = self.env['mail.mail'].sudo()
+        mail_before = mail_model.search_count([('email_to', '=', signer.email)])
+
+        wizard = self._create_contact_correction_wizard(signer, user=self.open_sign_manager)
+        action = wizard.action_apply_contact_correction()
+
+        signer.invalidate_recordset(['email', 'access_token'])
+        sign_request.invalidate_recordset(['last_event_at'])
+        self.assertEqual(signer.email, bundle['signer'].email)
+        self.assertNotEqual(signer.access_token, old_token)
+        self.assertEqual(action['tag'], 'display_notification')
+        self.assertEqual(action['params']['message'], 'Invitation queued.')
+        self.assertEqual(
+            mail_model.search_count([('email_to', '=', signer.email)]),
+            mail_before + 1,
+        )
+
+        queued_mail = mail_model.search([('email_to', '=', signer.email)], order='id desc', limit=1)
+        self.assertIn(f"/my/sign/{signer.id}?access_token={signer.access_token}", queued_mail.body_html)
+        self.assertNotIn(old_token, queued_mail.body_html)
+
+        correction_audit = self.env['open.sign.audit.log'].search([
+            ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer.id),
+            ('event_type', '=', 'signer_contact_corrected'),
+        ], limit=1)
+        self.assertTrue(correction_audit)
+        self.assertEqual(correction_audit.metadata_json['old_email'], signer.email)
+        self.assertEqual(correction_audit.metadata_json['new_email'], signer.email)
+        self.assertEqual(correction_audit.metadata_json['delivery_disposition'], 'queued_now')
+
+    def test_contact_correction_updates_email_and_defers_when_request_is_versioned(self):
+        template = self._create_template(self.env, 'Portal Contact Correction Versioned')
+        role = self._create_role(self.env, template, 'Portal Contact Correction Versioned Signer', 10)
+        sign_request = self._create_request(self.env, template, owner=self.open_sign_user)
+        signer = self._create_signer(
+            self.env,
+            sign_request,
+            role,
+            email='portal.contact.versioned.old@example.com',
+            sequence=10,
+        )
+        sign_request.action_version()
+        signer._portal_ensure_token()
+        old_token = signer.access_token
+
+        wizard = self._create_contact_correction_wizard(
+            signer,
+            user=self.open_sign_manager,
+            target_email='portal.contact.versioned.new@example.com',
+            reason='Correcting address before send',
+        )
+        action = wizard.action_apply_contact_correction()
+
+        signer.invalidate_recordset(['email', 'access_token'])
+        self.assertEqual(signer.email, 'portal.contact.versioned.new@example.com')
+        self.assertNotEqual(signer.access_token, old_token)
+        self.assertEqual(
+            action['params']['message'],
+            'Contact update recorded. Invitation will be sent when eligible.',
+        )
+        self.assertFalse(self.env['mail.mail'].sudo().search_count([('email_to', '=', signer.email)]))
+
+        correction_audit = self.env['open.sign.audit.log'].search([
+            ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer.id),
+            ('event_type', '=', 'signer_contact_corrected'),
+        ], limit=1)
+        self.assertTrue(correction_audit)
+        self.assertEqual(correction_audit.metadata_json['old_email'], 'portal.contact.versioned.old@example.com')
+        self.assertEqual(correction_audit.metadata_json['new_email'], 'portal.contact.versioned.new@example.com')
+        self.assertEqual(correction_audit.metadata_json['delivery_disposition'], 'deferred_until_send')
+
+        skipped_audit = self.env['open.sign.audit.log'].search([
+            ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer.id),
+            ('event_type', '=', 'notification_skipped'),
+        ], order='id desc', limit=1)
+        self.assertTrue(skipped_audit)
+        self.assertEqual(skipped_audit.metadata_json['trigger'], 'manual_resend')
+        self.assertEqual(skipped_audit.metadata_json['skip_reason'], 'deferred_until_send')
+
+    def test_contact_correction_defers_for_future_wave_signer(self):
+        bundle = self._create_ordered_two_signer_session(
+            self.env,
+            name='Portal Contact Correction Waiting',
+            owner=self.open_sign_user,
+            ordered_signing=True,
+        )
+        signer_second = self.env['open.sign.request.signer'].browse(bundle['signer_second'].id)
+        old_token = signer_second.access_token
+        mail_model = self.env['mail.mail'].sudo()
+        mail_before = mail_model.search_count([('email_to', '=', signer_second.email)])
+
+        wizard = self._create_contact_correction_wizard(
+            signer_second,
+            user=self.open_sign_manager,
+            reason='Correct future-wave recipient before turn',
+        )
+        action = wizard.action_apply_contact_correction()
+
+        signer_second.invalidate_recordset(['access_token'])
+        self.assertNotEqual(signer_second.access_token, old_token)
+        self.assertEqual(
+            action['params']['message'],
+            'Contact update recorded. Invitation will be sent when eligible.',
+        )
+        self.assertEqual(
+            mail_model.search_count([('email_to', '=', signer_second.email)]),
+            mail_before,
+        )
+
+        skipped_audit = self.env['open.sign.audit.log'].search([
+            ('request_id', '=', bundle['request'].id),
+            ('signer_id', '=', signer_second.id),
+            ('event_type', '=', 'notification_skipped'),
+        ], order='id desc', limit=1)
+        self.assertTrue(skipped_audit)
+        self.assertEqual(skipped_audit.metadata_json['trigger'], 'manual_resend')
+        self.assertEqual(skipped_audit.metadata_json['skip_reason'], 'deferred_future_wave')
+
+    def test_contact_correction_rolls_back_email_and_token_when_queue_fails(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Contact Correction Rollback',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        sign_request = signer.request_id
+        old_email = signer.email
+        old_token = signer.access_token
+
+        wizard = self._create_contact_correction_wizard(
+            signer,
+            user=self.open_sign_manager,
+            target_email='portal.contact.rollback.new@example.com',
+            reason='Retry after queue failure',
+        )
+        with patch(
+            'odoo.addons.open_sign.services.notification_service._queue_template',
+            side_effect=RuntimeError(self.QUEUE_FAILURE_WITH_TOKEN),
+        ):
+            with self.assertRaisesRegex(ValidationError, 'Failed to queue the invitation email.'):
+                wizard.action_apply_contact_correction()
+
+        signer.invalidate_recordset(['email', 'access_token'])
+        self.assertEqual(signer.email, old_email)
+        self.assertEqual(signer.access_token, old_token)
+        self.assertFalse(self.env['open.sign.audit.log'].search_count([
+            ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer.id),
+            ('event_type', '=', 'signer_contact_corrected'),
+        ]))
+        failure_audit = self.env['open.sign.audit.log'].search([
+            ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer.id),
+            ('event_type', '=', 'notification_failed'),
+        ], order='id desc', limit=1)
+        self.assertTrue(failure_audit)
+        self.assertEqual(failure_audit.metadata_json['notification_type'], 'invitation')
+        self.assertEqual(failure_audit.metadata_json['trigger'], 'manual_resend')
+        self.assertEqual(
+            failure_audit.metadata_json['recipient_email'],
+            'portal.contact.rollback.new@example.com',
+        )
+        self.assertEqual(
+            failure_audit.metadata_json['failure_reason'],
+            'mail_queue_error',
+        )
+        self._assert_no_url_or_token_leak(failure_audit.metadata_json)
+
+    def test_actionable_manual_resend_missing_portal_url_persists_failure_audit(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Contact Correction Missing Portal URL',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        sign_request = signer.request_id
+        old_email = signer.email
+        old_token = signer.access_token
+
+        wizard = self._create_contact_correction_wizard(
+            signer,
+            user=self.open_sign_manager,
+            target_email='portal.contact.missing-url.new@example.com',
+            reason='Retry after portal URL loss',
+        )
+        with patch.object(
+            type(self.env['open.sign.request.signer']),
+            '_get_notification_sign_url',
+            autospec=True,
+            return_value=False,
+        ):
+            with self.assertRaisesRegex(ValidationError, 'Signer notification URL is not available.'):
+                wizard.action_apply_contact_correction()
+
+        signer.invalidate_recordset(['email', 'access_token'])
+        self.assertEqual(signer.email, old_email)
+        self.assertEqual(signer.access_token, old_token)
+        self.assertFalse(self.env['open.sign.audit.log'].search_count([
+            ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer.id),
+            ('event_type', '=', 'signer_contact_corrected'),
+        ]))
+        failure_audit = self.env['open.sign.audit.log'].search([
+            ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer.id),
+            ('event_type', '=', 'notification_failed'),
+        ], order='id desc', limit=1)
+        self.assertTrue(failure_audit)
+        self.assertEqual(failure_audit.metadata_json['notification_type'], 'invitation')
+        self.assertEqual(failure_audit.metadata_json['trigger'], 'manual_resend')
+        self.assertEqual(
+            failure_audit.metadata_json['recipient_email'],
+            'portal.contact.missing-url.new@example.com',
+        )
+        self.assertEqual(
+            failure_audit.metadata_json['failure_reason'],
+            'signer_notification_url_unavailable',
+        )
+        self._assert_no_url_or_token_leak(failure_audit.metadata_json)
 
 
 @tagged('post_install', '-at_install', 'open_sign_portal')
@@ -310,6 +596,8 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
             password='open_sign_portal_manager',
             groups='open_sign.group_open_sign_manager',
         )
+        cls.open_sign_user.partner_id.email = 'open.sign.portal.http.user@example.com'
+        cls.open_sign_manager.partner_id.email = 'open.sign.portal.http.manager@example.com'
         cls.open_sign_auditor = new_test_user(
             cls.env,
             login='open_sign_portal_auditor_http',
@@ -769,6 +1057,8 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
         self.assertFalse(sign_request.value_ids)
         self.assertFalse(self.env['open.sign.audit.log'].search_count([
             ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer.id),
+            ('event_type', 'in', ('signer_opened', 'value_saved')),
         ]))
 
     def test_jsonrpc_save_stale_revision(self):
@@ -874,6 +1164,8 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
         self.assertFalse(sign_request.value_ids)
         self.assertFalse(self.env['open.sign.audit.log'].search_count([
             ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer.id),
+            ('event_type', 'in', ('signer_opened', 'signer_submitted')),
         ]))
 
     def test_jsonrpc_submit_missing_required_field_rolls_back_session_open(self):
@@ -911,6 +1203,8 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
         self.assertFalse(sign_request.value_ids)
         self.assertFalse(self.env['open.sign.audit.log'].search_count([
             ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer.id),
+            ('event_type', 'in', ('signer_opened', 'signer_submitted')),
         ]))
 
     def test_jsonrpc_submit_signing_order_blocked(self):
@@ -942,6 +1236,8 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
         self.assertFalse(sign_request.value_ids)
         self.assertFalse(self.env['open.sign.audit.log'].search_count([
             ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer_second.id),
+            ('event_type', 'in', ('signer_opened', 'signer_submitted')),
         ]))
 
     def test_ordered_waiting_signer_page_is_readonly_and_non_mutating(self):
@@ -984,6 +1280,8 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
         self.assertFalse(sign_request.value_ids)
         self.assertFalse(self.env['open.sign.audit.log'].search_count([
             ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer_second.id),
+            ('event_type', 'in', ('signer_opened', 'value_saved')),
         ]))
 
     def test_ordered_waiting_signer_stale_revision_wins_over_order_block(self):
@@ -2812,3 +3110,210 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
                         endpoint,
                         expected_message,
                     )
+
+    def test_submit_queues_invitation_for_newly_actionable_next_wave(self):
+        bundle = self._create_ordered_two_signer_session(
+            self.env,
+            name='Portal Next Wave Invite',
+            owner=self.open_sign_user,
+            ordered_signing=True,
+        )
+        signer_first = self.env['open.sign.request.signer'].browse(bundle['signer_first'].id)
+        signer_second = self.env['open.sign.request.signer'].browse(bundle['signer_second'].id)
+        sign_request = signer_first.request_id
+        mail_model = self.env['mail.mail'].sudo()
+        second_mail_before = mail_model.search_count([('email_to', '=', signer_second.email)])
+
+        self.authenticate(None, None)
+        page_response = self.url_open(
+            f"/my/sign/{signer_first.id}?access_token={bundle['token_first']}",
+            allow_redirects=False,
+        )
+        consent_hash, revision = self._extract_consent_hash_and_revision(page_response.text)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{signer_first.id}/submit",
+            self._build_payload(
+                revision=revision,
+                values=[{'field_id': bundle['field_first'].id, 'value': 'Wave one done'}],
+                consent={'accepted': True, 'text_hash': consent_hash, 'timezone': 'UTC'},
+                access_token=bundle['token_first'],
+            ),
+        )
+
+        self.assertTrue(response['ok'])
+        sign_request.invalidate_recordset(['status'])
+        self.assertEqual(sign_request.status, 'partially_signed')
+        self.assertEqual(
+            mail_model.search_count([('email_to', '=', signer_second.email)]),
+            second_mail_before + 1,
+        )
+
+        queued_mail = mail_model.search([('email_to', '=', signer_second.email)], order='id desc', limit=1)
+        self.assertIn(f"/my/sign/{signer_second.id}?access_token={bundle['token_second']}", queued_mail.body_html)
+        notification_audit = self.env['open.sign.audit.log'].search([
+            ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer_second.id),
+            ('event_type', '=', 'notification_queued'),
+        ], order='id desc', limit=1)
+        self.assertTrue(notification_audit)
+        self.assertEqual(notification_audit.metadata_json['notification_type'], 'invitation')
+        self.assertEqual(notification_audit.metadata_json['trigger'], 'wave_unblocked')
+
+    def test_submit_preserves_success_when_next_wave_invitation_queue_fails(self):
+        bundle = self._create_ordered_two_signer_session(
+            self.env,
+            name='Portal Next Wave Invite Failure',
+            owner=self.open_sign_user,
+            ordered_signing=True,
+        )
+        signer_first = self.env['open.sign.request.signer'].browse(bundle['signer_first'].id)
+        signer_second = self.env['open.sign.request.signer'].browse(bundle['signer_second'].id)
+        sign_request = signer_first.request_id
+        mail_model = self.env['mail.mail'].sudo()
+        second_mail_before = mail_model.search_count([('email_to', '=', signer_second.email)])
+
+        self.authenticate(None, None)
+        page_response = self.url_open(
+            f"/my/sign/{signer_first.id}?access_token={bundle['token_first']}",
+            allow_redirects=False,
+        )
+        consent_hash, revision = self._extract_consent_hash_and_revision(page_response.text)
+        with patch(
+            'odoo.addons.open_sign_portal.controllers.portal_sign.notification_service.queue_request_invitations',
+            side_effect=RuntimeError(self.QUEUE_FAILURE_WITH_TOKEN),
+        ):
+            response = self.make_jsonrpc_request(
+                f"/my/sign/{signer_first.id}/submit",
+                self._build_payload(
+                    revision=revision,
+                    values=[{'field_id': bundle['field_first'].id, 'value': 'Wave one done'}],
+                    consent={'accepted': True, 'text_hash': consent_hash, 'timezone': 'UTC'},
+                    access_token=bundle['token_first'],
+                ),
+            )
+
+        self.assertTrue(response['ok'])
+        sign_request.invalidate_recordset(['status'])
+        self.assertEqual(sign_request.status, 'partially_signed')
+        self.assertEqual(
+            mail_model.search_count([('email_to', '=', signer_second.email)]),
+            second_mail_before,
+        )
+        failure_audit = self.env['open.sign.audit.log'].search([
+            ('request_id', '=', sign_request.id),
+            ('event_type', '=', 'notification_failed'),
+        ], order='id desc', limit=1)
+        self.assertTrue(failure_audit)
+        self.assertEqual(failure_audit.metadata_json['notification_type'], 'invitation')
+        self.assertEqual(failure_audit.metadata_json['trigger'], 'wave_unblocked')
+        self.assertEqual(failure_audit.metadata_json['failure_reason'], 'notification_service_error')
+        self._assert_no_url_or_token_leak(failure_audit.metadata_json)
+
+    def test_decline_queues_owner_only_notification(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Decline Owner Notification',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        sign_request = signer.request_id
+        mail_model = self.env['mail.mail'].sudo()
+        owner_mail_before = mail_model.search_count([('email_to', '=', self.open_sign_user.partner_id.email)])
+        signer_mail_before = mail_model.search_count([('email_to', '=', signer.email)])
+
+        self.authenticate(None, None)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/decline",
+            self._build_decline_payload(
+                revision=sign_request.lock_version,
+                reason='Owner notification decline',
+                access_token=bundle['token'],
+            ),
+        )
+
+        self.assertTrue(response['ok'])
+        self.assertEqual(
+            mail_model.search_count([('email_to', '=', self.open_sign_user.partner_id.email)]),
+            owner_mail_before + 1,
+        )
+        self.assertEqual(
+            mail_model.search_count([('email_to', '=', signer.email)]),
+            signer_mail_before,
+        )
+
+        notification_audit = self.env['open.sign.audit.log'].search([
+            ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer.id),
+            ('event_type', '=', 'notification_queued'),
+        ], order='id desc', limit=1)
+        self.assertTrue(notification_audit)
+        self.assertEqual(notification_audit.metadata_json['notification_type'], 'decline')
+        self.assertEqual(notification_audit.metadata_json['recipient_kind'], 'owner')
+
+    def test_decline_preserves_success_when_owner_notification_service_fails(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Decline Owner Notification Failure',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        sign_request = signer.request_id
+
+        self.authenticate(None, None)
+        with patch(
+            'odoo.addons.open_sign_portal.controllers.portal_sign.notification_service.queue_request_decline_notification',
+            side_effect=RuntimeError(self.QUEUE_FAILURE_WITH_TOKEN),
+        ):
+            response = self.make_jsonrpc_request(
+                f"/my/sign/{signer.id}/decline",
+                self._build_decline_payload(
+                    revision=sign_request.lock_version,
+                    reason='Decline with wrapper failure',
+                    access_token=bundle['token'],
+                ),
+            )
+
+        self.assertTrue(response['ok'])
+        sign_request.invalidate_recordset(['status'])
+        self.assertEqual(sign_request.status, 'declined')
+        failure_audit = self.env['open.sign.audit.log'].search([
+            ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer.id),
+            ('event_type', '=', 'notification_failed'),
+        ], order='id desc', limit=1)
+        self.assertTrue(failure_audit)
+        self.assertEqual(failure_audit.metadata_json['notification_type'], 'decline')
+        self.assertEqual(failure_audit.metadata_json['trigger'], 'request_declined')
+        self.assertEqual(failure_audit.metadata_json['failure_reason'], 'notification_service_error')
+        self._assert_no_url_or_token_leak(failure_audit.metadata_json)
+
+    def test_manual_resend_rotation_invalidates_old_portal_token(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Manual Resend Token Rotation',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        old_token = bundle['token']
+
+        wizard = self.env['open.sign.signer.contact_correction.wizard'].with_user(self.open_sign_manager).create({
+            'signer_id': signer.id,
+            'target_email': signer.email,
+            'reason': 'Rotate token after manual resend',
+        })
+        wizard.action_apply_contact_correction()
+
+        signer.invalidate_recordset(['access_token'])
+        self.assertNotEqual(signer.access_token, old_token)
+
+        self.authenticate(None, None)
+        old_response = self.url_open(
+            f"/my/sign/{signer.id}?access_token={old_token}",
+            allow_redirects=False,
+        )
+        new_response = self.url_open(
+            f"/my/sign/{signer.id}?access_token={signer.access_token}",
+            allow_redirects=False,
+        )
+        self.assertEqual(old_response.status_code, 303)
+        self.assertEqual(new_response.status_code, 200)

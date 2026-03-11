@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="1">
+        <record id="mail_template_signer_invitation" model="mail.template">
+            <field name="name">Open Sign: Signer Invitation</field>
+            <field name="model_id" ref="open_sign.model_open_sign_request_signer"/>
+            <field name="subject">Signature request: {{ object.request_id.name }}</field>
+            <field name="email_to" eval="False"/>
+            <field name="use_default_to" eval="False"/>
+            <field name="description">Invitation sent to actionable signers.</field>
+            <field name="body_html" type="html">
+                <div>
+                    <p>Hello,</p>
+                    <p>You have been asked to sign <strong t-out="object.request_id.name"/>.</p>
+                    <p>
+                        <a t-if="ctx.get('signer_portal_url')" t-att-href="ctx['signer_portal_url']">Open signing request</a>
+                    </p>
+                </div>
+            </field>
+            <field name="auto_delete" eval="True"/>
+        </record>
+
+        <record id="mail_template_signer_reminder" model="mail.template">
+            <field name="name">Open Sign: Signer Reminder</field>
+            <field name="model_id" ref="open_sign.model_open_sign_request_signer"/>
+            <field name="subject">Reminder: signature request {{ object.request_id.name }}</field>
+            <field name="email_to" eval="False"/>
+            <field name="use_default_to" eval="False"/>
+            <field name="description">Reminder sent to actionable signers.</field>
+            <field name="body_html" type="html">
+                <div>
+                    <p>Hello,</p>
+                    <p>This is a reminder to review and sign <strong t-out="object.request_id.name"/>.</p>
+                    <p>
+                        <a t-if="ctx.get('signer_portal_url')" t-att-href="ctx['signer_portal_url']">Open signing request</a>
+                    </p>
+                </div>
+            </field>
+            <field name="auto_delete" eval="True"/>
+        </record>
+
+        <record id="mail_template_request_completed_signer" model="mail.template">
+            <field name="name">Open Sign: Request Completed (Signer)</field>
+            <field name="model_id" ref="open_sign.model_open_sign_request_signer"/>
+            <field name="subject">Completed signature request: {{ object.request_id.name }}</field>
+            <field name="email_to" eval="False"/>
+            <field name="use_default_to" eval="False"/>
+            <field name="description">Completion notification sent to signers.</field>
+            <field name="body_html" type="html">
+                <div>
+                    <p>Hello,</p>
+                    <p>The signing request <strong t-out="object.request_id.name"/> has been completed.</p>
+                    <p>
+                        <a t-if="ctx.get('signer_portal_url')" t-att-href="ctx['signer_portal_url']">Review completed document</a>
+                    </p>
+                    <p>The final PDF is attached to this email.</p>
+                </div>
+            </field>
+            <field name="auto_delete" eval="True"/>
+        </record>
+
+        <record id="mail_template_request_completed_owner" model="mail.template">
+            <field name="name">Open Sign: Request Completed (Owner)</field>
+            <field name="model_id" ref="open_sign.model_open_sign_request"/>
+            <field name="subject">Completed signature request: {{ object.name }}</field>
+            <field name="email_to" eval="False"/>
+            <field name="use_default_to" eval="False"/>
+            <field name="description">Completion notification sent to request owner.</field>
+            <field name="body_html" type="html">
+                <div>
+                    <p>Hello,</p>
+                    <p>The signing request <strong t-out="object.name"/> has been completed.</p>
+                    <p>
+                        <a t-if="ctx.get('request_backend_url')" t-att-href="ctx['request_backend_url']">Review completed request</a>
+                    </p>
+                    <p>The final PDF is attached to this email.</p>
+                </div>
+            </field>
+            <field name="auto_delete" eval="True"/>
+        </record>
+
+        <record id="mail_template_request_declined_owner" model="mail.template">
+            <field name="name">Open Sign: Request Declined</field>
+            <field name="model_id" ref="open_sign.model_open_sign_request"/>
+            <field name="subject">Declined signature request: {{ object.name }}</field>
+            <field name="email_to" eval="False"/>
+            <field name="use_default_to" eval="False"/>
+            <field name="description">Decline notification sent to the request owner.</field>
+            <field name="body_html" type="html">
+                <div>
+                    <p>Hello,</p>
+                    <p><strong t-out="ctx.get('decliner_email') or 'A signer'"/> declined <strong t-out="object.name"/>.</p>
+                    <p t-if="ctx.get('decliner_role')">Role: <t t-out="ctx.get('decliner_role')"/></p>
+                    <p t-if="ctx.get('decline_reason')">
+                        Reason:
+                        <br/>
+                        <t t-out="ctx.get('decline_reason')"/>
+                    </p>
+                    <p>
+                        <a t-if="ctx.get('request_backend_url')" t-att-href="ctx['request_backend_url']">Open request</a>
+                    </p>
+                </div>
+            </field>
+            <field name="auto_delete" eval="True"/>
+        </record>
+    </data>
+</odoo>

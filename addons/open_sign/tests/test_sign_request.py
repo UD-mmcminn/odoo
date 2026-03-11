@@ -979,7 +979,7 @@ class TestOpenSignRequest(TransactionCase):
         self.assertEqual(signer.last_opened_at, opened_at)
         self.assertEqual(signer.ip_last, '127.0.0.1')
 
-    def test_resend_signer_request_link_requires_manager_and_logs_event(self):
+    def test_resend_signer_request_requires_manager_and_portal_support(self):
         request = self._create_request(self.acl_template, name='Signer Resend Request')
         role = self._create_role(self.acl_template, name='Signer Resend Role', sequence=110)
         signer = self._create_signer(request, role=role, email='resend.signer@example.com')
@@ -987,20 +987,18 @@ class TestOpenSignRequest(TransactionCase):
         with self.assertRaises(AccessError):
             signer.with_user(self.open_sign_user).action_resend_signer_request()
 
-        message_count_before = len(request.message_ids)
-        notification = signer.with_user(self.open_sign_manager).action_resend_signer_request()
+        with self.assertRaisesRegex(ValidationError, 'Signer invitations can only be resent while the request is versioned or actively awaiting signatures.'):
+            signer.with_user(self.open_sign_manager).action_resend_signer_request()
 
-        self.assertEqual(notification['type'], 'ir.actions.client')
-        self.assertEqual(notification['tag'], 'display_notification')
-        self.assertEqual(notification['params']['type'], 'success')
-
-        request.invalidate_recordset(['last_event_at', 'message_ids'])
-        self.assertTrue(request.last_event_at)
-        self.assertEqual(len(request.message_ids), message_count_before + 1)
-        self.assertTrue(
-            any('resend triggered' in (message.body or '').lower() for message in request.message_ids)
-        )
+        request.action_version()
+        if signer._supports_portal_resend_rotation():
+            action = signer.with_user(self.open_sign_manager).action_resend_signer_request()
+            self.assertEqual(action['type'], 'ir.actions.act_window')
+            self.assertEqual(action['res_model'], 'open.sign.signer.contact_correction.wizard')
+        else:
+            with self.assertRaisesRegex(ValidationError, 'Install Open Sign Portal to resend signer invitations.'):
+                signer.with_user(self.open_sign_manager).action_resend_signer_request()
 
         request.action_cancel()
-        with self.assertRaisesRegex(ValidationError, 'Cannot resend signer links once the request is completed, cancelled, or voided.'):
+        with self.assertRaisesRegex(ValidationError, 'Signer invitations can only be resent while the request is versioned or actively awaiting signatures.'):
             signer.with_user(self.open_sign_manager).action_resend_signer_request()

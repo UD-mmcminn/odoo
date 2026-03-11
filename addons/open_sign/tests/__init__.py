@@ -9,3 +9,4 @@ from . import test_sign_request_value
 from . import test_sign_audit_log
 from . import test_sign_security_rules
 from . import test_sign_cron
+from . import test_sign_notifications

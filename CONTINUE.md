@@ -575,7 +575,6 @@ Use this before marking any task complete (especially model/state/security work)
 
 ## Deferred Queue (Tracked Next-Up)
 
-- `DQ-001` (`T35`): reminder/invitation/completion email delivery remains deferred; current `T111` reminder cron records reminder events via chatter + reminder counters only.
 - `DQ-002` (`T43`): audit hash-chain continuity checks remain deferred to service-level implementation.
 
 ## Files Most Relevant To Resume
@@ -642,12 +641,12 @@ Use this before marking any task complete (especially model/state/security work)
    - `./odoo-bin -d <db> -i open_sign_portal --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign_portal --stop-after-init`
    - `scripts/review_gate_open_sign.sh --skip-web -d <db>`
-2. If tests pass, continue Phase 3 with `T35` reminder/invitation/completion notification delivery and the deferred pending-signer contact-correction/resend flow on top of the now-closed `T32`/`T33`/`T34` portal baseline.
+2. If tests pass, continue Phase 3 with `T36` portal security tests for replay and token abuse on top of the now-closed `T32`/`T33`/`T34`/`T35` portal baseline.
 3. Re-run recurring hardening re-audit (`T610`) after each major phase slice and after every 3 completed implementation tasks.
 
 ## Next Tasks (Planned Order)
 
-1. `T35` Add reminder/invitation/completion notifications, canonical portal token URL generation, and the controlled pending-signer contact-correction/resend flow deferred from `T33`.
+1. `T36` Add portal security tests for replay and token abuse.
 
 ## Notes For Next Chat
 
@@ -677,18 +676,24 @@ Use this before marking any task complete (especially model/state/security work)
   - each successful decline appends exactly one `signer_declined` audit event with reason and pre-transition request/signer state metadata
   - waiting-page decline remains non-opening evidence: it does not stamp `signer_opened` or `last_opened_at`
   - post-decline signer review uses the existing readonly terminal-review contract, shows a success flash, and exposes the decliner's own reason block without leaking it to other signers
-- `T32`/`T33` deferred items remain deferred exactly as planned:
-  - `T35`: reminder/invitation/completion link canonicalization
+- `T35` is now closed. Additional notification and resend guarantees now include:
+  - initial send queues invitation mail for the current actionable signer wave only and rolls back the send transition if any actionable invitation cannot be queued
+  - reminder cron queues reminders for actionable signers only and updates reminder counters only when at least one reminder is successfully queued
+  - request completion now appends `request_completed` and best-effort queues owner + signer completion notifications with the final attachment
+  - portal submit now best-effort queues invitation mail for newly actionable next-wave pending signers without rolling back the signer submit on queue failure
+  - portal decline now best-effort queues an owner-only decline notification without rolling back the decline action on queue failure
+  - canonical signer-facing share/copy/invitation/reminder/completion links now use `get_portal_url()` / `portal_sign_url`, not the old internal backend sign-access URL
+  - base `open_sign` no longer falls back to `sign_access_url` for signer notification mail; without `open_sign_portal`, signer-facing notification URLs are treated as unavailable instead of silently emailing backend links
+  - invitation/send and actionable manager resend now fail truthfully when a signer portal URL is unavailable, while reminder and signer-completion flows skip truthfully and owner-only completion/decline mail remains valid
+  - atomic invitation failures now persist durable `notification_failed` audit evidence even though `action_send()` and actionable manual resend/correction still roll back their business state; this covers missing signer portal URLs, missing invitation templates, and queue exceptions without storing raw tokens or full tokenized URLs
+  - fake resend chatter/link behavior was replaced with a manager-only pending-signer contact-correction/resend wizard that requires a reason, rotates the signer token every time, and either queues immediately or truthfully defers delivery until send / until the signer becomes actionable
+  - notification audit events now distinguish `notification_queued`, `notification_failed`, and `notification_skipped`, and `signer_contact_corrected` records the controlled resend/correction path without storing raw tokens or full tokenized URLs
+  - closeout proof now explicitly covers completion mail attachment + link semantics and backend view-arch visibility for manager-only resend vs canonical copy-link exposure
+- Remaining deferred items remain deferred exactly as planned:
   - `T316`/`T317`: durable idempotency storage and replay/race semantics
+  - `T37`: OTP mail / verification semantics
   - `T40`/`T41`: final completion/final PDF generation
-- `T35` must now also own the controlled post-versioning contact-correction/resend exception:
-  - manager-only
-  - pending signer only
-  - email change only
-  - required reason
-  - token rotation / old-link invalidation
-  - truthful audit events and actual invitation/reminder/completion delivery semantics
-- Current resend/copy-link behavior is not treated as legal proof of email delivery; do not blur that boundary before `T35`.
+- Current notification semantics still stop at truthful queue creation through Odoo mail; remote SMTP acceptance/open proof remains out of scope.
 - If the next session starts at recurring hardening re-audit (`T610` / continuation `T118`), preserve `T17`/`T18`/`T19` invariants:
   - no direct mutation of existing audit rows outside privileged repair context
   - request-local uniqueness on audit sequence/hash
@@ -698,3 +703,8 @@ Use this before marking any task complete (especially model/state/security work)
   - backend actions that expose operational models include `kanban` mode and remain covered by `test_sign_backend_views.py`
 - Before closing each task, apply the mandatory hardening checklist and re-audit previously completed neighboring tasks when shared models/actions are touched.
 - If the next session starts with cleanup, run runtime tests first and fix any failures before adding new features.
+- `T35` closeout sanitization is now complete as well:
+  - `notification_failed.failure_reason` stores stable safe codes only (`missing_template`, `signer_notification_url_unavailable`, `mail_queue_error`, `notification_service_error`)
+  - raw notification exceptions are logged server-side and are no longer persisted in audit metadata or reflected back through atomic invitation queue error messages
+  - durable failure audit for atomic invitation flows remains in place for initial send and actionable manual resend/correction
+  - best-effort reminder/completion/decline and wrapper failure paths now use sanitized failure codes too

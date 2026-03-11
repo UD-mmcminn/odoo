@@ -9,7 +9,7 @@
                 <xpath expr="//field[@name='sign_access_url']" position="after">
                     <field
                         name="portal_sign_url"
-                        string="Portal Link"
+                        string="Copy Link"
                         widget="CopyClipboardURL"
                         readonly="1"
                         optional="show"
@@ -27,7 +27,24 @@
                 <xpath expr="//field[@name='sign_access_url']" position="after">
                     <field
                         name="portal_sign_url"
-                        string="Portal Link"
+                        string="Copy Link"
+                        widget="CopyClipboardURL"
+                        readonly="1"
+                        groups="open_sign.group_open_sign_user,open_sign.group_open_sign_manager"
+                    />
+                </xpath>
+            </field>
+        </record>
+
+        <record id="view_open_sign_request_form_portal_link" model="ir.ui.view">
+            <field name="name">open.sign.request.view.form.portal.link</field>
+            <field name="model">open.sign.request</field>
+            <field name="inherit_id" ref="open_sign.view_open_sign_request_form"/>
+            <field name="arch" type="xml">
+                <xpath expr="//field[@name='signer_ids']/list/field[@name='sign_access_url']" position="after">
+                    <field
+                        name="portal_sign_url"
+                        string="Copy Link"
                         widget="CopyClipboardURL"
                         readonly="1"
                         groups="open_sign.group_open_sign_user,open_sign.group_open_sign_manager"

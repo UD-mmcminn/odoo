@@ -40,6 +40,7 @@ SIGNER_CONTRACT_FROZEN_STATUSES = {
     'voided',
 }
 TERMINAL_MUTATION_STATUSES = {'completed', 'cancelled', 'voided'}
+PENDING_CORRECTION_REQUEST_STATUSES = {'versioned', 'sent', 'opened', 'in_progress', 'partially_signed'}
 
 
 class OpenSignRequestSigner(models.Model):
@@ -312,29 +313,37 @@ class OpenSignRequestSigner(models.Model):
             "target": "new",
         }
 
-    def action_resend_signer_request(self):
+    def _get_notification_sign_url(self):
+        self.ensure_one()
+        return False
+
+    def _supports_portal_resend_rotation(self):
+        self.ensure_one()
+        return False
+
+    def _check_contact_correction_allowed(self):
         self.ensure_one()
         if not self.env.user.has_group("open_sign.group_open_sign_manager"):
             raise AccessError(_("Only Open Sign Managers can resend signer request links."))
-        if self.request_id.status in TERMINAL_MUTATION_STATUSES:
-            raise ValidationError(
-                _("Cannot resend signer links once the request is completed, cancelled, or voided.")
-            )
-        self.request_id.message_post(
-            body=_("Signer request link resend triggered for %(email)s.", email=self.email)
-        )
-        self.request_id.write({"last_event_at": fields.Datetime.now()})
+        if not self._supports_portal_resend_rotation():
+            raise ValidationError(_("Install Open Sign Portal to resend signer invitations."))
+        if self.request_id.status not in PENDING_CORRECTION_REQUEST_STATUSES:
+            raise ValidationError(_("Signer invitations can only be resent while the request is versioned or actively awaiting signatures."))
+        if self.state != 'pending':
+            raise ValidationError(_("Only pending signer invitations can be corrected or resent."))
+
+    def action_resend_signer_request(self):
+        self.ensure_one()
+        self._check_contact_correction_allowed()
         return {
-            "type": "ir.actions.client",
-            "tag": "display_notification",
-            "params": {
-                "title": _("Signer Link Ready"),
-                "message": _(
-                    "Use Copy Link on signer %(email)s to share the signing URL.",
-                    email=self.email,
-                ),
-                "type": "success",
-                "sticky": False,
+            'type': 'ir.actions.act_window',
+            'name': _('Resend Signing Invitation'),
+            'res_model': 'open.sign.signer.contact_correction.wizard',
+            'view_mode': 'form',
+            'view_id': self.env.ref('open_sign.view_open_sign_signer_contact_correction_wizard_form').id,
+            'target': 'new',
+            'context': {
+                'default_signer_id': self.id,
             },
         }
 

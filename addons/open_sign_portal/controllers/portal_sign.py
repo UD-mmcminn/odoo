@@ -1,6 +1,7 @@
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 
 import hashlib
+import logging
 import re
 from types import SimpleNamespace
 from uuid import UUID
@@ -8,7 +9,7 @@ from uuid import UUID
 from psycopg2.errors import LockNotAvailable
 
 from odoo import _, fields, http
-from odoo.addons.open_sign.services import validation_service
+from odoo.addons.open_sign.services import notification_service, validation_service
 from odoo.addons.portal.controllers.portal import CustomerPortal
 from odoo.exceptions import AccessError, MissingError, ValidationError
 from odoo.http import request
@@ -31,6 +32,8 @@ SIGNING_ORDER_BLOCKED_MARKER = 'SIGNING_ORDER_BLOCKED'
 CONSENT_REQUIRED_MARKER = 'CONSENT_REQUIRED'
 CONTRACT_UNAVAILABLE_MARKER = 'CONTRACT_UNAVAILABLE'
 DECLINE_REASON_MAX_LENGTH = 4000
+
+_logger = logging.getLogger(__name__)
 
 
 class OpenSignPortalController(CustomerPortal):
@@ -568,6 +571,66 @@ class OpenSignPortalController(CustomerPortal):
             event_at=event_at,
         )
 
+    @staticmethod
+    def _get_newly_actionable_pending_signers(sign_request, actionable_before_ids):
+        actionable_after = sign_request._get_actionable_signers().filtered(lambda signer: signer.state == 'pending')
+        return actionable_after.filtered(lambda signer: signer.id not in actionable_before_ids)
+
+    def _queue_best_effort_next_wave_invitations(self, sign_request, signers):
+        if not signers:
+            return
+        with request.env.cr.savepoint():
+            try:
+                notification_service.queue_request_invitations(
+                    sign_request,
+                    signers,
+                    trigger='wave_unblocked',
+                    raise_on_failure=False,
+                )
+            except Exception as exc:  # pragma: no cover - defensive best-effort guard
+                _logger.exception(
+                    "Wave-unblocked invitation notification service failure for request %s",
+                    sign_request.id,
+                    exc_info=exc,
+                )
+                sign_request._append_audit_event(
+                    'notification_failed',
+                    metadata={
+                        'notification_type': 'invitation',
+                        'recipient_kind': 'signer',
+                        'trigger': 'wave_unblocked',
+                        'template_xmlid': notification_service.INVITATION_TEMPLATE_XMLID,
+                        'failure_reason': notification_service.FAILURE_REASON_NOTIFICATION_SERVICE_ERROR,
+                    },
+                )
+
+    def _queue_best_effort_decline_notification(self, sign_request, signer):
+        with request.env.cr.savepoint():
+            try:
+                notification_service.queue_request_decline_notification(
+                    sign_request,
+                    signer,
+                    raise_on_failure=False,
+                )
+            except Exception as exc:  # pragma: no cover - defensive best-effort guard
+                _logger.exception(
+                    "Decline notification service failure for request %s signer %s",
+                    sign_request.id,
+                    signer.id,
+                    exc_info=exc,
+                )
+                sign_request._append_audit_event(
+                    'notification_failed',
+                    signer=signer,
+                    metadata={
+                        'notification_type': 'decline',
+                        'recipient_kind': 'owner',
+                        'trigger': 'request_declined',
+                        'template_xmlid': notification_service.DECLINE_OWNER_TEMPLATE_XMLID,
+                        'failure_reason': notification_service.FAILURE_REASON_NOTIFICATION_SERVICE_ERROR,
+                    },
+                )
+
     def _ensure_session_opened(self, signer, *, event_at):
         transitioned = False
         first_open = signer.state == 'pending'
@@ -888,11 +951,13 @@ class OpenSignPortalController(CustomerPortal):
             signer_sudo = self._check_signer_identity_access(signer_id, access_token=access_token)
             request_revision, parsed_values = self._validate_mutation_payload(payload)
             sign_request = signer_sudo.request_id.sudo()
+            newly_actionable_signers = request.env['open.sign.request.signer']
             with request.env.cr.savepoint():
                 self._lock_request_for_update(sign_request)
                 self._assert_request_revision(sign_request, request_revision)
                 self._assert_submit_allowed(signer_sudo)
                 consent_hash, signer_timezone = self._check_consent_payload(payload)
+                actionable_before_ids = set(sign_request._get_actionable_signers().ids)
 
                 event_at = fields.Datetime.now()
                 session_changed = self._ensure_session_opened(signer_sudo, event_at=event_at)
@@ -930,6 +995,9 @@ class OpenSignPortalController(CustomerPortal):
                     },
                     consent_text_hash=consent_hash,
                 )
+                newly_actionable_signers = self._get_newly_actionable_pending_signers(sign_request, actionable_before_ids)
+
+            self._queue_best_effort_next_wave_invitations(sign_request, newly_actionable_signers)
 
             redirect_url = f'/my/sign/{signer_sudo.id}'
             if access_token:
@@ -997,6 +1065,8 @@ class OpenSignPortalController(CustomerPortal):
                         'signer_state_before': signer_state_before,
                     },
                 )
+
+            self._queue_best_effort_decline_notification(sign_request, signer_sudo)
 
             redirect_url = f'/my/sign/{signer_sudo.id}'
             if access_token:

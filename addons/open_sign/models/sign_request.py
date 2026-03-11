@@ -1,12 +1,16 @@
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 
+import logging
 import re
 from datetime import timedelta
 
 from odoo import _, api, fields, models
 from odoo.exceptions import ValidationError
 
+from odoo.addons.open_sign.services import notification_service
 
+
+_logger = logging.getLogger(__name__)
 SHA256_HEX_RE = re.compile(r'^[0-9a-f]{64}$')
 IMMUTABLE_REQUEST_STATUSES = {'completed', 'cancelled', 'voided'}
 VERSION_REQUIRED_STATUSES = {
@@ -249,6 +253,30 @@ class OpenSignRequest(models.Model):
             request.pending_count = sum(state in {'pending', 'opened'} for state in signer_states)
             request.declined_count = signer_states.count('declined')
 
+    def _get_backend_form_url(self):
+        self.ensure_one()
+        base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url', '').rstrip('/')
+        action = self.env.ref('open_sign.action_open_sign_request', raise_if_not_found=False)
+        action_fragment = f'&action={action.id}' if action else ''
+        if not base_url or not self.id:
+            return False
+        return (
+            f"{base_url}/web#id={self.id}"
+            "&model=open.sign.request"
+            "&view_type=form"
+            f"{action_fragment}"
+        )
+
+    def _append_audit_event(self, event_type, *, signer=False, metadata=None, event_at=None):
+        self.ensure_one()
+        return self.env['open.sign.audit.log'].sudo().append_event(
+            request_id=self.id,
+            signer_id=signer.id if signer else False,
+            event_type=event_type,
+            metadata=metadata or {},
+            event_at=event_at or fields.Datetime.now(),
+        )
+
     def _check_can_send(self):
         for request in self:
             if not request.signer_ids:
@@ -369,12 +397,37 @@ class OpenSignRequest(models.Model):
         for request in candidate_requests:
             if not request._is_reminder_due(now, reminder_interval):
                 continue
-            request.message_post(body=_("Signing reminder sent to pending signer(s)."))
-            request.write({
-                'last_reminder_at': now,
-                'reminder_count': request.reminder_count + 1,
-                'last_event_at': now,
-            })
+            try:
+                queued_mail_ids = notification_service.queue_request_reminders(
+                    request,
+                    request._get_actionable_signers(),
+                    trigger='cron_reminder',
+                    raise_on_failure=False,
+                )
+            except Exception as exc:  # pragma: no cover - defensive best-effort guard
+                _logger.exception(
+                    "Reminder notification service failure for request %s",
+                    request.id,
+                    exc_info=exc,
+                )
+                request._append_audit_event(
+                    'notification_failed',
+                    event_at=now,
+                    metadata={
+                        'notification_type': 'reminder',
+                        'recipient_kind': 'signer',
+                        'trigger': 'cron_reminder',
+                        'template_xmlid': notification_service.REMINDER_TEMPLATE_XMLID,
+                        'failure_reason': notification_service.FAILURE_REASON_NOTIFICATION_SERVICE_ERROR,
+                    },
+                )
+                continue
+            if queued_mail_ids:
+                request.write({
+                    'last_reminder_at': now,
+                    'reminder_count': request.reminder_count + 1,
+                    'last_event_at': now,
+                })
         return True
 
     @api.model
@@ -405,12 +458,41 @@ class OpenSignRequest(models.Model):
     def action_send(self):
         now = fields.Datetime.now()
         for request in self:
-            request._check_transition('sent')
-            request._check_can_send()
-            request._transition_to('sent', {
-                'sent_at': request.sent_at or now,
-                'last_event_at': now,
-            })
+            actionable_signers = request._get_actionable_signers()
+            try:
+                with self.env.cr.savepoint():
+                    request._check_transition('sent')
+                    request._check_can_send()
+                    request._transition_to('sent', {
+                        'sent_at': request.sent_at or now,
+                        'last_event_at': now,
+                    })
+                    request._append_audit_event(
+                        'request_sent',
+                        event_at=now,
+                        metadata={'signer_ids': actionable_signers.ids},
+                    )
+                    notification_service.queue_request_invitations(
+                        request,
+                        actionable_signers,
+                        trigger='initial_send',
+                        raise_on_failure=True,
+                    )
+            except notification_service.NotificationQueueFailure as exc:
+                notification_service.append_durable_notification_failure(
+                    request.id,
+                    registry=self.env.registry,
+                    env=self.env,
+                    signer_id=exc.signer_id,
+                    notification_type=exc.notification_type,
+                    recipient_kind=exc.recipient_kind,
+                    recipient_email=exc.recipient_email,
+                    trigger='initial_send',
+                    template_xmlid=exc.template_xmlid,
+                    reason=exc.reason,
+                    event_at=now,
+                )
+                raise ValidationError(exc.display_message) from exc
 
     def action_cancel(self):
         now = fields.Datetime.now()
@@ -428,6 +510,30 @@ class OpenSignRequest(models.Model):
                 'completed_at': request.completed_at or now,
                 'last_event_at': now,
             })
+            request._append_audit_event('request_completed', event_at=now)
+            with self.env.cr.savepoint():
+                try:
+                    notification_service.queue_request_completion_notifications(
+                        request,
+                        raise_on_failure=False,
+                    )
+                except Exception as exc:  # pragma: no cover - defensive best-effort guard
+                    _logger.exception(
+                        "Completion notification service failure for request %s",
+                        request.id,
+                        exc_info=exc,
+                    )
+                    request._append_audit_event(
+                        'notification_failed',
+                        event_at=now,
+                        metadata={
+                            'notification_type': 'completion',
+                            'recipient_kind': 'mixed',
+                            'trigger': 'request_completed',
+                            'template_xmlid': False,
+                            'failure_reason': notification_service.FAILURE_REASON_NOTIFICATION_SERVICE_ERROR,
+                        },
+                    )
 
     def action_void(self, reason=None):
         del reason  # reason persistence is added with audit log implementation.
