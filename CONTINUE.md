@@ -1,7 +1,7 @@
 # Open Sign Continuation Notes
 
-Last updated: 2026-03-10
-Scope checkpoint: T33 ordered-signing hardening closed on Odoo 19
+Last updated: 2026-03-12
+Scope checkpoint: T36 portal replay/token-abuse hardening closed on Odoo 19
 
 ## Why This Exists
 
@@ -641,12 +641,12 @@ Use this before marking any task complete (especially model/state/security work)
    - `./odoo-bin -d <db> -i open_sign_portal --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign_portal --stop-after-init`
    - `scripts/review_gate_open_sign.sh --skip-web -d <db>`
-2. If tests pass, continue Phase 3 with `T36` portal security tests for replay and token abuse on top of the now-closed `T32`/`T33`/`T34`/`T35` portal baseline.
+2. If tests pass, continue Phase 3 with `T37` optional OTP verification flow on top of the now-closed `T32`/`T33`/`T34`/`T35`/`T36` portal baseline.
 3. Re-run recurring hardening re-audit (`T610`) after each major phase slice and after every 3 completed implementation tasks.
 
 ## Next Tasks (Planned Order)
 
-1. `T36` Add portal security tests for replay and token abuse.
+1. `T37` Implement optional OTP verification flow.
 
 ## Notes For Next Chat
 
@@ -708,3 +708,12 @@ Use this before marking any task complete (especially model/state/security work)
   - raw notification exceptions are logged server-side and are no longer persisted in audit metadata or reflected back through atomic invitation queue error messages
   - durable failure audit for atomic invitation flows remains in place for initial send and actionable manual resend/correction
   - best-effort reminder/completion/decline and wrapper failure paths now use sanitized failure codes too
+- `T36` is now closed. Additional portal security guarantees now include:
+  - dedicated replay/token-abuse coverage in `addons/open_sign_portal/tests/test_portal_security.py` with shared helper extraction in `addons/open_sign_portal/tests/common.py`
+  - explicit exact-match token semantics across signer page, source-PDF document route, and JSONRPC save/submit/decline endpoints for valid, wrong, near-match, missing, rotated, and mismatched-internal-user access paths
+  - rotated old tokens are now proven invalid everywhere current portal auth applies, while the newly rotated token still works after manual resend/contact correction
+  - stale revision, request lock contention, duplicate submit/decline replay, waiting-signer direct JSONRPC abuse, and terminal mutation denial are all explicitly covered against the current portal contract
+  - waiting signers remain unable to save or submit early, can still decline, and waiting-page visits remain non-opening evidence
+  - `/document` source-PDF abuse boundaries are now explicitly covered for waiting signers, terminal review states, and cancelled/voided denial paths
+  - denial/error no-leak assertions now prove invalid/rotated token responses and related audit checks do not echo raw tokens or tokenized URLs
+  - `T36` intentionally does not add true token expiry, rate limiting, durable idempotency/replayed-response caching, OTP flow changes, or final artifact token access; those remain deferred to `T37`, `T316`/`T317`, and `T40`/`T41`/`T47`

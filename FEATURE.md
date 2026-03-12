@@ -8,7 +8,7 @@
 | Version | `1.1.0` |
 | Status | `Active (Living Document)` |
 | Created | `2026-02-26` |
-| Last Updated | `2026-03-10` |
+| Last Updated | `2026-03-12` |
 | Product Area | `Open Sign Odoo Addons` |
 | Primary Owner | `Engineering` |
 | Review Cadence | `Weekly or at milestone close` |
@@ -1221,7 +1221,7 @@ Legend:
 - [x] `T33` Enforce signer order (sequential and parallel policies).
 - [x] `T34` Implement decline flow and reason capture.
 - [x] `T35` Add reminder/invitation/completion notifications, and make portal token URL generation the canonical source for resend/copy-link/invitation/reminder/completion flows.
-- [ ] `T36` Add portal security tests for replay and token abuse.
+- [x] `T36` Add portal security tests for replay and token abuse.
 - [ ] `T37` Implement optional OTP verification flow.
 - [ ] `T38` Implement endpoint response envelope/error codes and contract tests.
 - [ ] `T39` Add portal addon ACL/rules (`security/ir.model.access.csv`, portal model record rules) for session/OTP models.
@@ -1471,3 +1471,4 @@ Counts below track only `T*` development tasks in the phase task board.
 | `2026-03-11` | Codex | Applied the `T35` closeout fix after full review: base `open.sign.request.signer._get_notification_sign_url()` no longer falls back to the internal backend `sign_access_url`, so signer-facing invitation/reminder/completion links are available only when `open_sign_portal` supplies a real tokenized portal URL. This makes invitation/send and actionable manual resend fail truthfully instead of emailing backend links, while reminder and signer-completion flows now skip truthfully when a signer portal URL is unavailable and owner-only completion/decline mail remains valid. Strengthened proof coverage by asserting completion mail link + attachment semantics, adding rollback coverage for missing signer notification URLs, and adding backend view-arch checks for manager-only resend visibility plus canonical copy-link exposure. Revalidated with `/open_sign` (`122 tests, 0 failed`) and `/open_sign_portal` (`99 tests, 0 failed`). |
 | `2026-03-11` | Codex | Applied the final `T35` closeout hardening after full closeout review: atomic invitation failures now persist durable `notification_failed` audit evidence outside the rolled-back savepoint for both `action_send()` and actionable manager resend/correction, covering missing signer portal URLs, missing invitation templates, and queue exceptions without weakening the atomic rollback of request/resend state. Best-effort reminder/completion/decline flows remain unchanged. Revalidated with `/open_sign`, `/open_sign_portal`, and `scripts/review_gate_open_sign.sh --skip-web` (all green). |
 | `2026-03-11` | Codex | Completed the final `T35` closeout sanitization pass: `notification_failed.metadata_json.failure_reason` now stores only stable safe codes (`missing_template`, `signer_notification_url_unavailable`, `mail_queue_error`, `notification_service_error`) across invitation, reminder, completion, decline, and wrapper failure paths; raw notification exceptions now go only to server logs; atomic invitation failures still persist durable failure audit while user-facing queue errors remain deterministic and token-safe. Revalidated with `/open_sign` (`123 tests, 0 failed`), `/open_sign_portal` (`100 tests, 0 failed`), and `scripts/review_gate_open_sign.sh --skip-web` (passed). |
+| `2026-03-12` | Codex | Completed `T36` by adding a dedicated portal security suite (`test_portal_security.py`) plus shared portal test helpers (`open_sign_portal/tests/common.py`) to cover the current signer-token lifecycle, replay/stale/lock denial paths, rotated-token invalidation across page/document/JSONRPC routes, waiting-signer abuse boundaries, terminal replay immutability, and no-leak assertions for denial/audit paths. The implementation did not add token expiry, throttling, idempotency storage, or new portal models; those remain deferred to `T37`, `T316`/`T317`, and later artifact/token tasks. Revalidated with `/open_sign` (`107 tests, 0 failed`), `/open_sign_portal` (`132 tests, 0 failed` / `open_sign_portal: 140 tests`), and `scripts/review_gate_open_sign.sh --skip-web` (passed). |
