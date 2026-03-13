@@ -202,6 +202,47 @@ class OpenSignPortalController(CustomerPortal):
             'message': message,
         }
 
+    @staticmethod
+    def _build_jsonrpc_success_state(*, state, request_revision):
+        return {
+            'ok': True,
+            'state': state,
+            'request_revision': request_revision,
+        }
+
+    def _build_jsonrpc_redirect_url(self, *, signer_id, access_token=False, query_flag=False):
+        redirect_url = f'/my/sign/{signer_id}'
+        query_params = []
+        if access_token:
+            query_params.append(f'access_token={access_token}')
+        if query_flag:
+            query_params.append(query_flag)
+        if query_params:
+            redirect_url = f"{redirect_url}?{'&'.join(query_params)}"
+        return redirect_url
+
+    def _build_jsonrpc_success_redirect(self, *, signer_id, access_token=False, request_revision, query_flag):
+        return {
+            'ok': True,
+            'force_refresh': True,
+            'redirect_url': self._build_jsonrpc_redirect_url(
+                signer_id=signer_id,
+                access_token=access_token,
+                query_flag=query_flag,
+            ),
+            'request_revision': request_revision,
+        }
+
+    def _build_jsonrpc_success_otp_verified(self, *, signer_id, access_token=False, request_revision):
+        response = self._build_jsonrpc_success_redirect(
+            signer_id=signer_id,
+            access_token=access_token,
+            request_revision=request_revision,
+            query_flag='otp_verified=1',
+        )
+        response['otp_verified'] = True
+        return response
+
     def _invalid_token_response(self):
         return self._build_error_response(
             'invalid_token',
@@ -214,6 +255,32 @@ class OpenSignPortalController(CustomerPortal):
         if message.startswith(prefix):
             return message.split('::', 1)[1]
         return False
+
+    def _jsonrpc_error_from_access(self, exc, *, allow_order_block=False, allow_consent=False):
+        message = str(exc)
+        if allow_order_block and message.startswith(f'{SIGNING_ORDER_BLOCKED_MARKER}::'):
+            return self._build_error_response('signing_order_blocked', message.split('::', 1)[1])
+        if allow_consent and message.startswith(f'{CONSENT_REQUIRED_MARKER}::'):
+            return self._build_error_response('consent_required', message.split('::', 1)[1])
+        return self._invalid_token_response()
+
+    def _jsonrpc_error_from_validation(self, exc, *, allow_contract_message=False):
+        message = str(exc)
+        if self._extract_marked_message(message, STALE_REVISION_MARKER):
+            return self._build_error_response('stale_revision', message.split('::', 1)[1])
+        if allow_contract_message:
+            contract_message = self._extract_marked_message(message, CONTRACT_UNAVAILABLE_MARKER)
+            if contract_message:
+                return self._build_error_response('validation_error', contract_message)
+        if '::' in message:
+            return self._build_error_response('validation_error', message.split('::', 1)[1])
+        return self._build_error_response('validation_error', message)
+
+    def _jsonrpc_request_locked_response(self):
+        return self._build_error_response(
+            'request_locked',
+            _("The signing request is currently locked. Try again."),
+        )
 
     @staticmethod
     def _normalize_line_endings(value):
@@ -983,28 +1050,18 @@ class OpenSignPortalController(CustomerPortal):
                         'lock_version': sign_request.lock_version + 1,
                         'last_event_at': event_at,
                     })
-            return {
-                'ok': True,
-                'state': sign_request.status,
-                'request_revision': sign_request.lock_version,
-            }
+            return self._build_jsonrpc_success_state(
+                state=sign_request.status,
+                request_revision=sign_request.lock_version,
+            )
         except MissingError:
             return self._invalid_token_response()
         except AccessError as exc:
-            message = str(exc)
-            if message.startswith(f'{SIGNING_ORDER_BLOCKED_MARKER}::'):
-                return self._build_error_response('signing_order_blocked', message.split('::', 1)[1])
-            return self._invalid_token_response()
+            return self._jsonrpc_error_from_access(exc, allow_order_block=True)
         except LockNotAvailable:
-            return self._build_error_response('request_locked', _("The signing request is currently locked. Try again."))
+            return self._jsonrpc_request_locked_response()
         except ValidationError as exc:
-            message = str(exc)
-            if self._extract_marked_message(message, STALE_REVISION_MARKER):
-                return self._build_error_response('stale_revision', message.split('::', 1)[1])
-            contract_message = self._extract_marked_message(message, CONTRACT_UNAVAILABLE_MARKER)
-            if contract_message:
-                return self._build_error_response('validation_error', contract_message)
-            return self._build_error_response('validation_error', message)
+            return self._jsonrpc_error_from_validation(exc, allow_contract_message=True)
 
     @http.route(['/my/sign/<int:signer_id>/submit'], type='jsonrpc', auth='public')
     def portal_sign_submit(self, signer_id, access_token=None, **payload):
@@ -1064,36 +1121,20 @@ class OpenSignPortalController(CustomerPortal):
 
             self._queue_best_effort_next_wave_invitations(sign_request, newly_actionable_signers)
 
-            redirect_url = f'/my/sign/{signer_sudo.id}'
-            if access_token:
-                redirect_url = f'{redirect_url}?access_token={access_token}&submitted=1'
-            else:
-                redirect_url = f'{redirect_url}?submitted=1'
-            return {
-                'ok': True,
-                'force_refresh': True,
-                'redirect_url': redirect_url,
-                'request_revision': sign_request.lock_version,
-            }
+            return self._build_jsonrpc_success_redirect(
+                signer_id=signer_sudo.id,
+                access_token=access_token,
+                request_revision=sign_request.lock_version,
+                query_flag='submitted=1',
+            )
         except MissingError:
             return self._invalid_token_response()
         except AccessError as exc:
-            message = str(exc)
-            if message.startswith(f'{SIGNING_ORDER_BLOCKED_MARKER}::'):
-                return self._build_error_response('signing_order_blocked', message.split('::', 1)[1])
-            if message.startswith(f'{CONSENT_REQUIRED_MARKER}::'):
-                return self._build_error_response('consent_required', message.split('::', 1)[1])
-            return self._invalid_token_response()
+            return self._jsonrpc_error_from_access(exc, allow_order_block=True, allow_consent=True)
         except LockNotAvailable:
-            return self._build_error_response('request_locked', _("The signing request is currently locked. Try again."))
+            return self._jsonrpc_request_locked_response()
         except ValidationError as exc:
-            message = str(exc)
-            if self._extract_marked_message(message, STALE_REVISION_MARKER):
-                return self._build_error_response('stale_revision', message.split('::', 1)[1])
-            contract_message = self._extract_marked_message(message, CONTRACT_UNAVAILABLE_MARKER)
-            if contract_message:
-                return self._build_error_response('validation_error', contract_message)
-            return self._build_error_response('validation_error', message)
+            return self._jsonrpc_error_from_validation(exc, allow_contract_message=True)
 
     @http.route(['/my/sign/<int:signer_id>/decline'], type='jsonrpc', auth='public')
     def portal_sign_decline(self, signer_id, access_token=None, **payload):
@@ -1134,29 +1175,20 @@ class OpenSignPortalController(CustomerPortal):
 
             self._queue_best_effort_decline_notification(sign_request, signer_sudo)
 
-            redirect_url = f'/my/sign/{signer_sudo.id}'
-            if access_token:
-                redirect_url = f'{redirect_url}?access_token={access_token}&declined=1'
-            else:
-                redirect_url = f'{redirect_url}?declined=1'
-            return {
-                'ok': True,
-                'force_refresh': True,
-                'redirect_url': redirect_url,
-                'request_revision': sign_request.lock_version,
-            }
-        except (AccessError, MissingError):
+            return self._build_jsonrpc_success_redirect(
+                signer_id=signer_sudo.id,
+                access_token=access_token,
+                request_revision=sign_request.lock_version,
+                query_flag='declined=1',
+            )
+        except MissingError:
             return self._invalid_token_response()
+        except AccessError as exc:
+            return self._jsonrpc_error_from_access(exc)
         except LockNotAvailable:
-            return self._build_error_response('request_locked', _("The signing request is currently locked. Try again."))
+            return self._jsonrpc_request_locked_response()
         except ValidationError as exc:
-            message = str(exc)
-            if self._extract_marked_message(message, STALE_REVISION_MARKER):
-                return self._build_error_response('stale_revision', message.split('::', 1)[1])
-            contract_message = self._extract_marked_message(message, CONTRACT_UNAVAILABLE_MARKER)
-            if contract_message:
-                return self._build_error_response('validation_error', contract_message)
-            return self._build_error_response('validation_error', message)
+            return self._jsonrpc_error_from_validation(exc, allow_contract_message=True)
 
     @http.route(['/my/sign/<int:signer_id>/otp/request'], type='jsonrpc', auth='public')
     def portal_sign_otp_request(self, signer_id, access_token=None, **payload):
@@ -1190,17 +1222,12 @@ class OpenSignPortalController(CustomerPortal):
                     },
                 )
 
-            redirect_url = f'/my/sign/{signer_sudo.id}'
-            if access_token:
-                redirect_url = f'{redirect_url}?access_token={access_token}&otp_requested=1'
-            else:
-                redirect_url = f'{redirect_url}?otp_requested=1'
-            return {
-                'ok': True,
-                'force_refresh': True,
-                'redirect_url': redirect_url,
-                'request_revision': sign_request.lock_version,
-            }
+            return self._build_jsonrpc_success_redirect(
+                signer_id=signer_sudo.id,
+                access_token=access_token,
+                request_revision=sign_request.lock_version,
+                query_flag='otp_requested=1',
+            )
         except notification_service.NotificationQueueFailure as exc:
             notification_service.append_durable_notification_failure(
                 signer_sudo.request_id.id,
@@ -1219,17 +1246,11 @@ class OpenSignPortalController(CustomerPortal):
         except MissingError:
             return self._invalid_token_response()
         except AccessError as exc:
-            message = str(exc)
-            if message.startswith(f'{SIGNING_ORDER_BLOCKED_MARKER}::'):
-                return self._build_error_response('signing_order_blocked', message.split('::', 1)[1])
-            return self._invalid_token_response()
+            return self._jsonrpc_error_from_access(exc, allow_order_block=True)
         except LockNotAvailable:
-            return self._build_error_response('request_locked', _("The signing request is currently locked. Try again."))
+            return self._jsonrpc_request_locked_response()
         except ValidationError as exc:
-            message = str(exc)
-            if self._extract_marked_message(message, STALE_REVISION_MARKER):
-                return self._build_error_response('stale_revision', message.split('::', 1)[1])
-            return self._build_error_response('validation_error', message.split('::', 1)[1] if '::' in message else message)
+            return self._jsonrpc_error_from_validation(exc)
 
     @http.route(['/my/sign/<int:signer_id>/otp/verify'], type='jsonrpc', auth='public')
     def portal_sign_otp_verify(self, signer_id, access_token=None, **payload):
@@ -1253,7 +1274,7 @@ class OpenSignPortalController(CustomerPortal):
                     )
                 except ValidationError as exc:
                     # Invalid attempts must persist challenge attempt counters.
-                    return self._build_error_response('validation_error', str(exc))
+                    return self._jsonrpc_error_from_validation(exc)
                 signer_sudo.sudo().write({
                     'otp_verified_at': verified_at,
                     'ip_last': self._extract_request_ip(),
@@ -1273,29 +1294,16 @@ class OpenSignPortalController(CustomerPortal):
                         'attempt_count_before': attempt_count_before,
                     },
                 )
-            redirect_url = f'/my/sign/{signer_sudo.id}'
-            if access_token:
-                redirect_url = f'{redirect_url}?access_token={access_token}&otp_verified=1'
-            else:
-                redirect_url = f'{redirect_url}?otp_verified=1'
-            return {
-                'ok': True,
-                'otp_verified': True,
-                'force_refresh': True,
-                'redirect_url': redirect_url,
-                'request_revision': sign_request.lock_version,
-            }
+            return self._build_jsonrpc_success_otp_verified(
+                signer_id=signer_sudo.id,
+                access_token=access_token,
+                request_revision=sign_request.lock_version,
+            )
         except MissingError:
             return self._invalid_token_response()
         except AccessError as exc:
-            message = str(exc)
-            if message.startswith(f'{SIGNING_ORDER_BLOCKED_MARKER}::'):
-                return self._build_error_response('signing_order_blocked', message.split('::', 1)[1])
-            return self._invalid_token_response()
+            return self._jsonrpc_error_from_access(exc, allow_order_block=True)
         except LockNotAvailable:
-            return self._build_error_response('request_locked', _("The signing request is currently locked. Try again."))
+            return self._jsonrpc_request_locked_response()
         except ValidationError as exc:
-            message = str(exc)
-            if self._extract_marked_message(message, STALE_REVISION_MARKER):
-                return self._build_error_response('stale_revision', message.split('::', 1)[1])
-            return self._build_error_response('validation_error', message.split('::', 1)[1] if '::' in message else message)
+            return self._jsonrpc_error_from_validation(exc)

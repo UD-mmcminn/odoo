@@ -1,7 +1,7 @@
 # Open Sign Continuation Notes
 
 Last updated: 2026-03-13
-Scope checkpoint: T37 optional portal email OTP flow closed on Odoo 19
+Scope checkpoint: T38 portal endpoint contract hardening closed on Odoo 19
 
 ## Why This Exists
 
@@ -641,12 +641,12 @@ Use this before marking any task complete (especially model/state/security work)
    - `./odoo-bin -d <db> -i open_sign_portal --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign_portal --stop-after-init`
    - `scripts/review_gate_open_sign.sh --skip-web -d <db>`
-2. If tests pass, continue Phase 3 with `T38` endpoint response envelope/error-code contract hardening on top of the now-closed `T32`/`T33`/`T34`/`T35`/`T36`/`T37` portal baseline.
+2. If tests pass, continue Phase 3 with `T39` portal ACL/rule hardening for OTP/session model exposure on top of the now-closed `T32`/`T33`/`T34`/`T35`/`T36`/`T37`/`T38` portal baseline.
 3. Re-run recurring hardening re-audit (`T610`) after each major phase slice and after every 3 completed implementation tasks.
 
 ## Next Tasks (Planned Order)
 
-1. `T38` Implement endpoint response envelope/error-code contract tests and hardening.
+1. `T39` Add portal addon ACL/rules (`security/ir.model.access.csv`, record rules) for OTP/session models.
 
 ## Notes For Next Chat
 
@@ -689,9 +689,14 @@ Use this before marking any task complete (especially model/state/security work)
   - fake resend chatter/link behavior was replaced with a manager-only pending-signer contact-correction/resend wizard that requires a reason, rotates the signer token every time, and either queues immediately or truthfully defers delivery until send / until the signer becomes actionable
   - notification audit events now distinguish `notification_queued`, `notification_failed`, and `notification_skipped`, and `signer_contact_corrected` records the controlled resend/correction path without storing raw tokens or full tokenized URLs
   - closeout proof now explicitly covers completion mail attachment + link semantics and backend view-arch visibility for manager-only resend vs canonical copy-link exposure
+- `T38` is now closed. Additional contract guarantees now include:
+  - `doc/open_sign/m0/PORTAL_API_CONTRACT.md` now matches the shipped runtime rather than the older M0 draft drift, including redirect-style success envelopes for `decline`, `otp/request`, and `otp/verify`
+  - mutating signer JSONRPC routes now build success and error envelopes through a shared controller contract layer instead of repeating inline response dicts and ad hoc exception mapping
+  - active runtime error codes are now explicitly locked to `invalid_token`, `validation_error`, `consent_required`, `signing_order_blocked`, `request_locked`, and `stale_revision`
+  - reserved/deferred codes `expired_token` and `idempotency_conflict` are now explicitly documented as non-active runtime contract values rather than implied current behavior
+  - the dedicated `addons/open_sign_portal/tests/test_portal_contract.py` suite now locks exact success-envelope shape, exact error-envelope shape, route-level allowed error-code behavior, reserved-code non-emission, and token-safe denial-path behavior for `save`, `submit`, `decline`, `otp/request`, and `otp/verify`
 - Remaining deferred items remain deferred exactly as planned:
   - `T316`/`T317`: durable idempotency storage and replay/race semantics
-  - `T38`: endpoint response envelope/error-code contract hardening
   - `T39`: ACL/rule hardening for portal OTP/session model exposure
   - `T40`/`T41`: final completion/final PDF generation
 - Current notification semantics still stop at truthful queue creation through Odoo mail; remote SMTP acceptance/open proof remains out of scope.
