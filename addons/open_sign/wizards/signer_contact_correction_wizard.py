@@ -75,6 +75,9 @@ class OpenSignSignerContactCorrectionWizard(models.TransientModel):
                 if normalized_email != old_email:
                     signer_sudo.write({'email': normalized_email})
                 signer_sudo._rotate_portal_token()
+                signer_sudo._invalidate_portal_security_state_on_manual_resend(
+                    email_changed=normalized_email != old_email,
+                )
 
                 if sign_request.status == 'versioned':
                     delivery_disposition = 'deferred_until_send'

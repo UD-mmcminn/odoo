@@ -12,6 +12,7 @@ REMINDER_TEMPLATE_XMLID = 'open_sign.mail_template_signer_reminder'
 COMPLETION_SIGNER_TEMPLATE_XMLID = 'open_sign.mail_template_request_completed_signer'
 COMPLETION_OWNER_TEMPLATE_XMLID = 'open_sign.mail_template_request_completed_owner'
 DECLINE_OWNER_TEMPLATE_XMLID = 'open_sign.mail_template_request_declined_owner'
+OTP_TEMPLATE_XMLID = 'open_sign.mail_template_signer_otp_code'
 MAIL_LAYOUT_XMLID = 'mail.mail_notification_light'
 FAILURE_REASON_MISSING_TEMPLATE = 'missing_template'
 FAILURE_REASON_SIGNER_NOTIFICATION_URL_UNAVAILABLE = 'signer_notification_url_unavailable'
@@ -265,7 +266,10 @@ def queue_request_invitations(sign_request, signers, *, trigger, raise_on_failur
                 signer,
                 email_to=recipient_email,
                 email_values={'email_to': recipient_email},
-                context={'signer_portal_url': notification_url},
+                context={
+                    'signer_portal_url': notification_url,
+                    'otp_required': bool('otp_required' in signer._fields and signer.otp_required),
+                },
                 raise_on_failure=raise_on_failure,
             )
         except Exception as exc:  # pragma: no cover - exception type depends on mail internals
@@ -360,7 +364,10 @@ def queue_request_reminders(sign_request, signers, *, trigger, raise_on_failure=
                 signer,
                 email_to=recipient_email,
                 email_values={'email_to': recipient_email},
-                context={'signer_portal_url': notification_url},
+                context={
+                    'signer_portal_url': notification_url,
+                    'otp_required': bool('otp_required' in signer._fields and signer.otp_required),
+                },
                 raise_on_failure=raise_on_failure,
             )
         except Exception as exc:  # pragma: no cover - exception type depends on mail internals
@@ -645,6 +652,87 @@ def queue_request_decline_notification(sign_request, decliner, *, raise_on_failu
         trigger='request_declined',
         template_xmlid=DECLINE_OWNER_TEMPLATE_XMLID,
         signer=decliner,
+        mail_mail_id=mail_mail_id,
+    )
+    return mail_mail_id
+
+
+def queue_request_otp_notification(sign_request, signer, *, otp_code, expires_at, trigger, raise_on_failure=True):
+    sign_request.ensure_one()
+    signer.ensure_one()
+    recipient_email = _normalize_email(signer.email)
+    template = _get_template(
+        sign_request.env,
+        OTP_TEMPLATE_XMLID,
+        notification_type='otp',
+        raise_on_failure=raise_on_failure,
+    )
+    if not template:
+        _append_notification_event(
+            sign_request,
+            event_type='notification_failed',
+            notification_type='otp',
+            recipient_kind='signer',
+            recipient_email=recipient_email,
+            trigger=trigger,
+            template_xmlid=OTP_TEMPLATE_XMLID,
+            signer=signer,
+            reason=FAILURE_REASON_MISSING_TEMPLATE,
+        )
+        return False
+    try:
+        mail_mail_id = _queue_template(
+            template,
+            signer,
+            email_to=recipient_email,
+            email_values={'email_to': recipient_email},
+            context={
+                'otp_code': otp_code,
+                'otp_expires_at': fields.Datetime.to_string(expires_at),
+                'otp_ttl_minutes': 10,
+            },
+            raise_on_failure=raise_on_failure,
+        )
+    except Exception as exc:  # pragma: no cover - exception type depends on mail internals
+        _log_notification_exception(
+            'otp',
+            trigger,
+            exc,
+            request_id=sign_request.id,
+            signer_id=signer.id,
+            template_xmlid=OTP_TEMPLATE_XMLID,
+        )
+        if raise_on_failure:
+            raise NotificationQueueFailure(
+                notification_type='otp',
+                recipient_kind='signer',
+                recipient_email=recipient_email,
+                template_xmlid=OTP_TEMPLATE_XMLID,
+                signer_id=signer.id,
+                reason=FAILURE_REASON_MAIL_QUEUE_ERROR,
+                display_message=_("Failed to queue the verification email."),
+            ) from exc
+        _append_notification_event(
+            sign_request,
+            event_type='notification_failed',
+            notification_type='otp',
+            recipient_kind='signer',
+            recipient_email=recipient_email,
+            trigger=trigger,
+            template_xmlid=OTP_TEMPLATE_XMLID,
+            signer=signer,
+            reason=FAILURE_REASON_MAIL_QUEUE_ERROR,
+        )
+        return False
+    _append_notification_event(
+        sign_request,
+        event_type='notification_queued',
+        notification_type='otp',
+        recipient_kind='signer',
+        recipient_email=recipient_email,
+        trigger=trigger,
+        template_xmlid=OTP_TEMPLATE_XMLID,
+        signer=signer,
         mail_mail_id=mail_mail_id,
     )
     return mail_mail_id

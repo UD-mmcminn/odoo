@@ -15,6 +15,17 @@
                         optional="show"
                         groups="open_sign.group_open_sign_user,open_sign.group_open_sign_manager"
                     />
+                    <field
+                        name="otp_required"
+                        optional="show"
+                        groups="open_sign.group_open_sign_user,open_sign.group_open_sign_manager"
+                    />
+                    <field
+                        name="otp_verified_at"
+                        optional="hide"
+                        readonly="1"
+                        groups="open_sign.group_open_sign_user,open_sign.group_open_sign_manager"
+                    />
                 </xpath>
             </field>
         </record>
@@ -32,6 +43,15 @@
                         readonly="1"
                         groups="open_sign.group_open_sign_user,open_sign.group_open_sign_manager"
                     />
+                    <field
+                        name="otp_required"
+                        groups="open_sign.group_open_sign_user,open_sign.group_open_sign_manager"
+                    />
+                    <field
+                        name="otp_verified_at"
+                        readonly="1"
+                        groups="open_sign.group_open_sign_user,open_sign.group_open_sign_manager"
+                    />
                 </xpath>
             </field>
         </record>
@@ -46,6 +66,17 @@
                         name="portal_sign_url"
                         string="Copy Link"
                         widget="CopyClipboardURL"
+                        readonly="1"
+                        groups="open_sign.group_open_sign_user,open_sign.group_open_sign_manager"
+                    />
+                    <field
+                        name="otp_required"
+                        optional="show"
+                        groups="open_sign.group_open_sign_user,open_sign.group_open_sign_manager"
+                    />
+                    <field
+                        name="otp_verified_at"
+                        optional="hide"
                         readonly="1"
                         groups="open_sign.group_open_sign_user,open_sign.group_open_sign_manager"
                     />

@@ -25,8 +25,9 @@ LIFECYCLE_FIELDS = {
     'consent_accepted_at',
     'consent_text_hash',
     'signer_timezone',
+    'otp_verified_at',
 }
-SIGNER_CONTRACT_FIELDS = {'request_id', 'partner_id', 'email', 'role_id', 'sequence'}
+SIGNER_CONTRACT_FIELDS = {'request_id', 'partner_id', 'email', 'role_id', 'sequence', 'otp_required'}
 SIGNER_CONTRACT_FROZEN_STATUSES = {
     'versioned',
     'sent',
@@ -320,6 +321,11 @@ class OpenSignRequestSigner(models.Model):
     def _supports_portal_resend_rotation(self):
         self.ensure_one()
         return False
+
+    def _invalidate_portal_security_state_on_manual_resend(self, *, email_changed=False):
+        self.ensure_one()
+        del email_changed
+        return
 
     def _check_contact_correction_allowed(self):
         self.ensure_one()

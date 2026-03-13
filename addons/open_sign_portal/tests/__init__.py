@@ -2,3 +2,4 @@
 
 from . import test_portal_scaffold
 from . import test_portal_security
+from . import test_portal_otp

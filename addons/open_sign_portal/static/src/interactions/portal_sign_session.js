@@ -12,12 +12,16 @@ export class OpenSignPortalSession extends Interaction {
         ".o_open_sign_save": { "t-on-click.prevent": this.locked(this.onClickSave, true) },
         ".o_open_sign_submit": { "t-on-click.prevent": this.locked(this.onClickSubmit, true) },
         ".o_open_sign_decline_confirm": { "t-on-click.prevent": this.locked(this.onClickDecline, true) },
+        ".o_open_sign_otp_request": { "t-on-click.prevent": this.locked(this.onClickOtpRequest, true) },
+        ".o_open_sign_otp_verify": { "t-on-click.prevent": this.locked(this.onClickOtpVerify, true) },
     };
 
     setup() {
         this.saveUrl = this.el.dataset.saveUrl;
         this.submitUrl = this.el.dataset.submitUrl;
         this.declineUrl = this.el.dataset.declineUrl;
+        this.otpRequestUrl = this.el.dataset.otpRequestUrl;
+        this.otpVerifyUrl = this.el.dataset.otpVerifyUrl;
         this.accessToken = this.el.dataset.accessToken || false;
         this.requestRevision = Number.parseInt(this.el.dataset.requestRevision || "0", 10) || 0;
         this.consentHash = this.el.dataset.consentHash || "";
@@ -28,6 +32,7 @@ export class OpenSignPortalSession extends Interaction {
         this.consentCheckbox = this.el.querySelector(".o_open_sign_consent");
         this.declineReasonInput = this.el.parentElement?.querySelector(".o_open_sign_decline_reason")
             || this.el.querySelector(".o_open_sign_decline_reason");
+        this.otpCodeInput = this.el.querySelector(".o_open_sign_otp_code");
     }
 
     _newIdempotencyKey() {
@@ -99,6 +104,27 @@ export class OpenSignPortalSession extends Interaction {
             idempotency_key: this._newIdempotencyKey(),
             request_revision: this.requestRevision,
             reason: this.declineReasonInput?.value || "",
+        };
+        if (this.accessToken) {
+            payload.access_token = this.accessToken;
+        }
+        return payload;
+    }
+
+    _buildOtpRequestPayload() {
+        const payload = {
+            request_revision: this.requestRevision,
+        };
+        if (this.accessToken) {
+            payload.access_token = this.accessToken;
+        }
+        return payload;
+    }
+
+    _buildOtpVerifyPayload() {
+        const payload = {
+            request_revision: this.requestRevision,
+            code: this.otpCodeInput?.value || "",
         };
         if (this.accessToken) {
             payload.access_token = this.accessToken;
@@ -195,6 +221,52 @@ export class OpenSignPortalSession extends Interaction {
             return;
         }
         this._showSuccess("Decline recorded.");
+    }
+
+    async onClickOtpRequest() {
+        this._resetAlerts();
+        if (!this.otpRequestUrl) {
+            this._showError("Verification request is not available.");
+            return;
+        }
+        const response = await rpc(this.otpRequestUrl, this._buildOtpRequestPayload());
+        if (!response?.ok) {
+            this._showError(response?.message);
+            return;
+        }
+        this._updateRevisionAndStatus(response);
+        if (response.force_refresh && response.redirect_url) {
+            redirect(response.redirect_url);
+            return;
+        }
+        if (response.force_refresh) {
+            window.location.reload();
+            return;
+        }
+        this._showSuccess("Verification code queued.");
+    }
+
+    async onClickOtpVerify() {
+        this._resetAlerts();
+        if (!this.otpVerifyUrl) {
+            this._showError("Verification is not available.");
+            return;
+        }
+        const response = await rpc(this.otpVerifyUrl, this._buildOtpVerifyPayload());
+        if (!response?.ok) {
+            this._showError(response?.message);
+            return;
+        }
+        this._updateRevisionAndStatus(response);
+        if (response.force_refresh && response.redirect_url) {
+            redirect(response.redirect_url);
+            return;
+        }
+        if (response.force_refresh) {
+            window.location.reload();
+            return;
+        }
+        this._showSuccess("Email verification complete.");
     }
 }
 

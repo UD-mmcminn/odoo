@@ -12,6 +12,9 @@
                 <div>
                     <p>Hello,</p>
                     <p>You have been asked to sign <strong t-out="object.request_id.name"/>.</p>
+                    <p t-if="ctx.get('otp_required')">
+                        This request requires an email verification code before final submit.
+                    </p>
                     <p>
                         <a t-if="ctx.get('signer_portal_url')" t-att-href="ctx['signer_portal_url']">Open signing request</a>
                     </p>
@@ -31,6 +34,9 @@
                 <div>
                     <p>Hello,</p>
                     <p>This is a reminder to review and sign <strong t-out="object.request_id.name"/>.</p>
+                    <p t-if="ctx.get('otp_required')">
+                        This request requires an email verification code before final submit.
+                    </p>
                     <p>
                         <a t-if="ctx.get('signer_portal_url')" t-att-href="ctx['signer_portal_url']">Open signing request</a>
                     </p>
@@ -99,6 +105,25 @@
                     <p>
                         <a t-if="ctx.get('request_backend_url')" t-att-href="ctx['request_backend_url']">Open request</a>
                     </p>
+                </div>
+            </field>
+            <field name="auto_delete" eval="True"/>
+        </record>
+
+        <record id="mail_template_signer_otp_code" model="mail.template">
+            <field name="name">Open Sign: Signer OTP Code</field>
+            <field name="model_id" ref="open_sign.model_open_sign_request_signer"/>
+            <field name="subject">Verification code for {{ object.request_id.name }}</field>
+            <field name="email_to" eval="False"/>
+            <field name="use_default_to" eval="False"/>
+            <field name="description">Email verification code sent to a signer before portal submit.</field>
+            <field name="body_html" type="html">
+                <div>
+                    <p>Hello,</p>
+                    <p>Your verification code for <strong t-out="object.request_id.name"/> is:</p>
+                    <p style="font-size: 24px; font-weight: bold;" t-out="ctx.get('otp_code')"/>
+                    <p>This code expires in <t t-out="ctx.get('otp_ttl_minutes')"/> minutes.</p>
+                    <p>Return to the signing page you already opened and enter this code before submit.</p>
                 </div>
             </field>
             <field name="auto_delete" eval="True"/>

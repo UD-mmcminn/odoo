@@ -107,6 +107,7 @@ class OpenSignPortalTestMixin:
         owner,
         signer_partner=False,
         with_required_signature=False,
+        otp_required=False,
     ):
         template = cls._create_template(env, name)
         role = cls._create_role(env, template, f'{name} Signer', 10)
@@ -149,6 +150,8 @@ class OpenSignPortalTestMixin:
             sequence=10,
             partner=signer_partner,
         )
+        if otp_required:
+            signer.write({'otp_required': True})
         cls._prepare_request_for_portal(sign_request)
         return {
             'template': template,
@@ -170,6 +173,8 @@ class OpenSignPortalTestMixin:
         first_sequence=10,
         second_sequence=20,
         ordered_signing=True,
+        first_otp_required=False,
+        second_otp_required=False,
     ):
         template = cls._create_template(env, name)
         role_first = cls._create_role(env, template, f'{name} First', first_sequence)
@@ -210,6 +215,10 @@ class OpenSignPortalTestMixin:
             sequence=second_sequence,
             partner=second_signer_partner,
         )
+        if first_otp_required:
+            signer_first.write({'otp_required': True})
+        if second_otp_required:
+            signer_second.write({'otp_required': True})
         cls._prepare_request_for_portal(sign_request)
         return {
             'template': template,

@@ -11,6 +11,7 @@ from psycopg2.errors import LockNotAvailable
 from odoo import _, fields, http
 from odoo.addons.open_sign.services import notification_service, validation_service
 from odoo.addons.portal.controllers.portal import CustomerPortal
+from odoo.addons.open_sign_portal.services import otp_service
 from odoo.exceptions import AccessError, MissingError, ValidationError
 from odoo.http import request
 from odoo.tools import consteq
@@ -31,6 +32,11 @@ STALE_REVISION_MARKER = 'STALE_REVISION'
 SIGNING_ORDER_BLOCKED_MARKER = 'SIGNING_ORDER_BLOCKED'
 CONSENT_REQUIRED_MARKER = 'CONSENT_REQUIRED'
 CONTRACT_UNAVAILABLE_MARKER = 'CONTRACT_UNAVAILABLE'
+OTP_REQUIRED_MARKER = 'OTP_REQUIRED'
+OTP_INVALID_MARKER = 'OTP_INVALID'
+OTP_EXPIRED_MARKER = 'OTP_EXPIRED'
+OTP_ATTEMPTS_EXCEEDED_MARKER = 'OTP_ATTEMPTS_EXCEEDED'
+OTP_REQUEST_COOLDOWN_MARKER = 'OTP_REQUEST_COOLDOWN'
 DECLINE_REASON_MAX_LENGTH = 4000
 
 _logger = logging.getLogger(__name__)
@@ -159,6 +165,27 @@ class OpenSignPortalController(CustomerPortal):
         self._assert_request_action_access_allowed(signer.request_id)
         self._assert_signer_mutation_allowed(signer)
 
+    @staticmethod
+    def _is_otp_required_for_signer(signer):
+        return bool(getattr(signer, 'otp_required', False))
+
+    def _get_otp_submit_block_reason(self, signer):
+        if not self._is_otp_required_for_signer(signer) or signer.otp_verified_at:
+            return False
+        return _("Email verification is required before submit.")
+
+    def _assert_locked_signer_otp_allowed(self, signer, *, action):
+        del action
+        self._assert_request_action_access_allowed(signer.request_id)
+        self._assert_signer_mutation_allowed(signer)
+        if not self._is_otp_required_for_signer(signer):
+            raise ValidationError(f"{OTP_REQUIRED_MARKER}::" + _("OTP verification is not enabled for this signer."))
+        if signer.otp_verified_at:
+            raise ValidationError(
+                f"{OTP_REQUIRED_MARKER}::" + _("Email verification is already complete for this signer.")
+            )
+        self._assert_signer_order_allows_mutation(signer)
+
     def _check_signer_document_access(self, signer_id, access_token=None):
         if access_token:
             return self._check_signer_read_access(signer_id, access_token=access_token)
@@ -279,6 +306,16 @@ class OpenSignPortalController(CustomerPortal):
         request_revision = self._ensure_request_revision(payload)
         normalized_reason = self._normalize_decline_reason(payload.get('reason'))
         return request_revision, normalized_reason
+
+    def _validate_otp_request_payload(self, payload):
+        return self._ensure_request_revision(payload)
+
+    def _validate_otp_verify_payload(self, payload):
+        request_revision = self._ensure_request_revision(payload)
+        normalized_code = str(payload.get('code') or '').strip()
+        if len(normalized_code) != otp_service.OTP_CODE_LENGTH or not normalized_code.isdigit():
+            raise ValidationError(f"{OTP_INVALID_MARKER}::" + _("The verification code is invalid."))
+        return request_revision, normalized_code
 
     def _lock_request_for_update(self, sign_request):
         request.env.cr.execute(
@@ -631,6 +668,12 @@ class OpenSignPortalController(CustomerPortal):
                     },
                 )
 
+    @staticmethod
+    def _invalidate_active_otp_challenges(signer):
+        if 'otp_required' not in signer._fields:
+            return
+        otp_service.invalidate_active_challenges(signer.sudo())
+
     def _ensure_session_opened(self, signer, *, event_at):
         transitioned = False
         first_open = signer.state == 'pending'
@@ -761,6 +804,17 @@ class OpenSignPortalController(CustomerPortal):
 
         portal_fields = []
         submit_blocked_reason = False
+        otp_required = self._is_otp_required_for_signer(signer_sudo)
+        otp_verified = bool(otp_required and signer_sudo.otp_verified_at)
+        otp_active_challenge = otp_service.get_active_challenge(signer_sudo) if otp_required else False
+        otp_panel_available = (
+            otp_required
+            and not preview_mode
+            and not portal_error_message
+            and not waiting_mode
+            and not readonly_mode
+        )
+        otp_submit_block_reason = self._get_otp_submit_block_reason(signer_sudo) if otp_panel_available else False
         decline_available = (
             not preview_mode
             and not portal_error_message
@@ -803,6 +857,14 @@ class OpenSignPortalController(CustomerPortal):
                 'decline_available': decline_available,
                 'decline_route': decline_route,
                 'declined_reason_display': declined_reason_display,
+                'otp_required': otp_required,
+                'otp_verified': otp_verified,
+                'otp_request_url': f'/my/sign/{signer_sudo.id}/otp/request' if otp_panel_available and not otp_verified else False,
+                'otp_verify_url': f'/my/sign/{signer_sudo.id}/otp/verify' if otp_panel_available and not otp_verified else False,
+                'otp_email_hint': otp_service.mask_email_address(signer_sudo.email) if otp_panel_available else False,
+                'otp_has_active_challenge': bool(otp_active_challenge),
+                'otp_expires_at': otp_active_challenge.expires_at if otp_active_challenge else False,
+                'otp_submit_block_reason': otp_submit_block_reason,
             },
             'my_open_sign_history',
             True,
@@ -956,6 +1018,8 @@ class OpenSignPortalController(CustomerPortal):
                 self._lock_request_for_update(sign_request)
                 self._assert_request_revision(sign_request, request_revision)
                 self._assert_submit_allowed(signer_sudo)
+                if self._is_otp_required_for_signer(signer_sudo) and not signer_sudo.otp_verified_at:
+                    raise ValidationError(_("Email verification is required before submit."))
                 consent_hash, signer_timezone = self._check_consent_payload(payload)
                 actionable_before_ids = set(sign_request._get_actionable_signers().ids)
 
@@ -976,6 +1040,7 @@ class OpenSignPortalController(CustomerPortal):
                     'signer_timezone': signer_timezone,
                     'ip_last': self._extract_request_ip(),
                 })
+                self._invalidate_active_otp_challenges(signer_sudo)
 
                 if sign_request.status in TERMINAL_REQUEST_STATUSES:
                     raise ValidationError(_("This signing request can no longer be modified."))
@@ -1050,6 +1115,7 @@ class OpenSignPortalController(CustomerPortal):
                     'declined_reason': normalized_reason,
                     'ip_last': self._extract_request_ip(),
                 })
+                self._invalidate_active_otp_challenges(signer_sudo)
                 sign_request._transition_to('declined', {'last_event_at': event_at})
                 sign_request.sudo().write({
                     'lock_version': sign_request.lock_version + 1,
@@ -1092,30 +1158,144 @@ class OpenSignPortalController(CustomerPortal):
                 return self._build_error_response('validation_error', contract_message)
             return self._build_error_response('validation_error', message)
 
-    @http.route(['/my/sign/<int:signer_id>/otp/request'], type='jsonrpc', auth='public', readonly=True)
+    @http.route(['/my/sign/<int:signer_id>/otp/request'], type='jsonrpc', auth='public')
     def portal_sign_otp_request(self, signer_id, access_token=None, **payload):
         access_token = self._resolve_access_token(access_token, payload=payload)
         try:
-            self._check_signer_action_access(signer_id, access_token=access_token)
-        except (AccessError, MissingError):
-            return self._invalid_token_response()
-        except ValidationError as exc:
-            return self._build_error_response('validation_error', str(exc))
-        return self._build_error_response(
-            'validation_error',
-            _("This endpoint is scaffolded and will be implemented in T37."),
-        )
+            signer_sudo = self._check_signer_identity_access(signer_id, access_token=access_token)
+            request_revision = self._validate_otp_request_payload(payload)
+            sign_request = signer_sudo.request_id.sudo()
+            with request.env.cr.savepoint():
+                self._lock_request_for_update(sign_request)
+                self._assert_request_revision(sign_request, request_revision)
+                self._assert_locked_signer_otp_allowed(signer_sudo, action='request')
 
-    @http.route(['/my/sign/<int:signer_id>/otp/verify'], type='jsonrpc', auth='public', readonly=True)
+                event_at = fields.Datetime.now()
+                request_status_before = sign_request.status
+                signer_state_before = signer_sudo.state
+                challenge = otp_service.request_otp_challenge(signer_sudo, trigger='otp_request')
+                sign_request.sudo().write({
+                    'lock_version': sign_request.lock_version + 1,
+                    'last_event_at': event_at,
+                })
+                self._append_audit_event(
+                    signer_sudo,
+                    'otp_requested',
+                    event_at=event_at,
+                    metadata={
+                        'expires_at': fields.Datetime.to_string(challenge.expires_at),
+                        'delivery_channel': 'email',
+                        'request_status_before': request_status_before,
+                        'signer_state_before': signer_state_before,
+                    },
+                )
+
+            redirect_url = f'/my/sign/{signer_sudo.id}'
+            if access_token:
+                redirect_url = f'{redirect_url}?access_token={access_token}&otp_requested=1'
+            else:
+                redirect_url = f'{redirect_url}?otp_requested=1'
+            return {
+                'ok': True,
+                'force_refresh': True,
+                'redirect_url': redirect_url,
+                'request_revision': sign_request.lock_version,
+            }
+        except notification_service.NotificationQueueFailure as exc:
+            notification_service.append_durable_notification_failure(
+                signer_sudo.request_id.id,
+                registry=request.env.registry,
+                env=request.env,
+                signer_id=signer_sudo.id,
+                notification_type='otp',
+                recipient_kind='signer',
+                recipient_email=signer_sudo.email,
+                trigger='otp_request',
+                template_xmlid=notification_service.OTP_TEMPLATE_XMLID,
+                reason=exc.reason,
+                event_at=fields.Datetime.now(),
+            )
+            return self._build_error_response('validation_error', exc.display_message)
+        except MissingError:
+            return self._invalid_token_response()
+        except AccessError as exc:
+            message = str(exc)
+            if message.startswith(f'{SIGNING_ORDER_BLOCKED_MARKER}::'):
+                return self._build_error_response('signing_order_blocked', message.split('::', 1)[1])
+            return self._invalid_token_response()
+        except LockNotAvailable:
+            return self._build_error_response('request_locked', _("The signing request is currently locked. Try again."))
+        except ValidationError as exc:
+            message = str(exc)
+            if self._extract_marked_message(message, STALE_REVISION_MARKER):
+                return self._build_error_response('stale_revision', message.split('::', 1)[1])
+            return self._build_error_response('validation_error', message.split('::', 1)[1] if '::' in message else message)
+
+    @http.route(['/my/sign/<int:signer_id>/otp/verify'], type='jsonrpc', auth='public')
     def portal_sign_otp_verify(self, signer_id, access_token=None, **payload):
         access_token = self._resolve_access_token(access_token, payload=payload)
         try:
-            self._check_signer_action_access(signer_id, access_token=access_token)
-        except (AccessError, MissingError):
+            signer_sudo = self._check_signer_identity_access(signer_id, access_token=access_token)
+            request_revision, normalized_code = self._validate_otp_verify_payload(payload)
+            sign_request = signer_sudo.request_id.sudo()
+            with request.env.cr.savepoint():
+                self._lock_request_for_update(sign_request)
+                self._assert_request_revision(sign_request, request_revision)
+                self._assert_locked_signer_otp_allowed(signer_sudo, action='verify')
+
+                request_status_before = sign_request.status
+                signer_state_before = signer_sudo.state
+                try:
+                    challenge, attempt_count_before, verified_at = otp_service.verify_otp_challenge(
+                        signer_sudo,
+                        normalized_code,
+                        trigger='otp_verify',
+                    )
+                except ValidationError as exc:
+                    # Invalid attempts must persist challenge attempt counters.
+                    return self._build_error_response('validation_error', str(exc))
+                signer_sudo.sudo().write({
+                    'otp_verified_at': verified_at,
+                    'ip_last': self._extract_request_ip(),
+                })
+                sign_request.sudo().write({
+                    'lock_version': sign_request.lock_version + 1,
+                    'last_event_at': verified_at,
+                })
+                self._append_audit_event(
+                    signer_sudo,
+                    'otp_verified',
+                    event_at=verified_at,
+                    metadata={
+                        'delivery_channel': 'email',
+                        'request_status_before': request_status_before,
+                        'signer_state_before': signer_state_before,
+                        'attempt_count_before': attempt_count_before,
+                    },
+                )
+            redirect_url = f'/my/sign/{signer_sudo.id}'
+            if access_token:
+                redirect_url = f'{redirect_url}?access_token={access_token}&otp_verified=1'
+            else:
+                redirect_url = f'{redirect_url}?otp_verified=1'
+            return {
+                'ok': True,
+                'otp_verified': True,
+                'force_refresh': True,
+                'redirect_url': redirect_url,
+                'request_revision': sign_request.lock_version,
+            }
+        except MissingError:
             return self._invalid_token_response()
+        except AccessError as exc:
+            message = str(exc)
+            if message.startswith(f'{SIGNING_ORDER_BLOCKED_MARKER}::'):
+                return self._build_error_response('signing_order_blocked', message.split('::', 1)[1])
+            return self._invalid_token_response()
+        except LockNotAvailable:
+            return self._build_error_response('request_locked', _("The signing request is currently locked. Try again."))
         except ValidationError as exc:
-            return self._build_error_response('validation_error', str(exc))
-        return self._build_error_response(
-            'validation_error',
-            _("This endpoint is scaffolded and will be implemented in T37."),
-        )
+            message = str(exc)
+            if self._extract_marked_message(message, STALE_REVISION_MARKER):
+                return self._build_error_response('stale_revision', message.split('::', 1)[1])
+            return self._build_error_response('validation_error', message.split('::', 1)[1] if '::' in message else message)

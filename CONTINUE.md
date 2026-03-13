@@ -1,7 +1,7 @@
 # Open Sign Continuation Notes
 
-Last updated: 2026-03-12
-Scope checkpoint: T36 portal replay/token-abuse hardening closed on Odoo 19
+Last updated: 2026-03-13
+Scope checkpoint: T37 optional portal email OTP flow closed on Odoo 19
 
 ## Why This Exists
 
@@ -641,12 +641,12 @@ Use this before marking any task complete (especially model/state/security work)
    - `./odoo-bin -d <db> -i open_sign_portal --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign_portal --stop-after-init`
    - `scripts/review_gate_open_sign.sh --skip-web -d <db>`
-2. If tests pass, continue Phase 3 with `T37` optional OTP verification flow on top of the now-closed `T32`/`T33`/`T34`/`T35`/`T36` portal baseline.
+2. If tests pass, continue Phase 3 with `T38` endpoint response envelope/error-code contract hardening on top of the now-closed `T32`/`T33`/`T34`/`T35`/`T36`/`T37` portal baseline.
 3. Re-run recurring hardening re-audit (`T610`) after each major phase slice and after every 3 completed implementation tasks.
 
 ## Next Tasks (Planned Order)
 
-1. `T37` Implement optional OTP verification flow.
+1. `T38` Implement endpoint response envelope/error-code contract tests and hardening.
 
 ## Notes For Next Chat
 
@@ -691,7 +691,8 @@ Use this before marking any task complete (especially model/state/security work)
   - closeout proof now explicitly covers completion mail attachment + link semantics and backend view-arch visibility for manager-only resend vs canonical copy-link exposure
 - Remaining deferred items remain deferred exactly as planned:
   - `T316`/`T317`: durable idempotency storage and replay/race semantics
-  - `T37`: OTP mail / verification semantics
+  - `T38`: endpoint response envelope/error-code contract hardening
+  - `T39`: ACL/rule hardening for portal OTP/session model exposure
   - `T40`/`T41`: final completion/final PDF generation
 - Current notification semantics still stop at truthful queue creation through Odoo mail; remote SMTP acceptance/open proof remains out of scope.
 - If the next session starts at recurring hardening re-audit (`T610` / continuation `T118`), preserve `T17`/`T18`/`T19` invariants:
@@ -716,4 +717,15 @@ Use this before marking any task complete (especially model/state/security work)
   - waiting signers remain unable to save or submit early, can still decline, and waiting-page visits remain non-opening evidence
   - `/document` source-PDF abuse boundaries are now explicitly covered for waiting signers, terminal review states, and cancelled/voided denial paths
   - denial/error no-leak assertions now prove invalid/rotated token responses and related audit checks do not echo raw tokens or tokenized URLs
-  - `T36` intentionally does not add true token expiry, rate limiting, durable idempotency/replayed-response caching, OTP flow changes, or final artifact token access; those remain deferred to `T37`, `T316`/`T317`, and `T40`/`T41`/`T47`
+  - `T36` intentionally did not add true token expiry, rate limiting, durable idempotency/replayed-response caching, or final artifact token access; those remain deferred to `T316`/`T317`, `T38`/later token hardening, and `T40`/`T41`/`T47`
+- `T37` is now closed. Additional portal OTP guarantees now include:
+  - optional per-signer `otp_required` policy on portal signers, frozen after `versioned` alongside the rest of the active signer contract
+  - server-managed `otp_verified_at` evidence on the signer and a new `open.sign.otp.challenge` model storing only salted PBKDF2 code hashes, never raw OTP values
+  - real `POST /my/sign/<id>/otp/request` and `POST /my/sign/<id>/otp/verify` JSONRPC flows with signer auth, request locking, revision checks, ordered-signing gating, and deterministic validation errors
+  - email-only OTP delivery with `6`-digit numeric codes, `10` minute TTL, `5` invalid-attempt limit, and `60` second resend cooldown
+  - submit is blocked until OTP is verified when required, while save remains allowed and decline remains OTP-exempt
+  - waiting signers cannot request or verify OTP before their turn, waiting pages hide OTP controls, and preview/terminal review remain non-mutating and OTP-free
+  - OTP request is atomic with email queueing and reuses the T35 durable sanitized `notification_failed` pattern when the OTP template is missing or email queueing fails
+  - OTP mail never includes a tokenized portal URL or raw access token, while invitation and reminder mail now mention the OTP requirement when applicable
+  - manual resend/contact correction now revokes active OTP challenge state, and changed-email resend also clears prior `otp_verified_at` evidence
+  - `T37` intentionally does not add true token expiry, generic throttling, durable idempotency, SMS/multi-channel OTP, or explicit ACL/rule exposure for `open.sign.otp.challenge`; those remain deferred to later hardening tasks, `T316`/`T317`, and `T39`

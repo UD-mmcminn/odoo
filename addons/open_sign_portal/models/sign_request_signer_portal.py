@@ -5,6 +5,8 @@ import uuid
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError
 
+from odoo.addons.open_sign_portal.services import otp_service
+
 
 TOKEN_CONTROL_FIELDS = {'access_token'}
 
@@ -18,6 +20,18 @@ class OpenSignRequestSigner(models.Model):
         string='Portal Link',
         compute='_compute_portal_sign_url',
         compute_sudo=True,
+        readonly=True,
+        groups='open_sign.group_open_sign_user,open_sign.group_open_sign_manager',
+    )
+    otp_required = fields.Boolean(
+        string='Require Email OTP',
+        default=False,
+        index=True,
+        groups='open_sign.group_open_sign_user,open_sign.group_open_sign_manager',
+    )
+    otp_verified_at = fields.Datetime(
+        string='OTP Verified At',
+        index=True,
         readonly=True,
         groups='open_sign.group_open_sign_user,open_sign.group_open_sign_manager',
     )
@@ -47,6 +61,12 @@ class OpenSignRequestSigner(models.Model):
         new_token = str(uuid.uuid4())
         self.sudo().write({'access_token': new_token})
         return new_token
+
+    def _invalidate_portal_security_state_on_manual_resend(self, *, email_changed=False):
+        self.ensure_one()
+        otp_service.invalidate_active_challenges(self.sudo(), verified_too=True)
+        if email_changed and self.otp_verified_at:
+            self.sudo().write({'otp_verified_at': False})
 
     @api.model
     def _can_manage_portal_token_fields(self):

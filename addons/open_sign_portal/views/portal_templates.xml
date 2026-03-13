@@ -20,6 +20,8 @@
                 t-att-data-save-url="save_route or ''"
                 t-att-data-submit-url="submit_route or ''"
                 t-att-data-decline-url="decline_route or ''"
+                t-att-data-otp-request-url="otp_request_url or ''"
+                t-att-data-otp-verify-url="otp_verify_url or ''"
                 t-att-data-request-revision="request_revision"
                 t-att-data-access-token="access_token or ''"
                 t-att-data-consent-hash="consent_hash"
@@ -77,11 +79,20 @@
                     <div class="alert alert-success" t-if="request.params.get('declined')">
                         Your decline was recorded.
                     </div>
+                    <div class="alert alert-success" t-if="request.params.get('otp_requested')">
+                        Verification code queued.
+                    </div>
+                    <div class="alert alert-success" t-if="request.params.get('otp_verified')">
+                        Email verification complete. You can now submit.
+                    </div>
                     <div class="alert alert-danger" t-if="portal_error_message">
                         <t t-esc="portal_error_message"/>
                     </div>
                     <div class="alert alert-warning" t-if="submit_blocked_reason">
                         <t t-esc="submit_blocked_reason"/>
+                    </div>
+                    <div class="alert alert-info" t-if="otp_submit_block_reason">
+                        <t t-esc="otp_submit_block_reason"/>
                     </div>
                     <div class="alert alert-danger d-none o_open_sign_error"/>
                     <div class="alert alert-success d-none o_open_sign_success"/>
@@ -178,6 +189,50 @@
                             <pre class="mb-0 text-wrap" t-esc="declined_reason_display"/>
                         </div>
 
+                        <div class="border rounded p-3 mb-3" t-if="otp_required and not preview_mode and not readonly_mode and not waiting_mode">
+                            <h5 class="mb-2">Email Verification</h5>
+                            <p class="text-muted mb-2">Verify the email code before submitting this signing request.</p>
+                            <p class="mb-3" t-if="otp_email_hint">
+                                <strong>Code destination:</strong>
+                                <span t-esc="otp_email_hint"/>
+                            </p>
+                            <div class="alert alert-success mb-3" t-if="otp_verified">
+                                Email verification complete.
+                            </div>
+                            <t t-else="">
+                                <p class="text-muted mb-3" t-if="otp_has_active_challenge">
+                                    A code is active for 10 minutes from request.
+                                </p>
+                                <div class="d-flex flex-column gap-2 flex-md-row align-items-md-end">
+                                    <div class="flex-grow-1">
+                                        <label class="form-label" t-attf-for="o_open_sign_otp_code_#{signer.id}">
+                                            Verification code
+                                        </label>
+                                        <input
+                                            t-attf-id="o_open_sign_otp_code_#{signer.id}"
+                                            type="text"
+                                            inputmode="numeric"
+                                            maxlength="6"
+                                            class="form-control o_open_sign_otp_code"
+                                            placeholder="123456"
+                                        />
+                                    </div>
+                                    <div class="d-flex gap-2">
+                                        <button
+                                            t-if="otp_request_url"
+                                            type="button"
+                                            class="btn btn-outline-secondary o_open_sign_otp_request"
+                                        >Send verification code</button>
+                                        <button
+                                            t-if="otp_verify_url"
+                                            type="button"
+                                            class="btn btn-outline-success o_open_sign_otp_verify"
+                                        >Verify code</button>
+                                    </div>
+                                </div>
+                            </t>
+                        </div>
+
                         <div class="border rounded p-3 mb-3" t-if="not readonly_mode">
                             <div class="form-check mb-2">
                                 <input id="open_sign_consent" class="form-check-input o_open_sign_consent" type="checkbox"/>
@@ -190,7 +245,7 @@
 
                         <div class="d-flex gap-2" t-if="not readonly_mode">
                             <button type="button" class="btn btn-outline-primary o_open_sign_save">Save Draft</button>
-                            <button type="button" class="btn btn-primary o_open_sign_submit" t-att-disabled="'disabled' if submit_blocked_reason else None">Submit</button>
+                            <button type="button" class="btn btn-primary o_open_sign_submit" t-att-disabled="'disabled' if submit_blocked_reason or otp_submit_block_reason else None">Submit</button>
                         </div>
                         <div class="d-flex gap-2 flex-wrap mt-3" t-if="decline_available or (waiting_mode and refresh_url)">
                             <button

@@ -618,7 +618,7 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
             ('event_type', '=', 'signer_opened'),
         ]), signer_opened_count)
 
-    def _assert_terminal_scaffold_endpoint_is_non_mutating(self, bundle, endpoint, expected_message):
+    def _assert_terminal_scaffold_endpoint_is_non_mutating(self, bundle, endpoint, expected_message, *, payload=None):
         signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
         sign_request = signer.request_id
         signer_state = signer.state
@@ -630,7 +630,7 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
 
         response = self.make_jsonrpc_request(
             f"/my/sign/{signer.id}/{endpoint}",
-            {'access_token': bundle['token']},
+            payload if payload is not None else {'access_token': bundle['token']},
         )
         self.assertFalse(response['ok'])
         self.assertEqual(response['error_code'], 'validation_error')
@@ -2861,25 +2861,27 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
         self.assertNotIn('Decline Reason', response.text)
         self.assertNotIn('Declined by first signer', response.text)
 
-    def test_jsonrpc_scaffold_endpoints_allow_valid_public_token(self):
+    def test_jsonrpc_otp_endpoints_require_payload_validation(self):
         bundle = self._create_portal_session(
             self.env,
-            name='Portal Scaffold Remaining',
+            name='Portal OTP Payload Validation',
             owner=self.open_sign_user,
         )
         self.authenticate(None, None)
-        expected = {
-            'otp/request': 'T37',
-            'otp/verify': 'T37',
-        }
-        for endpoint, task_id in expected.items():
-            response = self.make_jsonrpc_request(
-                f"/my/sign/{bundle['signer'].id}/{endpoint}",
-                {'access_token': bundle['token']},
-            )
-            self.assertFalse(response['ok'])
-            self.assertEqual(response['error_code'], 'validation_error')
-            self.assertIn(task_id, response['message'])
+        request_response = self.make_jsonrpc_request(
+            f"/my/sign/{bundle['signer'].id}/otp/request",
+            {'access_token': bundle['token']},
+        )
+        verify_response = self.make_jsonrpc_request(
+            f"/my/sign/{bundle['signer'].id}/otp/verify",
+            {'access_token': bundle['token']},
+        )
+        self.assertFalse(request_response['ok'])
+        self.assertFalse(verify_response['ok'])
+        self.assertEqual(request_response['error_code'], 'validation_error')
+        self.assertEqual(verify_response['error_code'], 'validation_error')
+        self.assertEqual(request_response['message'], 'request_revision must be an integer.')
+        self.assertEqual(verify_response['message'], 'request_revision must be an integer.')
 
     def test_jsonrpc_scaffold_endpoints_reject_terminal_requests_without_mutation(self):
         expected_messages = {
@@ -2898,10 +2900,17 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
                     )
                     self._transition_bundle_request_to_status(bundle, status)
                     self.authenticate(None, None)
+                    payload = {
+                        'access_token': bundle['token'],
+                        'request_revision': bundle['request'].lock_version,
+                    }
+                    if endpoint == 'otp/verify':
+                        payload['code'] = '123456'
                     self._assert_terminal_scaffold_endpoint_is_non_mutating(
                         bundle,
                         endpoint,
                         expected_message,
+                        payload=payload,
                     )
 
     def test_submit_queues_invitation_for_newly_actionable_next_wave(self):
