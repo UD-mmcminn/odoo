@@ -556,7 +556,7 @@ Rollback/Migration Impact: Document schema/data migration effects if model or XM
 ## T39
 
 Task ID: T39
-Goal: Add portal addon ACL/rules (`security/ir.model.access.csv`, portal model record rules) for session/OTP models.
+Goal: Add portal addon ACL/rules (`security/ir.model.access.csv`, portal model record rules) for the current portal-persisted model surface, primarily `open.sign.otp.challenge` as a system-only ORM model, and lock related portal signer field exposure.
 Phase: Phase 3
 Requirements: `R-020`
 Dependencies: Phase 1 ready; portal token model available
@@ -575,10 +575,10 @@ Phase: Phase 3
 Requirements: `R-021`, `R-024`
 Dependencies: Phase 1 ready; portal token model available
 Target Files: addons/open_sign_portal/controllers/*, addons/open_sign_portal/models/*, addons/open_sign_portal/security/*, addons/open_sign_portal/tests/*
-Implementation Notes: Follow schema/API/security contracts defined in FEATURE.md and M0 deliverables.
-Acceptance Criteria: Behavior matches task goal, related tests pass, traceability references updated.
-Test Plan: Add/extend unit/integration/http/js tests as required by task scope.
-Security Notes: Verify ACL, token scope, and audit implications when applicable.
+Implementation Notes: Completed in `T316` with durable system-only `open.sign.portal.idempotency` storage for `submit` / `decline`, committed-success replay, same-key different-payload conflict detection, and frontend idempotency-key reuse for unresolved retries.
+Acceptance Criteria: Completed; behavior matches task goal, related tests pass, traceability references updated.
+Test Plan: Completed with new transaction/http coverage in `test_portal_idempotency.py` plus contract updates in `test_portal_contract.py`.
+Security Notes: System-only ORM access and company-scoped rule are required because `response_json` stores replay payloads with tokenized redirect URLs.
 Rollback/Migration Impact: Document schema/data migration effects if model or XML data changes.
 
 ## T115

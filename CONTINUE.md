@@ -641,12 +641,13 @@ Use this before marking any task complete (especially model/state/security work)
    - `./odoo-bin -d <db> -i open_sign_portal --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign_portal --stop-after-init`
    - `scripts/review_gate_open_sign.sh --skip-web -d <db>`
-2. If tests pass, continue Phase 3 with `T39` portal ACL/rule hardening for OTP/session model exposure on top of the now-closed `T32`/`T33`/`T34`/`T35`/`T36`/`T37`/`T38` portal baseline.
+2. If tests pass, continue Phase 3 with the remaining post-portal hardening tasks on top of the now-closed `T32`/`T33`/`T34`/`T35`/`T36`/`T37`/`T38`/`T39`/`T316` portal baseline; the immediate unresolved items are `T317` for broader duplicate/race coverage and the `T310`-`T315` external email-signer token track.
 3. Re-run recurring hardening re-audit (`T610`) after each major phase slice and after every 3 completed implementation tasks.
 
 ## Next Tasks (Planned Order)
 
-1. `T39` Add portal addon ACL/rules (`security/ir.model.access.csv`, record rules) for OTP/session models.
+1. `T317` Add duplicate-submit and race-condition test coverage for portal signer flows.
+2. `T310` Define and document external email-signer token strategy before the `T311`-`T315` implementation slice.
 
 ## Notes For Next Chat
 
@@ -693,11 +694,15 @@ Use this before marking any task complete (especially model/state/security work)
   - `doc/open_sign/m0/PORTAL_API_CONTRACT.md` now matches the shipped runtime rather than the older M0 draft drift, including redirect-style success envelopes for `decline`, `otp/request`, and `otp/verify`
   - mutating signer JSONRPC routes now build success and error envelopes through a shared controller contract layer instead of repeating inline response dicts and ad hoc exception mapping
   - active runtime error codes are now explicitly locked to `invalid_token`, `validation_error`, `consent_required`, `signing_order_blocked`, `request_locked`, and `stale_revision`
-  - reserved/deferred codes `expired_token` and `idempotency_conflict` are now explicitly documented as non-active runtime contract values rather than implied current behavior
+  - reserved/deferred code `expired_token` is now explicitly documented as non-active runtime contract behavior
   - the dedicated `addons/open_sign_portal/tests/test_portal_contract.py` suite now locks exact success-envelope shape, exact error-envelope shape, route-level allowed error-code behavior, reserved-code non-emission, and token-safe denial-path behavior for `save`, `submit`, `decline`, `otp/request`, and `otp/verify`
+- `T39` is now closed. Additional portal ACL and field-exposure guarantees now include:
+  - `open.sign.otp.challenge` is now enforced as a system-only ORM model with an explicit ACL row for `base.group_system` only and a company-scoped system record rule in `open_sign_portal_security.xml`
+  - `code_hash` and `code_salt` on `open.sign.otp.challenge` are now restricted to `base.group_system` as defense in depth even if model ACLs are widened later
+  - `addons/open_sign_portal/tests/test_portal_acl.py` now locks denial of challenge-model ORM access for open-sign user/manager/auditor roles, company-scoped system access, system-only exposure of OTP hash fields, user/manager-only exposure of `portal_sign_url`, `otp_required`, and `otp_verified_at`, system-only `access_token`, and the absence of backend action/menu surface for OTP challenges
+  - portal OTP request/verify runtime behavior remains controller/service-mediated under `sudo`; T39 does not add any operator-facing OTP challenge UI
 - Remaining deferred items remain deferred exactly as planned:
   - `T316`/`T317`: durable idempotency storage and replay/race semantics
-  - `T39`: ACL/rule hardening for portal OTP/session model exposure
   - `T40`/`T41`: final completion/final PDF generation
 - Current notification semantics still stop at truthful queue creation through Odoo mail; remote SMTP acceptance/open proof remains out of scope.
 - If the next session starts at recurring hardening re-audit (`T610` / continuation `T118`), preserve `T17`/`T18`/`T19` invariants:
@@ -733,4 +738,22 @@ Use this before marking any task complete (especially model/state/security work)
   - OTP request is atomic with email queueing and reuses the T35 durable sanitized `notification_failed` pattern when the OTP template is missing or email queueing fails
   - OTP mail never includes a tokenized portal URL or raw access token, while invitation and reminder mail now mention the OTP requirement when applicable
   - manual resend/contact correction now revokes active OTP challenge state, and changed-email resend also clears prior `otp_verified_at` evidence
-  - `T37` intentionally does not add true token expiry, generic throttling, durable idempotency, SMS/multi-channel OTP, or explicit ACL/rule exposure for `open.sign.otp.challenge`; those remain deferred to later hardening tasks, `T316`/`T317`, and `T39`
+- `T37` intentionally did not add true token expiry, generic throttling, durable idempotency, or SMS/multi-channel OTP; OTP challenge ACL/rule hardening was completed later in `T39`, while the remaining concerns stay deferred to later hardening tasks and `T316`/`T317`
+- Pre-`T39` classification review is complete:
+  - `open.sign.otp.challenge` is the only currently implemented portal-persisted hardening model and is therefore the real current T39 model scope
+  - `open.sign.portal.idempotency` was intentionally deferred during `T32`-`T39`; it is now implemented in `T316` for `submit` / `decline` only
+  - `open.sign.signing.session` was not required to ship `T32`-`T38`; current portal open/evidence/order/OTP behavior lives directly on request/signer state plus controller logic, so `open.sign.signing.session` is now treated as a future hardening candidate rather than implicit current Phase 3 runtime scope
+- `T39` is now implemented on top of that corrected scope:
+  - only the real current portal-persisted hardening model (`open.sign.otp.challenge`) was secured
+  - no placeholder ACL/rule config was added for the non-existent `open.sign.signing.session` model
+- `T316` is now closed. Additional portal idempotency guarantees now include:
+  - new system-only `open.sign.portal.idempotency` storage with a company-scoped system rule and system-only `response_json`
+  - durable replay semantics for `submit` and `decline` only; `save`, `otp/request`, and `otp/verify` remain outside the durable registry
+  - exact duplicate committed success now replays the stored success envelope for `submit` and `decline`
+  - same signer + endpoint + `idempotency_key` with a different semantic payload now returns `idempotency_conflict`
+  - same key while an earlier matching request is still `in_progress` returns `request_locked`
+  - failed attempts persist retryable `failed` idempotency rows; the same key and hash may retry, while the same key with a different hash conflicts
+  - replay beats stale revision and terminal-state denial for an exact duplicate committed success
+  - submit/decline audit metadata now records `idempotency_key`, and same-key different-payload misuse appends exactly one `idempotency_conflict` audit event per idempotency record
+  - expired idempotency rows stop being authoritative at runtime and are treated as fresh claims even before cron garbage collection
+  - the frontend now reuses pending submit/decline idempotency keys from `sessionStorage` across unresolved retries, including `request_locked`, so browser duplicate clicks and retry-after-network-failure paths benefit from the durable registry

@@ -35,8 +35,8 @@ class OpenSignOtpChallenge(models.Model):
     expires_at = fields.Datetime(required=True, index=True)
     attempt_count = fields.Integer(required=True, default=0)
     verified_at = fields.Datetime(index=True)
-    code_salt = fields.Char(required=True)
-    code_hash = fields.Char(required=True)
+    code_salt = fields.Char(required=True, groups='base.group_system')
+    code_hash = fields.Char(required=True, groups='base.group_system')
 
     _attempt_count_non_negative_check = models.Constraint(
         'CHECK(attempt_count >= 0)',

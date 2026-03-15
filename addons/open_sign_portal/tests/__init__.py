@@ -4,3 +4,6 @@ from . import test_portal_scaffold
 from . import test_portal_contract
 from . import test_portal_security
 from . import test_portal_otp
+from . import test_portal_acl
+from . import test_portal_idempotency
+from . import test_js

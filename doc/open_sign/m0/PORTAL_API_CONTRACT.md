@@ -1,7 +1,7 @@
 # Open Sign Portal API Contract (v1)
 
-Status: Finalized for M0 (`T95`), runtime-locked in `T38`
-Date: 2026-03-13
+Status: Finalized for M0 (`T95`), runtime-locked in `T38`, idempotency semantics extended in `T316`
+Date: 2026-03-15
 
 ## Conventions
 
@@ -9,7 +9,9 @@ Date: 2026-03-13
 - Auth: signer-scoped public token or the approved authenticated internal signer fallback where the route currently allows it.
 - Timestamp policy: server UTC is authoritative.
 - Concurrency: mutating calls include `request_revision`; stale revisions fail.
-- Idempotency: `save`, `submit`, and `decline` currently validate `idempotency_key` format only. Durable idempotency conflict semantics remain deferred to `T316` / `T317`.
+- Idempotency:
+  - `save` validates `idempotency_key` format only.
+  - `submit` and `decline` use durable idempotency with committed-success replay semantics.
 
 ## Endpoints
 
@@ -59,6 +61,10 @@ Success:
 }
 ```
 
+Behavior:
+- exact duplicate committed success for the same signer, endpoint, `idempotency_key`, and semantic payload replays the stored success envelope
+- same `idempotency_key` with a different semantic payload returns `idempotency_conflict`
+
 ### `POST /my/sign/<int:signer_id>/decline`
 
 Request:
@@ -81,6 +87,10 @@ Success:
   "request_revision": 6
 }
 ```
+
+Behavior:
+- exact duplicate committed success for the same signer, endpoint, `idempotency_key`, and semantic payload replays the stored success envelope
+- same `idempotency_key` with a different semantic payload returns `idempotency_conflict`
 
 ### `POST /my/sign/<int:signer_id>/otp/request`
 
@@ -150,17 +160,18 @@ No additional success-only fields are returned on error responses.
 - `signing_order_blocked`
 - `request_locked`
 - `stale_revision`
+- `idempotency_conflict`
 
 ### Reserved / deferred codes
 
 - `expired_token`
-- `idempotency_conflict`
 
 ## Current Runtime Notes
 
 - Invalid or rotated signer tokens currently return `invalid_token`.
 - True token-expiry behavior is not implemented yet.
-- Durable idempotency conflict / replayed-response semantics are not implemented yet.
+- Durable idempotency is implemented for `submit` and `decline` only.
+- `save`, `otp/request`, and `otp/verify` do not use the durable idempotency registry yet.
 - Redirect-style success envelopes for `decline`, `otp/request`, and `otp/verify` are the authoritative v1 contract.
 
 ## Backward Compatibility

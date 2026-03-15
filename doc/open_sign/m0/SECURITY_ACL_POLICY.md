@@ -1,7 +1,7 @@
 # Open Sign Security ACL And Record Rule Policy
 
-Status: Finalized for M0 (`T94`)
-Date: 2026-02-26
+Status: Finalized for M0 (`T94`); current portal OTP/idempotency ORM posture enforced in `T39` / `T316`
+Date: 2026-03-15
 
 ## Security Groups
 
@@ -22,9 +22,26 @@ Date: 2026-02-26
 | `open.sign.request.signer` | R/W/C (request scope) | R/W/C/D | R | Read/write only through token-validated controller flow |
 | `open.sign.request.value` | R/W/C (request scope) | R/W/C/D | R | Write only via token-validated controller flow |
 | `open.sign.audit.log` | R | R/W/C (restricted maintenance only) | R | None |
-| `open.sign.signing.session` | None | R/W/C/D | R | Route-mediated signer session updates only |
-| `open.sign.otp.challenge` | None | R/W/C/D | R | Route-mediated OTP actions only |
-| `open.sign.portal.idempotency` | None | R/W/C/D | R | Route-mediated endpoint replay only |
+| `open.sign.otp.challenge` | None | None | None | Route-mediated OTP actions only; ORM access remains system-only because the model stores OTP verification internals (`code_hash`, `code_salt`) rather than operator-facing business records |
+| `open.sign.portal.idempotency` | None | None | None | Route-mediated replay handling only; ORM access remains system-only because the model stores replay state and exact response payloads (`response_json`) |
+
+`open.sign.otp.challenge` is enforced in the current repo with:
+- one explicit ACL row for `base.group_system`
+- a company-scoped system record rule
+- field-level restriction on `code_hash` / `code_salt` to `base.group_system`
+
+`open.sign.portal.idempotency` is enforced in the current repo with:
+- one explicit ACL row for `base.group_system`
+- a company-scoped system record rule
+- field-level restriction on `response_json` to `base.group_system`
+
+## Deferred Portal Model Candidates
+
+The following models are still documented as future hardening candidates, but they are **not implemented in the current repo** and therefore are not part of the active Phase 3 runtime surface or current `T39` model scope.
+
+| Model | Status | Notes |
+|---|---|---|
+| `open.sign.signing.session` | Future hardening candidate | Optional session-tracking hardening if later token/session expiry or stronger per-visit forensic/session-state needs justify a dedicated model. |
 
 ## Record Rule Policy
 

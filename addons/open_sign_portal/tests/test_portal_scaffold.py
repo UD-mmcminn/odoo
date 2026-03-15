@@ -398,9 +398,9 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
             groups='open_sign.group_open_sign_auditor',
         )
 
-    def _build_payload(self, *, revision, values=None, consent=None, access_token=False):
+    def _build_payload(self, *, revision, values=None, consent=None, access_token=False, idempotency_key=None):
         payload = {
-            'idempotency_key': str(uuid4()),
+            'idempotency_key': idempotency_key or str(uuid4()),
             'request_revision': revision,
             'values': values if values is not None else [],
         }
@@ -410,9 +410,9 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
             payload['access_token'] = access_token
         return payload
 
-    def _build_decline_payload(self, *, revision, reason, access_token=False):
+    def _build_decline_payload(self, *, revision, reason, access_token=False, idempotency_key=None):
         payload = {
-            'idempotency_key': str(uuid4()),
+            'idempotency_key': idempotency_key or str(uuid4()),
             'request_revision': revision,
             'reason': reason,
         }

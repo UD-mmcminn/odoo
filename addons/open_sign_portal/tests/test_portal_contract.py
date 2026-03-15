@@ -38,7 +38,7 @@ class TestOpenSignPortalContract(TransactionCase):
 class TestOpenSignPortalContractHttp(HttpCase, OpenSignPortalTestMixin):
 
     OTP_CODE = '123456'
-    RESERVED_ERROR_CODES = {'expired_token', 'idempotency_conflict'}
+    RESERVED_ERROR_CODES = {'expired_token'}
 
     @classmethod
     def setUpClass(cls):
@@ -51,9 +51,9 @@ class TestOpenSignPortalContractHttp(HttpCase, OpenSignPortalTestMixin):
         )
         cls.open_sign_user.partner_id.email = 'open.sign.portal.contract.user@example.com'
 
-    def _build_save_payload(self, *, revision, field_id, value, access_token=False):
+    def _build_save_payload(self, *, revision, field_id, value, access_token=False, idempotency_key=None):
         payload = {
-            'idempotency_key': str(uuid4()),
+            'idempotency_key': idempotency_key or str(uuid4()),
             'request_revision': revision,
             'values': [{'field_id': field_id, 'value': value}],
         }
@@ -61,12 +61,13 @@ class TestOpenSignPortalContractHttp(HttpCase, OpenSignPortalTestMixin):
             payload['access_token'] = access_token
         return payload
 
-    def _build_submit_payload(self, *, revision, field_id, value, consent_hash, access_token=False):
+    def _build_submit_payload(self, *, revision, field_id, value, consent_hash, access_token=False, idempotency_key=None):
         payload = self._build_save_payload(
             revision=revision,
             field_id=field_id,
             value=value,
             access_token=access_token,
+            idempotency_key=idempotency_key,
         )
         payload['consent'] = {
             'accepted': True,
@@ -75,9 +76,9 @@ class TestOpenSignPortalContractHttp(HttpCase, OpenSignPortalTestMixin):
         }
         return payload
 
-    def _build_decline_payload(self, *, revision, reason, access_token=False):
+    def _build_decline_payload(self, *, revision, reason, access_token=False, idempotency_key=None):
         payload = {
-            'idempotency_key': str(uuid4()),
+            'idempotency_key': idempotency_key or str(uuid4()),
             'request_revision': revision,
             'reason': reason,
         }
@@ -617,9 +618,56 @@ class TestOpenSignPortalContractHttp(HttpCase, OpenSignPortalTestMixin):
         )
         seen.add(otp_response['error_code'])
 
+        conflict_bundle = self._create_portal_session(
+            self.env,
+            name='Portal Contract Submit Codes Conflict',
+            owner=self.open_sign_user,
+        )
+        conflict_signer = self.env['open.sign.request.signer'].browse(conflict_bundle['signer'].id)
+        conflict_field = self._get_text_field_for_signer(conflict_signer)
+        _page_response, conflict_consent_hash, conflict_revision = self._open_page_and_extract(
+            conflict_signer.id,
+            conflict_bundle['token'],
+        )
+        conflict_key = str(uuid4())
+        first_conflict_payload = self._build_submit_payload(
+            revision=conflict_revision,
+            field_id=conflict_field.id,
+            value='first conflict submit',
+            consent_hash=conflict_consent_hash,
+            access_token=conflict_bundle['token'],
+            idempotency_key=conflict_key,
+        )
+        second_conflict_payload = self._build_submit_payload(
+            revision=conflict_revision,
+            field_id=conflict_field.id,
+            value='second conflict submit',
+            consent_hash=conflict_consent_hash,
+            access_token=conflict_bundle['token'],
+            idempotency_key=conflict_key,
+        )
+        first_conflict_response = self.make_jsonrpc_request(
+            f'/my/sign/{conflict_signer.id}/submit',
+            first_conflict_payload,
+        )
+        self.assertTrue(first_conflict_response['ok'])
+        conflict_response = self.make_jsonrpc_request(
+            f'/my/sign/{conflict_signer.id}/submit',
+            second_conflict_payload,
+        )
+        seen.add(conflict_response['error_code'])
+
         self.assertEqual(
             seen,
-            {'invalid_token', 'stale_revision', 'request_locked', 'signing_order_blocked', 'consent_required', 'validation_error'},
+            {
+                'invalid_token',
+                'stale_revision',
+                'request_locked',
+                'signing_order_blocked',
+                'consent_required',
+                'validation_error',
+                'idempotency_conflict',
+            },
         )
 
     def test_decline_allowed_error_codes(self):
@@ -689,6 +737,34 @@ class TestOpenSignPortalContractHttp(HttpCase, OpenSignPortalTestMixin):
         )
         seen.add(second_response['error_code'])
 
+        conflict_bundle = self._create_portal_session(
+            self.env,
+            name='Portal Contract Decline Codes Conflict',
+            owner=self.open_sign_user,
+        )
+        conflict_signer = self.env['open.sign.request.signer'].browse(conflict_bundle['signer'].id)
+        conflict_key = str(uuid4())
+        first_conflict_response = self.make_jsonrpc_request(
+            f'/my/sign/{conflict_signer.id}/decline',
+            self._build_decline_payload(
+                revision=conflict_signer.request_id.lock_version,
+                reason='first conflict decline',
+                access_token=conflict_bundle['token'],
+                idempotency_key=conflict_key,
+            ),
+        )
+        self.assertTrue(first_conflict_response['ok'])
+        conflict_response = self.make_jsonrpc_request(
+            f'/my/sign/{conflict_signer.id}/decline',
+            self._build_decline_payload(
+                revision=conflict_signer.request_id.lock_version,
+                reason='second conflict decline',
+                access_token=conflict_bundle['token'],
+                idempotency_key=conflict_key,
+            ),
+        )
+        seen.add(conflict_response['error_code'])
+
         waiting_bundle = self._create_ordered_two_signer_session(
             self.env,
             name='Portal Contract Decline Codes Waiting',
@@ -706,7 +782,7 @@ class TestOpenSignPortalContractHttp(HttpCase, OpenSignPortalTestMixin):
         self.assertTrue(waiting_response['ok'])
         self.assertNotIn('error_code', waiting_response)
 
-        self.assertEqual(seen, {'invalid_token', 'stale_revision', 'request_locked', 'validation_error'})
+        self.assertEqual(seen, {'invalid_token', 'stale_revision', 'request_locked', 'validation_error', 'idempotency_conflict'})
         self.assertNotIn('signing_order_blocked', seen)
 
     def test_otp_request_allowed_error_codes(self):

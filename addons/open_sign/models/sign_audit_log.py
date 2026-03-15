@@ -22,6 +22,7 @@ AUDIT_EVENT_TYPE_SELECTION = [
     ('value_saved', 'Value Saved'),
     ('signer_submitted', 'Signer Submitted'),
     ('signer_declined', 'Signer Declined'),
+    ('idempotency_conflict', 'Idempotency Conflict'),
     ('signer_contact_corrected', 'Signer Contact Corrected'),
     ('request_completed', 'Request Completed'),
     ('request_expired', 'Request Expired'),

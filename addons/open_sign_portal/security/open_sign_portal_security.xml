@@ -1,6 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
     <data noupdate="1">
-        <!-- T39 introduces explicit portal session/OTP ACL and record-rule matrix. -->
+        <!-- OTP challenge and portal idempotency rows are system-only at the ORM level.
+             Portal runtime uses controller/service sudo for OTP and signer endpoint replay handling. -->
+        <record id="rule_open_sign_otp_challenge_system_company" model="ir.rule">
+            <field name="name">Open Sign OTP Challenge System Company Scope</field>
+            <field name="model_id" ref="open_sign_portal.model_open_sign_otp_challenge"/>
+            <field name="groups" eval="[(4, ref('base.group_system'))]"/>
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+        <record id="rule_open_sign_portal_idempotency_system_company" model="ir.rule">
+            <field name="name">Open Sign Portal Idempotency System Company Scope</field>
+            <field name="model_id" ref="open_sign_portal.model_open_sign_portal_idempotency"/>
+            <field name="groups" eval="[(4, ref('base.group_system'))]"/>
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
     </data>
 </odoo>

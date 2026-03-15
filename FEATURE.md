@@ -742,21 +742,32 @@ Standard `error_code` values:
 - `idempotency_conflict`
 - `stale_revision`
 
+Current runtime note:
+- `idempotency_conflict` is active for `submit` and `decline` only after `T316`.
+- `expired_token` remains reserved/deferred.
+
 ### Database Entities
+
+Current portal-persisted model surface in the repo:
 
 1. `open.sign.request.signer` (extension via `_inherit`)
 - Inherits `portal.mixin` in this addon to leverage standard `access_token`, `access_url`, and share URL behavior.
 - Adds portal helpers for URL generation and access checks.
 
-2. `open.sign.signing.session` (optional hardening)
-- Fields: `request_signer_id`, `opened_at`, `last_seen_at`, `ip`, `user_agent`, `state`, `otp_verified`.
-
-3. `open.sign.otp.challenge` (optional)
+2. `open.sign.otp.challenge` (implemented)
 - Fields: `request_signer_id`, `code_hash`, `expires_at`, `attempt_count`, `verified_at`.
+- Purpose: email OTP verification state for the shipped `T37` portal submit gate.
 
-4. `open.sign.portal.idempotency`
-- Fields: `request_signer_id`, `endpoint`, `idempotency_key`, `request_hash`, `response_json`, `state`, `created_at`, `expires_at`.
+Future/deferred portal hardening candidates:
+
+3. `open.sign.signing.session` (future hardening candidate, not implemented in the current repo)
+- Fields: `request_signer_id`, `opened_at`, `last_seen_at`, `ip`, `user_agent`, `state`, `otp_verified`.
+- This was an optional hardening concept. Shipped `T32`-`T38` portal behavior instead uses direct request/signer evidence, lock-version concurrency, and controller-enforced session rules without introducing a separate session model.
+
+4. `open.sign.portal.idempotency` (implemented in `T316`)
+- Fields: `request_signer_id`, `endpoint`, `idempotency_key`, `request_hash`, `response_json`, `conflict_logged_at`, `state`, `created_at`, `expires_at`.
 - Purpose: deterministic response replay for duplicate submit/decline attempts and retry safety.
+- `T316` implements this for `submit` / `decline` only. `save` and OTP routes still validate UUID format only and do not use the durable registry yet.
 
 ### Planned Folder Tree
 
@@ -765,17 +776,17 @@ addons/open_sign_portal/
   __init__.py
   __manifest__.py
   security/
-    ir.model.access.csv              # ACLs for optional portal session/OTP models
-    open_sign_portal_security.xml    # Record rules for signer-scoped session/challenge access
+    ir.model.access.csv              # ACLs for the current portal-persisted model surface
+    open_sign_portal_security.xml    # Record rules for portal hardening models that actually exist
   controllers/
     __init__.py
     portal_sign.py                   # signer routes and access-token handlers
   models/
     __init__.py
     sign_request_signer_portal.py    # portal.mixin extension and access URL helpers
-    signing_session.py               # session tracking and replay controls
-    otp_challenge.py                 # optional OTP challenge lifecycle
-    portal_idempotency.py            # idempotency key registry and replay support
+    otp_challenge.py                 # shipped OTP challenge lifecycle
+    signing_session.py               # future hardening candidate; not implemented today
+    portal_idempotency.py            # shipped durable submit/decline replay registry
   views/
     portal_templates.xml             # signer portal pages
   data/
@@ -785,7 +796,7 @@ addons/open_sign_portal/
     test_portal_token_flow.py        # token validity + signer submission
     test_portal_security.py          # replay/expiry/revocation behavior
     test_portal_otp.py               # optional OTP verification path
-    test_portal_idempotency.py       # duplicate submit/decline idempotent behavior
+    test_portal_idempotency.py       # submit/decline idempotency replay and conflict coverage
 ```
 
 ### Datatypes
@@ -1056,7 +1067,12 @@ Model constraints:
 
 ### Portal Hardening Models (`open_sign_portal`)
 
-#### `open.sign.signing.session` (optional hardening)
+Current repo status:
+- `open.sign.otp.challenge` is implemented and part of the active portal surface.
+- `open.sign.signing.session` is a future hardening candidate and is not implemented in the current repo.
+- `open.sign.portal.idempotency` is implemented and currently scopes durable replay semantics to `submit` / `decline` only.
+
+#### `open.sign.signing.session` (future hardening candidate; not implemented)
 
 | Field | Odoo Type | Required | FK / On Delete | Constraints and Index | Interaction Notes |
 |---|---|---|---|---|---|
@@ -1072,7 +1088,7 @@ Model constraints:
 - Maximum one active `open` session per signer (Python constraint).
 - Submitted/expired/revoked sessions become read-only.
 
-#### `open.sign.otp.challenge` (optional)
+#### `open.sign.otp.challenge` (implemented)
 
 | Field | Odoo Type | Required | FK / On Delete | Constraints and Index | Interaction Notes |
 |---|---|---|---|---|---|
@@ -1086,22 +1102,26 @@ Model constraints:
 - One non-expired, non-verified challenge per signer (Python constraint).
 - `attempt_count` hard limit enforced in service/controller layer.
 
-#### `open.sign.portal.idempotency`
+#### `open.sign.portal.idempotency` (implemented in `T316`; current scope is `submit` / `decline`)
 
 | Field | Odoo Type | Required | FK / On Delete | Constraints and Index | Interaction Notes |
 |---|---|---|---|---|---|
 | `request_signer_id` | `Many2one(open.sign.request.signer)` | Yes | FK, `ondelete='cascade'` | indexed | Idempotency scope owner |
-| `endpoint` | `Selection(save,submit,decline)` | Yes | - | indexed | Endpoint-specific key scope |
+| `endpoint` | `Selection(submit,decline)` | Yes | - | indexed | Endpoint-specific key scope in the current implementation |
 | `idempotency_key` | `Char` | Yes | - | non-empty; indexed | Client-provided retry key (UUID expected) |
 | `request_hash` | `Char` | Yes | - | fixed hash format | Payload fingerprint for conflict detection |
-| `response_json` | `Json` | No | - | - | Stored deterministic response payload |
+| `response_json` | `Json` | No | - | system-only field | Stored deterministic response payload |
+| `conflict_logged_at` | `Datetime` | No | - | indexed; system-only field | One-time conflict audit marker for same-key misuse |
 | `state` | `Selection(in_progress,completed,failed)` | Yes | - | default `in_progress`; indexed | Lifecycle of key processing |
 | `created_at` | `Datetime` | Yes | - | default now; indexed | Creation timestamp |
-| `expires_at` | `Datetime` | Yes | - | indexed | Cleanup and replay window control |
+| `expires_at` | `Datetime` | Yes | - | indexed | Runtime replay window authority plus cleanup control |
 
 Model constraints:
 - Unique key per signer endpoint (`UNIQUE(request_signer_id, endpoint, idempotency_key)`).
 - Same key with different `request_hash` must return `idempotency_conflict`.
+- Same-key different-payload conflict evidence is logged once per idempotency record.
+- Exact duplicate committed success must replay the stored success envelope.
+- Expired rows stop being authoritative at runtime even before cron garbage collection removes them.
 
 ### Certificate Models (`open_sign_certificate`, optional)
 
@@ -1224,8 +1244,8 @@ Legend:
 - [x] `T36` Add portal security tests for replay and token abuse.
 - [x] `T37` Implement optional OTP verification flow.
 - [x] `T38` Implement endpoint response envelope/error codes and contract tests.
-- [ ] `T39` Add portal addon ACL/rules (`security/ir.model.access.csv`, portal model record rules) for session/OTP models.
-- [ ] `T316` Implement idempotency-key handling and concurrency-safe locking for submit/decline.
+- [x] `T39` Add portal addon ACL/rules for the current portal-persisted model surface (`open.sign.otp.challenge` as a system-only ORM model) and lock portal signer field exposure; future session/idempotency model ACLs remain deferred until those models exist.
+- [x] `T316` Implement idempotency-key handling and concurrency-safe locking for submit/decline.
 - [ ] `T317` Add duplicate-submit and race-condition test coverage for portal signer flows.
 - [ ] `T310` Define and document external email-signer token strategy (reuse `portal.mixin` token flow vs signed/expiring payloads), including accepted link-sharing risk and compensating controls.
 - [ ] `T311` Implement email-invitation magic-link issuance for email-only signers with resend rotation and explicit token revocation hooks.
@@ -1474,3 +1494,5 @@ Counts below track only `T*` development tasks in the phase task board.
 | `2026-03-12` | Codex | Completed `T36` by adding a dedicated portal security suite (`test_portal_security.py`) plus shared portal test helpers (`open_sign_portal/tests/common.py`) to cover the current signer-token lifecycle, replay/stale/lock denial paths, rotated-token invalidation across page/document/JSONRPC routes, waiting-signer abuse boundaries, terminal replay immutability, and no-leak assertions for denial/audit paths. The implementation did not add token expiry, throttling, idempotency storage, or new portal models; those remain deferred to `T37`, `T316`/`T317`, and later artifact/token tasks. Revalidated with `/open_sign` (`107 tests, 0 failed`), `/open_sign_portal` (`132 tests, 0 failed` / `open_sign_portal: 140 tests`), and `scripts/review_gate_open_sign.sh --skip-web` (passed). |
 | `2026-03-13` | Codex | Completed `T37` by implementing optional per-signer email OTP verification in `open_sign_portal` as a submit-time gate: signer records now carry frozen `otp_required` policy plus server-managed `otp_verified_at`, OTP challenges are stored as salted PBKDF2 hashes in the new `open.sign.otp.challenge` model, and portal `otp/request` + `otp/verify` JSONRPC flows now enforce ordered-signing actionability, `60s` resend cooldown, `10m` TTL, `5` invalid-attempt limit, and deterministic validation messages without storing raw OTP values. OTP mail is queued atomically through the T35 notification service with durable sanitized `notification_failed` audit on template/queue failure, invitation/reminder templates now mention OTP when required, submit is blocked until OTP verification is complete, decline remains OTP-exempt, and manual resend/contact correction revokes active OTP challenge state. Revalidated with `/open_sign` (`127 tests, 0 failed`), `/open_sign_portal` (`176 tests, 0 failed`), and `scripts/review_gate_open_sign.sh --skip-web` (passed). |
 | `2026-03-13` | Codex | Completed `T38` by locking the shipped Phase 3 portal JSONRPC contract to a single controller response layer plus explicit contract tests. `doc/open_sign/m0/PORTAL_API_CONTRACT.md` now matches the runtime behavior, including redirect-style success envelopes for `decline`, `otp/request`, and `otp/verify`; active runtime error codes are now explicitly separated from reserved/deferred codes; and the new `test_portal_contract.py` suite locks exact success/error envelope shape, route-specific allowed error-code behavior, reserved-code non-emission, and no-token-leak guarantees for mutating portal routes. Revalidated with `/open_sign_portal`, `/open_sign`, and `scripts/review_gate_open_sign.sh --skip-web` (all green). |
+| `2026-03-13` | Codex | Completed `T39` by hardening the current implemented portal model surface rather than the older broader Phase 3 sketch: `open.sign.otp.challenge` now has explicit system-only ORM ACLs plus a company-scoped system record rule, its sensitive `code_hash` and `code_salt` fields are now restricted to `base.group_system`, and a new `test_portal_acl.py` suite locks model ACL denial for user/manager/auditor roles, company-scoped system access, signer-field exposure (`portal_sign_url`, `otp_required`, `otp_verified_at`) for user/manager only, system-only `access_token`, and the absence of any backend action/menu surface for OTP challenges. Revalidated with `/open_sign_portal` (`214 tests, 0 failed` / `196` post-install), `/open_sign` (`127 tests, 0 failed` / `107` post-install), and `scripts/review_gate_open_sign.sh --skip-web` (passed). |
+| `2026-03-15` | Codex | Completed `T316` by implementing durable idempotency for portal `submit` and `decline`: the new system-only `open.sign.portal.idempotency` model stores signer/endpoint-scoped request hashes plus exact committed success envelopes for replay; `portal_sign.py` now resolves exact replay, same-key different-payload conflicts (`idempotency_conflict`), and in-progress key locks before running business mutations; failed attempts persist retryable `failed` rows; submit/decline audit metadata now includes `idempotency_key`; repeated same-key different-payload misuse now logs a single `idempotency_conflict` audit event per idempotency record; expired rows stop being authoritative at runtime instead of waiting for cron cleanup; and the frontend now reuses pending submit/decline keys from `sessionStorage` across unresolved retries, including `request_locked` responses. Added `test_portal_idempotency.py`, plus portal JS unit coverage for pending-key retention/clearing behavior, extended contract coverage so `idempotency_conflict` is active for `submit` / `decline`, and revalidated with `/open_sign_portal`, `/open_sign`, and `scripts/review_gate_open_sign.sh --skip-web` (passed). |

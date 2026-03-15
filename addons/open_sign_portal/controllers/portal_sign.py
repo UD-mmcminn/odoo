@@ -11,7 +11,7 @@ from psycopg2.errors import LockNotAvailable
 from odoo import _, fields, http
 from odoo.addons.open_sign.services import notification_service, validation_service
 from odoo.addons.portal.controllers.portal import CustomerPortal
-from odoo.addons.open_sign_portal.services import otp_service
+from odoo.addons.open_sign_portal.services import idempotency_service, otp_service
 from odoo.exceptions import AccessError, MissingError, ValidationError
 from odoo.http import request
 from odoo.tools import consteq
@@ -32,6 +32,7 @@ STALE_REVISION_MARKER = 'STALE_REVISION'
 SIGNING_ORDER_BLOCKED_MARKER = 'SIGNING_ORDER_BLOCKED'
 CONSENT_REQUIRED_MARKER = 'CONSENT_REQUIRED'
 CONTRACT_UNAVAILABLE_MARKER = 'CONTRACT_UNAVAILABLE'
+IDEMPOTENCY_CONFLICT_MARKER = 'IDEMPOTENCY_CONFLICT'
 OTP_REQUIRED_MARKER = 'OTP_REQUIRED'
 OTP_INVALID_MARKER = 'OTP_INVALID'
 OTP_EXPIRED_MARKER = 'OTP_EXPIRED'
@@ -264,10 +265,14 @@ class OpenSignPortalController(CustomerPortal):
             return self._build_error_response('consent_required', message.split('::', 1)[1])
         return self._invalid_token_response()
 
-    def _jsonrpc_error_from_validation(self, exc, *, allow_contract_message=False):
+    def _jsonrpc_error_from_validation(self, exc, *, allow_contract_message=False, allow_idempotency_conflict=False):
         message = str(exc)
         if self._extract_marked_message(message, STALE_REVISION_MARKER):
             return self._build_error_response('stale_revision', message.split('::', 1)[1])
+        if allow_idempotency_conflict:
+            conflict_message = self._extract_marked_message(message, IDEMPOTENCY_CONFLICT_MARKER)
+            if conflict_message:
+                return self._build_error_response('idempotency_conflict', conflict_message)
         if allow_contract_message:
             contract_message = self._extract_marked_message(message, CONTRACT_UNAVAILABLE_MARKER)
             if contract_message:
@@ -355,10 +360,10 @@ class OpenSignPortalController(CustomerPortal):
         return parsed
 
     def _validate_mutation_payload(self, payload):
-        self._ensure_uuid(payload.get('idempotency_key'), field_name='idempotency_key')
+        idempotency_key = self._ensure_uuid(payload.get('idempotency_key'), field_name='idempotency_key')
         request_revision = self._ensure_request_revision(payload)
         parsed_values = self._ensure_values_payload(payload)
-        return request_revision, parsed_values
+        return request_revision, parsed_values, idempotency_key
 
     def _normalize_decline_reason(self, reason):
         normalized_reason = self._normalize_line_endings(reason or '').strip()
@@ -369,10 +374,10 @@ class OpenSignPortalController(CustomerPortal):
         return normalized_reason
 
     def _validate_decline_payload(self, payload):
-        self._ensure_uuid(payload.get('idempotency_key'), field_name='idempotency_key')
+        idempotency_key = self._ensure_uuid(payload.get('idempotency_key'), field_name='idempotency_key')
         request_revision = self._ensure_request_revision(payload)
         normalized_reason = self._normalize_decline_reason(payload.get('reason'))
-        return request_revision, normalized_reason
+        return request_revision, normalized_reason, idempotency_key
 
     def _validate_otp_request_payload(self, payload):
         return self._ensure_request_revision(payload)
@@ -789,6 +794,87 @@ class OpenSignPortalController(CustomerPortal):
         signer_timezone = (consent.get('timezone') or '').strip() or False
         return expected_hash, signer_timezone
 
+    def _extract_submit_hash_inputs(self, payload):
+        consent = payload.get('consent')
+        if not isinstance(consent, dict):
+            return False, False, False
+        return (
+            bool(consent.get('accepted')),
+            (consent.get('text_hash') or '').strip(),
+            (consent.get('timezone') or '').strip() or False,
+        )
+
+    @staticmethod
+    def _canonicalize_idempotency_value(normalized_text, normalized_json, has_value):
+        if not has_value:
+            return False
+        if normalized_json not in (False, None):
+            return normalized_json
+        return normalized_text
+
+    def _get_normalized_submit_values_for_idempotency(self, signer, parsed_values):
+        signer_fields = self._get_signer_contract_fields(signer)
+        fields_by_id = {field['template_field_id']: field for field in signer_fields}
+        normalized_values = []
+        for field_id, payload_item in parsed_values.items():
+            field = fields_by_id.get(field_id)
+            if not field:
+                raise ValidationError(_("Field %(field_id)s does not belong to this signer session.", field_id=field_id))
+            if not field['supported_on_portal']:
+                raise ValidationError(_("Field %(field_id)s is not supported on the portal.", field_id=field_id))
+            normalized_text, normalized_json, has_value = self._normalize_field_value(
+                field['descriptor'],
+                payload_item,
+                enforce_required=False,
+            )
+            normalized_values.append({
+                'field_id': field_id,
+                'value': self._canonicalize_idempotency_value(normalized_text, normalized_json, has_value),
+            })
+        return normalized_values
+
+    def _append_idempotency_conflict_event(self, signer, *, endpoint, idempotency_key, existing_state):
+        event_at = fields.Datetime.now()
+        self._append_audit_event(
+            signer,
+            'idempotency_conflict',
+            event_at=event_at,
+            metadata={
+                'endpoint': endpoint,
+                'idempotency_key': idempotency_key,
+                'existing_state': existing_state,
+                'request_status_before': signer.request_id.status,
+                'signer_state_before': signer.state,
+            },
+        )
+        return event_at
+
+    def _resolve_portal_idempotency(self, signer, *, endpoint, idempotency_key, request_hash):
+        resolution, record = idempotency_service.claim_or_resolve(
+            signer,
+            endpoint=endpoint,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if resolution == 'replay':
+            return resolution, record, dict(record.response_json or {})
+        if resolution == 'locked':
+            return resolution, record, self._jsonrpc_request_locked_response()
+        if resolution == 'conflict':
+            if not record.conflict_logged_at:
+                event_at = self._append_idempotency_conflict_event(
+                    signer,
+                    endpoint=endpoint,
+                    idempotency_key=idempotency_key,
+                    existing_state=record.state,
+                )
+                idempotency_service.mark_conflict_logged(record, when=event_at)
+            raise ValidationError(
+                f"{IDEMPOTENCY_CONFLICT_MARKER}::"
+                + _("This action conflicts with an earlier request. Refresh and try again.")
+            )
+        return resolution, record, False
+
     def _build_portal_field_value(self, contract_field, request_value):
         if not request_value:
             return False if contract_field['type'] in {'checkbox', 'strikethrough'} else ''
@@ -1021,7 +1107,7 @@ class OpenSignPortalController(CustomerPortal):
         access_token = self._resolve_access_token(access_token, payload=payload)
         try:
             signer_sudo = self._check_signer_identity_access(signer_id, access_token=access_token)
-            request_revision, parsed_values = self._validate_mutation_payload(payload)
+            request_revision, parsed_values, _idempotency_key = self._validate_mutation_payload(payload)
             sign_request = signer_sudo.request_id.sudo()
             with request.env.cr.savepoint():
                 self._lock_request_for_update(sign_request)
@@ -1068,65 +1154,90 @@ class OpenSignPortalController(CustomerPortal):
         access_token = self._resolve_access_token(access_token, payload=payload)
         try:
             signer_sudo = self._check_signer_identity_access(signer_id, access_token=access_token)
-            request_revision, parsed_values = self._validate_mutation_payload(payload)
+            request_revision, parsed_values, idempotency_key = self._validate_mutation_payload(payload)
             sign_request = signer_sudo.request_id.sudo()
             newly_actionable_signers = request.env['open.sign.request.signer']
-            with request.env.cr.savepoint():
-                self._lock_request_for_update(sign_request)
-                self._assert_request_revision(sign_request, request_revision)
-                self._assert_submit_allowed(signer_sudo)
-                if self._is_otp_required_for_signer(signer_sudo) and not signer_sudo.otp_verified_at:
-                    raise ValidationError(_("Email verification is required before submit."))
-                consent_hash, signer_timezone = self._check_consent_payload(payload)
-                actionable_before_ids = set(sign_request._get_actionable_signers().ids)
+            response = False
+            consent_accepted, provided_consent_hash, requested_signer_timezone = self._extract_submit_hash_inputs(payload)
+            self._lock_request_for_update(sign_request)
+            request_hash = idempotency_service.build_submit_request_hash(
+                self._get_normalized_submit_values_for_idempotency(signer_sudo, parsed_values),
+                consent_accepted=consent_accepted,
+                consent_hash=provided_consent_hash,
+                signer_timezone=requested_signer_timezone,
+            )
+            resolution, idempotency_record, immediate_response = self._resolve_portal_idempotency(
+                signer_sudo,
+                endpoint='submit',
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if resolution in {'replay', 'locked'}:
+                return immediate_response
+            try:
+                with request.env.cr.savepoint():
+                    self._assert_request_revision(sign_request, request_revision)
+                    self._assert_submit_allowed(signer_sudo)
+                    if self._is_otp_required_for_signer(signer_sudo) and not signer_sudo.otp_verified_at:
+                        raise ValidationError(_("Email verification is required before submit."))
+                    consent_hash, signer_timezone = self._check_consent_payload(payload)
+                    actionable_before_ids = set(sign_request._get_actionable_signers().ids)
 
-                event_at = fields.Datetime.now()
-                session_changed = self._ensure_session_opened(signer_sudo, event_at=event_at)
-                _values_changed, touched_field_ids, signer_fields = self._upsert_signer_values(
-                    signer_sudo,
-                    parsed_values,
-                    enforce_required=False,
-                )
-                self._ensure_supported_required_fields(signer_sudo, signer_fields)
+                    event_at = fields.Datetime.now()
+                    session_changed = self._ensure_session_opened(signer_sudo, event_at=event_at)
+                    _values_changed, touched_field_ids, signer_fields = self._upsert_signer_values(
+                        signer_sudo,
+                        parsed_values,
+                        enforce_required=False,
+                    )
+                    self._ensure_supported_required_fields(signer_sudo, signer_fields)
 
-                signer_sudo.sudo().write({
-                    'state': 'signed',
-                    'signed_at': event_at,
-                    'consent_accepted_at': event_at,
-                    'consent_text_hash': consent_hash,
-                    'signer_timezone': signer_timezone,
-                    'ip_last': self._extract_request_ip(),
-                })
-                self._invalidate_active_otp_challenges(signer_sudo)
+                    signer_sudo.sudo().write({
+                        'state': 'signed',
+                        'signed_at': event_at,
+                        'consent_accepted_at': event_at,
+                        'consent_text_hash': consent_hash,
+                        'signer_timezone': signer_timezone,
+                        'ip_last': self._extract_request_ip(),
+                    })
+                    self._invalidate_active_otp_challenges(signer_sudo)
 
-                if sign_request.status in TERMINAL_REQUEST_STATUSES:
-                    raise ValidationError(_("This signing request can no longer be modified."))
-                self._move_request_to_partially_signed(sign_request, event_at=event_at)
-                sign_request.sudo().write({
-                    'lock_version': sign_request.lock_version + 1,
-                    'last_event_at': event_at,
-                })
-                self._append_audit_event(
-                    signer_sudo,
-                    'signer_submitted',
-                    event_at=event_at,
-                    metadata={
-                        'field_ids': touched_field_ids,
-                        'field_count': len(touched_field_ids),
-                        'session_opened': bool(session_changed),
-                    },
-                    consent_text_hash=consent_hash,
-                )
-                newly_actionable_signers = self._get_newly_actionable_pending_signers(sign_request, actionable_before_ids)
+                    if sign_request.status in TERMINAL_REQUEST_STATUSES:
+                        raise ValidationError(_("This signing request can no longer be modified."))
+                    self._move_request_to_partially_signed(sign_request, event_at=event_at)
+                    sign_request.sudo().write({
+                        'lock_version': sign_request.lock_version + 1,
+                        'last_event_at': event_at,
+                    })
+                    self._append_audit_event(
+                        signer_sudo,
+                        'signer_submitted',
+                        event_at=event_at,
+                        metadata={
+                            'field_ids': touched_field_ids,
+                            'field_count': len(touched_field_ids),
+                            'session_opened': bool(session_changed),
+                            'idempotency_key': idempotency_key,
+                        },
+                        consent_text_hash=consent_hash,
+                    )
+                    newly_actionable_signers = self._get_newly_actionable_pending_signers(
+                        sign_request,
+                        actionable_before_ids,
+                    )
+                    response = self._build_jsonrpc_success_redirect(
+                        signer_id=signer_sudo.id,
+                        access_token=access_token,
+                        request_revision=sign_request.lock_version,
+                        query_flag='submitted=1',
+                    )
+            except Exception:
+                idempotency_service.mark_failed(idempotency_record)
+                raise
+            idempotency_service.mark_completed(idempotency_record, response)
 
             self._queue_best_effort_next_wave_invitations(sign_request, newly_actionable_signers)
-
-            return self._build_jsonrpc_success_redirect(
-                signer_id=signer_sudo.id,
-                access_token=access_token,
-                request_revision=sign_request.lock_version,
-                query_flag='submitted=1',
-            )
+            return response
         except MissingError:
             return self._invalid_token_response()
         except AccessError as exc:
@@ -1134,53 +1245,73 @@ class OpenSignPortalController(CustomerPortal):
         except LockNotAvailable:
             return self._jsonrpc_request_locked_response()
         except ValidationError as exc:
-            return self._jsonrpc_error_from_validation(exc, allow_contract_message=True)
+            return self._jsonrpc_error_from_validation(
+                exc,
+                allow_contract_message=True,
+                allow_idempotency_conflict=True,
+            )
 
     @http.route(['/my/sign/<int:signer_id>/decline'], type='jsonrpc', auth='public')
     def portal_sign_decline(self, signer_id, access_token=None, **payload):
         access_token = self._resolve_access_token(access_token, payload=payload)
         try:
             signer_sudo = self._check_signer_identity_access(signer_id, access_token=access_token)
-            request_revision, normalized_reason = self._validate_decline_payload(payload)
+            request_revision, normalized_reason, idempotency_key = self._validate_decline_payload(payload)
             sign_request = signer_sudo.request_id.sudo()
-            with request.env.cr.savepoint():
-                self._lock_request_for_update(sign_request)
-                self._assert_request_revision(sign_request, request_revision)
-                self._assert_locked_signer_decline_allowed(signer_sudo)
+            response = False
+            self._lock_request_for_update(sign_request)
+            request_hash = idempotency_service.build_decline_request_hash(normalized_reason)
+            resolution, idempotency_record, immediate_response = self._resolve_portal_idempotency(
+                signer_sudo,
+                endpoint='decline',
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+            )
+            if resolution in {'replay', 'locked'}:
+                return immediate_response
+            try:
+                with request.env.cr.savepoint():
+                    self._assert_request_revision(sign_request, request_revision)
+                    self._assert_locked_signer_decline_allowed(signer_sudo)
 
-                event_at = fields.Datetime.now()
-                request_status_before = sign_request.status
-                signer_state_before = signer_sudo.state
-                signer_sudo.sudo().write({
-                    'state': 'declined',
-                    'declined_reason': normalized_reason,
-                    'ip_last': self._extract_request_ip(),
-                })
-                self._invalidate_active_otp_challenges(signer_sudo)
-                sign_request._transition_to('declined', {'last_event_at': event_at})
-                sign_request.sudo().write({
-                    'lock_version': sign_request.lock_version + 1,
-                    'last_event_at': event_at,
-                })
-                self._append_audit_event(
-                    signer_sudo,
-                    'signer_declined',
-                    event_at=event_at,
-                    metadata={
-                        'reason': normalized_reason,
-                        'request_status_before': request_status_before,
-                        'signer_state_before': signer_state_before,
-                    },
-                )
+                    event_at = fields.Datetime.now()
+                    request_status_before = sign_request.status
+                    signer_state_before = signer_sudo.state
+                    signer_sudo.sudo().write({
+                        'state': 'declined',
+                        'declined_reason': normalized_reason,
+                        'ip_last': self._extract_request_ip(),
+                    })
+                    self._invalidate_active_otp_challenges(signer_sudo)
+                    sign_request._transition_to('declined', {'last_event_at': event_at})
+                    sign_request.sudo().write({
+                        'lock_version': sign_request.lock_version + 1,
+                        'last_event_at': event_at,
+                    })
+                    self._append_audit_event(
+                        signer_sudo,
+                        'signer_declined',
+                        event_at=event_at,
+                        metadata={
+                            'reason': normalized_reason,
+                            'request_status_before': request_status_before,
+                            'signer_state_before': signer_state_before,
+                            'idempotency_key': idempotency_key,
+                        },
+                    )
+                    response = self._build_jsonrpc_success_redirect(
+                        signer_id=signer_sudo.id,
+                        access_token=access_token,
+                        request_revision=sign_request.lock_version,
+                        query_flag='declined=1',
+                    )
+            except Exception:
+                idempotency_service.mark_failed(idempotency_record)
+                raise
+            idempotency_service.mark_completed(idempotency_record, response)
 
             self._queue_best_effort_decline_notification(sign_request, signer_sudo)
-
-            return self._build_jsonrpc_success_redirect(
-                signer_id=signer_sudo.id,
-                access_token=access_token,
-                request_revision=sign_request.lock_version,
-                query_flag='declined=1',
-            )
+            return response
         except MissingError:
             return self._invalid_token_response()
         except AccessError as exc:
@@ -1188,7 +1319,11 @@ class OpenSignPortalController(CustomerPortal):
         except LockNotAvailable:
             return self._jsonrpc_request_locked_response()
         except ValidationError as exc:
-            return self._jsonrpc_error_from_validation(exc, allow_contract_message=True)
+            return self._jsonrpc_error_from_validation(
+                exc,
+                allow_contract_message=True,
+                allow_idempotency_conflict=True,
+            )
 
     @http.route(['/my/sign/<int:signer_id>/otp/request'], type='jsonrpc', auth='public')
     def portal_sign_otp_request(self, signer_id, access_token=None, **payload):

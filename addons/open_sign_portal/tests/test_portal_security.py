@@ -69,9 +69,9 @@ class TestOpenSignPortalSecurityHttp(HttpCase, OpenSignPortalTestMixin):
         cls.open_sign_outsider.partner_id.email = 'open.sign.portal.security.outsider@example.com'
         cls.open_sign_manager.partner_id.email = 'open.sign.portal.security.manager@example.com'
 
-    def _build_payload(self, *, revision, values=None, consent=None, access_token=False):
+    def _build_payload(self, *, revision, values=None, consent=None, access_token=False, idempotency_key=None):
         payload = {
-            'idempotency_key': str(uuid4()),
+            'idempotency_key': idempotency_key or str(uuid4()),
             'request_revision': revision,
             'values': values if values is not None else [],
         }
@@ -81,9 +81,9 @@ class TestOpenSignPortalSecurityHttp(HttpCase, OpenSignPortalTestMixin):
             payload['access_token'] = access_token
         return payload
 
-    def _build_decline_payload(self, *, revision, reason, access_token=False):
+    def _build_decline_payload(self, *, revision, reason, access_token=False, idempotency_key=None):
         payload = {
-            'idempotency_key': str(uuid4()),
+            'idempotency_key': idempotency_key or str(uuid4()),
             'request_revision': revision,
             'reason': reason,
         }

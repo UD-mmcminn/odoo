@@ -22,8 +22,7 @@ Date: 2026-02-26
 # Focused lifecycle test
 ./odoo-bin -d <db_name> --test-enable --test-tags open_sign.tests.test_sign_request_flow --stop-after-init
 
-# Portal idempotency/security-focused tests
-./odoo-bin -d <db_name> --test-enable --test-tags open_sign_portal.tests.test_portal_idempotency --stop-after-init
+# Portal security-focused tests
 ./odoo-bin -d <db_name> --test-enable --test-tags open_sign_portal.tests.test_portal_security --stop-after-init
 
 # Frontend tests
@@ -67,5 +66,5 @@ PY
 ## Working Rules
 
 - Always run module upgrade before functional tests when models/data XML changed.
-- For portal endpoint changes, run `test_portal_security` and `test_portal_idempotency` before merge.
+- For portal endpoint changes, run `test_portal_security`; add the future idempotency suite once `T316` / `T317` land.
 - For schema changes, update migration hooks and rerun focused upgrade tests.

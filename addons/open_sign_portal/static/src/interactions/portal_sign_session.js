@@ -17,6 +17,7 @@ export class OpenSignPortalSession extends Interaction {
     };
 
     setup() {
+        this.signerId = this.el.dataset.signerId || "";
         this.saveUrl = this.el.dataset.saveUrl;
         this.submitUrl = this.el.dataset.submitUrl;
         this.declineUrl = this.el.dataset.declineUrl;
@@ -33,6 +34,70 @@ export class OpenSignPortalSession extends Interaction {
         this.declineReasonInput = this.el.parentElement?.querySelector(".o_open_sign_decline_reason")
             || this.el.querySelector(".o_open_sign_decline_reason");
         this.otpCodeInput = this.el.querySelector(".o_open_sign_otp_code");
+    }
+
+    _pendingIdempotencyStorageKey(endpoint) {
+        if (!this.signerId || !endpoint) {
+            return false;
+        }
+        return `open_sign:${this.signerId}:${endpoint}:pending_idempotency_key`;
+    }
+
+    _getPendingIdempotencyKey(endpoint) {
+        const storageKey = this._pendingIdempotencyStorageKey(endpoint);
+        if (!storageKey) {
+            return false;
+        }
+        try {
+            return window.sessionStorage?.getItem(storageKey) || false;
+        } catch {
+            return false;
+        }
+    }
+
+    _setPendingIdempotencyKey(endpoint, value) {
+        const storageKey = this._pendingIdempotencyStorageKey(endpoint);
+        if (!storageKey) {
+            return;
+        }
+        try {
+            window.sessionStorage?.setItem(storageKey, value);
+        } catch {
+            // Ignore storage failures and fall back to per-request keys.
+        }
+    }
+
+    _clearPendingIdempotencyKey(endpoint) {
+        const storageKey = this._pendingIdempotencyStorageKey(endpoint);
+        if (!storageKey) {
+            return;
+        }
+        try {
+            window.sessionStorage?.removeItem(storageKey);
+        } catch {
+            // Ignore storage failures and fall back to per-request keys.
+        }
+    }
+
+    _getOrCreatePendingIdempotencyKey(endpoint) {
+        const existingKey = this._getPendingIdempotencyKey(endpoint);
+        if (existingKey) {
+            return existingKey;
+        }
+        const newKey = this._newIdempotencyKey();
+        this._setPendingIdempotencyKey(endpoint, newKey);
+        return newKey;
+    }
+
+    _shouldRetainPendingIdempotencyKey(response) {
+        return Boolean(response?.ok !== true && response?.error_code === "request_locked");
+    }
+
+    _finalizePendingIdempotencyKey(endpoint, response) {
+        if (!endpoint || this._shouldRetainPendingIdempotencyKey(response)) {
+            return;
+        }
+        this._clearPendingIdempotencyKey(endpoint);
     }
 
     _newIdempotencyKey() {
@@ -87,10 +152,12 @@ export class OpenSignPortalSession extends Interaction {
         return values;
     }
 
-    _buildPayload() {
+    _buildPayload({ endpoint = false } = {}) {
         const payload = {
             values: this._collectValuesPayload(),
-            idempotency_key: this._newIdempotencyKey(),
+            idempotency_key: endpoint
+                ? this._getOrCreatePendingIdempotencyKey(endpoint)
+                : this._newIdempotencyKey(),
             request_revision: this.requestRevision,
         };
         if (this.accessToken) {
@@ -99,9 +166,11 @@ export class OpenSignPortalSession extends Interaction {
         return payload;
     }
 
-    _buildDeclinePayload() {
+    _buildDeclinePayload({ endpoint = false } = {}) {
         const payload = {
-            idempotency_key: this._newIdempotencyKey(),
+            idempotency_key: endpoint
+                ? this._getOrCreatePendingIdempotencyKey(endpoint)
+                : this._newIdempotencyKey(),
             request_revision: this.requestRevision,
             reason: this.declineReasonInput?.value || "",
         };
@@ -177,13 +246,20 @@ export class OpenSignPortalSession extends Interaction {
 
     async onClickSubmit() {
         this._resetAlerts();
-        const payload = this._buildPayload();
+        const payload = this._buildPayload({ endpoint: "submit" });
         payload.consent = {
             accepted: Boolean(this.consentCheckbox?.checked),
             text_hash: this.consentHash,
-            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "",
+            timezone: new Intl.DateTimeFormat().resolvedOptions().timeZone || "",
         };
-        const response = await rpc(this.submitUrl, payload);
+        let response;
+        try {
+            response = await rpc(this.submitUrl, payload);
+        } catch {
+            this._showError("The request could not be confirmed. Retry may complete the earlier action.");
+            return;
+        }
+        this._finalizePendingIdempotencyKey("submit", response);
         if (!response?.ok) {
             this._showError(response?.message);
             return;
@@ -206,7 +282,14 @@ export class OpenSignPortalSession extends Interaction {
             this._showError("Decline is not available.");
             return;
         }
-        const response = await rpc(this.declineUrl, this._buildDeclinePayload());
+        let response;
+        try {
+            response = await rpc(this.declineUrl, this._buildDeclinePayload({ endpoint: "decline" }));
+        } catch {
+            this._showError("The request could not be confirmed. Retry may complete the earlier action.");
+            return;
+        }
+        this._finalizePendingIdempotencyKey("decline", response);
         if (!response?.ok) {
             this._showError(response?.message);
             return;
