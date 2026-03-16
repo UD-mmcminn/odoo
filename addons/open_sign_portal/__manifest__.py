@@ -4,7 +4,7 @@
     'name': 'Open Sign Portal',
     'summary': 'Portal routes and templates for Open Sign',
     'category': 'Productivity',
-    'version': '1.0',
+    'version': '1.1',
     'depends': ['open_sign', 'portal'],
     'data': [
         'security/ir.model.access.csv',

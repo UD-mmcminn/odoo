@@ -318,6 +318,17 @@ class OpenSignRequestSigner(models.Model):
         self.ensure_one()
         return False
 
+    def _get_current_distributed_portal_url(self, *, now=None):
+        self.ensure_one()
+        del now
+        return self._get_notification_sign_url()
+
+    def _get_notification_sign_url_for_delivery(self, *, notification_type, trigger):
+        self.ensure_one()
+        del notification_type
+        del trigger
+        return self._get_notification_sign_url()
+
     def _supports_portal_resend_rotation(self):
         self.ensure_one()
         return False

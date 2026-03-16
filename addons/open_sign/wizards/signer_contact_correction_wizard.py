@@ -74,7 +74,11 @@ class OpenSignSignerContactCorrectionWizard(models.TransientModel):
                 event_at = fields.Datetime.now()
                 if normalized_email != old_email:
                     signer_sudo.write({'email': normalized_email})
-                signer_sudo._rotate_portal_token()
+                signer_sudo._issue_email_portal_token(
+                    trigger='manual_resend',
+                    now=event_at,
+                    force_rotate=True,
+                )
                 signer_sudo._invalidate_portal_security_state_on_manual_resend(
                     email_changed=normalized_email != old_email,
                 )

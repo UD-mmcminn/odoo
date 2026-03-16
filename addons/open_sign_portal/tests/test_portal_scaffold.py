@@ -64,7 +64,7 @@ class TestOpenSignPortalScaffold(TransactionCase, OpenSignPortalTestMixin):
         self.assertEqual(self.signer.access_url, f'/my/sign/{self.signer.id}')
         self.assertIn(f'/my/sign/{self.signer.id}?access_token=', self.signer.get_portal_url())
         self.assertTrue(self.signer.access_token)
-        self.assertEqual(self.signer.portal_sign_url, self.signer.get_portal_url())
+        self.assertEqual(self.signer.portal_sign_url, self.signer._get_current_distributed_portal_url())
 
     def test_error_envelope_shape(self):
         controller = OpenSignPortalController()
@@ -331,7 +331,7 @@ class TestOpenSignPortalScaffold(TransactionCase, OpenSignPortalTestMixin):
         )
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_notification_sign_url_for_delivery',
             autospec=True,
             return_value=False,
         ):
@@ -1345,11 +1345,16 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
         )
         self._assert_waiting_page_is_non_mutating(bundle)
         self._submit_ordered_signer_successfully(bundle)
+        current_second_token = self._refresh_bundle_token(
+            bundle,
+            signer_key='signer_second',
+            token_key='token_second',
+        )
 
         signer_second = self.env['open.sign.request.signer'].browse(bundle['signer_second'].id)
         self.authenticate(None, None)
         response = self.url_open(
-            f"/my/sign/{signer_second.id}?access_token={bundle['token_second']}",
+            f"/my/sign/{signer_second.id}?access_token={current_second_token}",
             allow_redirects=False,
         )
         self.assertEqual(response.status_code, 200)
@@ -2950,8 +2955,13 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
             second_mail_before + 1,
         )
 
+        current_second_token = self._refresh_bundle_token(
+            bundle,
+            signer_key='signer_second',
+            token_key='token_second',
+        )
         queued_mail = mail_model.search([('email_to', '=', signer_second.email)], order='id desc', limit=1)
-        self.assertIn(f"/my/sign/{signer_second.id}?access_token={bundle['token_second']}", queued_mail.body_html)
+        self.assertIn(f"/my/sign/{signer_second.id}?access_token={current_second_token}", queued_mail.body_html)
         notification_audit = self.env['open.sign.audit.log'].search([
             ('request_id', '=', sign_request.id),
             ('signer_id', '=', signer_second.id),

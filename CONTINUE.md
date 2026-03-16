@@ -641,13 +641,13 @@ Use this before marking any task complete (especially model/state/security work)
    - `./odoo-bin -d <db> -i open_sign_portal --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign_portal --stop-after-init`
    - `scripts/review_gate_open_sign.sh --skip-web -d <db>`
-2. If tests pass, continue Phase 3 with the remaining post-portal hardening tasks on top of the now-closed `T32`/`T33`/`T34`/`T35`/`T36`/`T37`/`T38`/`T39`/`T316` portal baseline; the immediate unresolved items are `T317` for broader duplicate/race coverage and the `T310`-`T315` external email-signer token track.
+2. If tests pass, continue Phase 3 with the remaining post-portal hardening tasks on top of the now-closed `T32`/`T33`/`T34`/`T35`/`T36`/`T37`/`T38`/`T39`/`T316`/`T317`/`T310`/`T311` portal baseline; the immediate unresolved items are the `T312`-`T315` external email-signer implementation track, with optional deferred verification follow-up `T317a` if literal live-HTTP overlap proof is still desired later.
 3. Re-run recurring hardening re-audit (`T610`) after each major phase slice and after every 3 completed implementation tasks.
 
 ## Next Tasks (Planned Order)
 
-1. `T317` Add duplicate-submit and race-condition test coverage for portal signer flows.
-2. `T310` Define and document external email-signer token strategy before the `T311`-`T315` implementation slice.
+1. `T312` Implement public token entry and email-only signer context resolution on `signer_id + access_token`, with no email-based ACL authorization path.
+2. `T317a` Optional deferred verification follow-up for literal live-HTTP overlap proof outside the `HttpCase`/`TestCursor` model.
 
 ## Notes For Next Chat
 
@@ -702,7 +702,7 @@ Use this before marking any task complete (especially model/state/security work)
   - `addons/open_sign_portal/tests/test_portal_acl.py` now locks denial of challenge-model ORM access for open-sign user/manager/auditor roles, company-scoped system access, system-only exposure of OTP hash fields, user/manager-only exposure of `portal_sign_url`, `otp_required`, and `otp_verified_at`, system-only `access_token`, and the absence of backend action/menu surface for OTP challenges
   - portal OTP request/verify runtime behavior remains controller/service-mediated under `sudo`; T39 does not add any operator-facing OTP challenge UI
 - Remaining deferred items remain deferred exactly as planned:
-  - `T316`/`T317`: durable idempotency storage and replay/race semantics
+  - `T317a`: optional live-HTTP overlap verification outside the `HttpCase`/`TestCursor` model
   - `T40`/`T41`: final completion/final PDF generation
 - Current notification semantics still stop at truthful queue creation through Odoo mail; remote SMTP acceptance/open proof remains out of scope.
 - If the next session starts at recurring hardening re-audit (`T610` / continuation `T118`), preserve `T17`/`T18`/`T19` invariants:
@@ -757,3 +757,31 @@ Use this before marking any task complete (especially model/state/security work)
   - submit/decline audit metadata now records `idempotency_key`, and same-key different-payload misuse appends exactly one `idempotency_conflict` audit event per idempotency record
   - expired idempotency rows stop being authoritative at runtime and are treated as fresh claims even before cron garbage collection
   - the frontend now reuses pending submit/decline idempotency keys from `sessionStorage` across unresolved retries, including `request_locked`, so browser duplicate clicks and retry-after-network-failure paths benefit from the durable registry
+- `T317` is now closed. Additional portal overlap/race guarantees now include:
+  - deterministic overlap coverage proving same-key in-flight `submit` / `decline` losers return `request_locked`, then exact replay after the winner commits
+  - same-key different-payload overlap coverage proving the loser observes `request_locked` while the winner holds the request-row lock and `idempotency_conflict` only after commit
+  - different-key overlap coverage proving the losing retry never replays and instead resolves to terminal validation once the winning terminal action commits
+  - submit-vs-decline overlap coverage proving the portal cannot emit contradictory terminal evidence for the same signer/request pair
+  - ordered-signing cross-signer overlap coverage proving request-wide locking does not strand the next signer once the winning transaction commits
+  - because `HttpCase` runs under `TestCursor`, which serializes concurrent requests, the shipped suite proves overlap at the controller/DB-lock level using isolated cursors plus mocked portal request contexts rather than literal dispatcher-level overlapping HTTP requests
+  - that is still sufficient for the current legal/evidence boundary because duplicate or contradictory business evidence is prevented at the controller, transaction, lock, idempotency, and audit side-effect layers
+  - `T317a` is reserved as an optional non-blocking follow-up if we later want literal live-HTTP overlap proof through an out-of-band harness
+- `T310` is now closed as a documentation/strategy lock for the deferred external email-signer track. The locked policy is:
+  - reuse signer `portal.mixin` `access_token` as the only canonical magic-link secret; no separate signed-envelope or parallel token model is planned
+  - keep the existing signer route family (`/my/sign/<id>?access_token=...` plus related JSONRPC routes) as the only public entry path
+  - treat external email-only signers as token-only sessions resolved from `signer_id + access_token`; matching an internal user by email does not grant access
+  - preserve internal authenticated fallback only for signers explicitly linked through `partner_id`
+  - accept possession of a live link as the baseline authentication factor, with forwarded/shared-link risk explicitly accepted and compensated later through TTL, rotate/revoke, audit, and optional OTP controls
+  - keep links multi-use until rotated, revoked, expired, or blocked by terminal request/signer state; do not make them one-time on open or one-time on completion
+  - lock future expiry to `min(72 hours from issuance, request expiry)` while keeping `expired_token` reserved until `T313` activates runtime expiry checks
+  - rotate tokens on manual resend and signer contact correction; ordinary reminders should reuse a still-valid active token
+  - keep future token lifecycle metadata on `open.sign.request.signer` rather than adding a separate email-token model
+- `T311` is now closed. Additional signer token lifecycle guarantees now include:
+  - signer records persist `email_token_issued_at`, `email_token_expires_at`, and `email_token_revoked_at` as manager-visible lifecycle state on `open.sign.request.signer`
+  - initial send, wave-unblocked invitation, and manual resend/contact correction always distribute a freshly rotated signer `access_token`
+  - reminders reuse the current token only when it is present, not revoked, and not metadata-expired; otherwise reminder delivery refreshes to a new distributed token
+  - explicit revoke is now a manager-only pending-signer action that rotates the hidden signer token, stamps `email_token_revoked_at`, invalidates active OTP challenge state, and leaves request/signer business state unchanged
+  - backend copy-link surfaces now stay blank until a signer has a currently distributable token, and remain blank for revoked or metadata-expired signers
+  - revoked or rotated old links now fail with the existing `invalid_token` contract across signer page, document, and signer JSONRPC routes, while partner-linked internal fallback remains unchanged
+  - signer completion notifications now skip truthfully when no currently distributable signer URL exists, so revoke cannot leak a hidden replacement token through completion mail
+  - dedicated token lifecycle audit events (`token_issued`, `token_revoked`, etc.) remain deferred to `T314`

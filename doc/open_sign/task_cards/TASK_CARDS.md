@@ -589,10 +589,108 @@ Phase: Phase 3
 Requirements: `R-021`, `R-024`
 Dependencies: Phase 1 ready; portal token model available
 Target Files: addons/open_sign_portal/controllers/*, addons/open_sign_portal/models/*, addons/open_sign_portal/security/*, addons/open_sign_portal/tests/*
-Implementation Notes: Follow schema/API/security contracts defined in FEATURE.md and M0 deliverables.
+Implementation Notes: Completed in `T317` with a dedicated `test_portal_race.py` suite plus shared overlap helpers in `open_sign_portal/tests/common.py`. Because `HttpCase` runs under `TestCursor`, which serializes concurrent requests, the shipped coverage uses deterministic controller-level overlap orchestration with isolated DB cursors and mocked portal request contexts plus a minimal true-concurrency smoke layer at the controller/DB-lock level, with no public contract changes.
+Acceptance Criteria: Completed; same-key overlap, same-key different-payload overlap, different-key overlap, submit-vs-decline overlap, and ordered-signing cross-signer overlap are all covered with side-effect singularity assertions and related tests pass.
+Test Plan: Completed with new race coverage in `test_portal_race.py`, reused HTTP/controller helpers in `common.py`, full `/open_sign_portal` and `/open_sign` validation, and two additional fresh-database race-file runs to check for flake. Literal overlapping public HTTP dispatcher proof was not achievable under the current `HttpCase`/`TestCursor` model and is deferred separately to `T317a` if still desired.
+Security Notes: Coverage confirms request-row locking plus durable idempotency prevent contradictory terminal evidence, duplicate submit/decline side effects, and same-key replay drift under overlap.
+Rollback/Migration Impact: Document schema/data migration effects if model or XML data changes.
+
+## T317a
+
+Task ID: T317a
+Goal: Add deferred live-HTTP overlap verification for portal signer flows using an out-of-band harness that bypasses `HttpCase`/`TestCursor` request serialization.
+Phase: Phase 3
+Requirements: `R-021`, `R-024`
+Dependencies: `T316`, `T317` complete; portal token model available
+Target Files: addons/open_sign_portal/tests/*, supporting local test harness files if needed
+Implementation Notes: Deferred and non-blocking for `T310`. Build a verification-only harness outside the standard `HttpCase` request path so real overlapping public portal HTTP requests can be exercised end-to-end with isolated clients and without `TestCursor` request serialization.
+Acceptance Criteria: Real overlapping public HTTP submit/decline requests are proven to preserve the same lock/idempotency/side-effect guarantees already covered by controller-level T317 tests, without changing the public contract.
+Test Plan: Use a separate process/server or other non-`TestCursor` harness to hit the real public portal routes with isolated HTTP clients and confirm the T317 controller/DB-lock outcomes hold through the full dispatcher stack.
+Security Notes: Verification-only follow-up; intended to widen confidence in overlap behavior, not to change current portal security semantics.
+Rollback/Migration Impact: None expected unless the deferred harness introduces dedicated support files.
+
+## T310
+
+Task ID: T310
+Goal: Define and document the external email-signer token strategy before the `T311`-`T315` implementation slice.
+Phase: Phase 3
+Requirements: `R-009`
+Dependencies: `T31`, `T35`, `T38` complete; portal token model available
+Target Files: FEATURE.md, CONTINUE.md, doc/open_sign/task_cards/TASK_CARDS.md, doc/open_sign/m0/PORTAL_API_CONTRACT.md
+Implementation Notes: Completed as a doc-only strategy lock. External email-only signer links reuse `open.sign.request.signer.access_token` from `portal.mixin`, keep the existing signer route family as the only public entry path, resolve external signer context from `signer_id + access_token` without any email-based ACL lookup, remain multi-use until rotated/revoked/expired, and reserve `expired_token` until `T313` activates runtime expiry checks. The locked future expiry policy is `min(72 hours from issuance, request expiry)`; manual resend/contact correction rotate the token; ordinary reminders reuse a still-valid active token; and future token lifecycle metadata stays on `open.sign.request.signer` rather than in a separate token model.
+Acceptance Criteria: Completed; `D-011` is resolved, `T311`-`T315` inherit the locked token policy, and no runtime code changes are introduced.
+Test Plan: Completed with documentation consistency review (`FEATURE.md`, `CONTINUE.md`, task cards, and portal contract docs) plus `git diff --check`; no Odoo runtime test run required because the task is documentation-only.
+Security Notes: Baseline possession-of-link risk for email-only signers is explicitly accepted and recorded; compensating controls remain deferred to `T311`-`T314`.
+Rollback/Migration Impact: None; strategy/documentation only.
+
+## T311
+
+Task ID: T311
+Goal: Implement email-invitation magic-link issuance for email-only signers with resend rotation and explicit token revocation hooks.
+Phase: Phase 3
+Requirements: `R-009`
+Dependencies: `T310` complete; portal token model available
+Target Files: addons/open_sign_portal/controllers/*, addons/open_sign_portal/models/*, addons/open_sign_portal/tests/*, related mail/notification files
+Implementation Notes: Completed. `open.sign.request.signer` now stores `email_token_issued_at`, `email_token_expires_at`, and `email_token_revoked_at`; invitation delivery uses explicit signer-token lifecycle helpers; initial send, wave-unblocked invitation, and manual resend/contact correction always rotate to a fresh distributed signer token; reminders reuse an active token and refresh missing/revoked/metadata-expired tokens; backend copy-link surfaces now expose only currently distributable signer URLs and never mint tokens on read; signer completion notifications now skip when no currently distributable signer URL exists; and explicit revoke is a manager-only pending-signer action that rotates the hidden token, stamps revocation metadata, invalidates active OTP challenge state, and does not send a replacement link. The implementation keeps signer `portal.mixin` `access_token` as the only magic-link secret, adds no new public routes, and leaves dedicated `token_*` audit event types deferred to `T314`.
+Acceptance Criteria: Completed; lifecycle metadata, delivery-time issue/reuse semantics, blank-until-issued backend copy-link behavior, completion-link suppression when no distributable signer URL exists, explicit revoke, revoked-link invalidation, reminder refresh behavior, migration backfill, and related tests are in place.
+Test Plan: Completed via new portal email-token transaction/http coverage, upgrade backfill coverage, resend/reminder/revoke regression coverage, and full `open_sign` / `open_sign_portal` validation.
+Security Notes: External email-only signers remain token-only; matching an internal user by email does not grant access; revoked/rotated links fail with the existing `invalid_token` behavior; runtime expiry enforcement is still deferred to `T313`.
+Rollback/Migration Impact: Adds signer lifecycle fields and a `1.1` portal upgrade backfill for existing signers that already have `access_token` but no lifecycle metadata.
+
+## T312
+
+Task ID: T312
+Goal: Implement public token entry and signer-context resolution for email-only signers without email-based ACL authorization.
+Phase: Phase 3
+Requirements: `R-009`
+Dependencies: `T310`, `T311` complete; portal token model available
+Target Files: addons/open_sign_portal/controllers/*, addons/open_sign_portal/models/*, addons/open_sign_portal/tests/*
+Implementation Notes: Use the existing signer route family and resolve external email-only signer context strictly from `signer_id + access_token`. Internal authenticated fallback remains allowed only for signers explicitly linked through `partner_id`; there must be no email-address-based access path.
 Acceptance Criteria: Behavior matches task goal, related tests pass, traceability references updated.
-Test Plan: Add/extend unit/integration/http/js tests as required by task scope.
-Security Notes: Verify ACL, token scope, and audit implications when applicable.
+Test Plan: Add/extend integration/http tests for token-only external signer resolution and denial of spoofed email-based access.
+Security Notes: Token identity must remain constant-time and server-authoritative; email similarity or mailbox overlap must not widen access.
+Rollback/Migration Impact: Document schema/data migration effects if model or XML data changes.
+
+## T313
+
+Task ID: T313
+Goal: Implement token lifecycle hardening for email-only signers (expiry, revoke, replay handling, invalid-attempt throttling, and deterministic error codes).
+Phase: Phase 3
+Requirements: `R-009`, `R-021`
+Dependencies: `T310`-`T312` complete; portal token model available
+Target Files: addons/open_sign_portal/controllers/*, addons/open_sign_portal/models/*, addons/open_sign_portal/tests/*, contract docs if runtime codes change
+Implementation Notes: Implement lifecycle state on `open.sign.request.signer`, not in a separate token model. Activate runtime expiry at `min(72 hours from issuance, request expiry)`, add revoke/replay handling and throttling controls, and make `expired_token` active only once real expiry enforcement ships.
+Acceptance Criteria: Behavior matches task goal, related tests pass, traceability references updated.
+Test Plan: Add/extend unit/integration/http tests for expired, revoked, replayed, and throttled token behavior plus route-level error-code assertions.
+Security Notes: Expiry and revoke checks must apply before any signer mutation; denial paths must remain token-safe and deterministic.
+Rollback/Migration Impact: Document schema/data migration effects if model or XML data changes.
+
+## T314
+
+Task ID: T314
+Goal: Extend audit/evidence taxonomy for email-token events (`token_issued`, `token_opened`, `token_rejected`, `token_revoked`) with export coverage.
+Phase: Phase 3
+Requirements: `R-007`
+Dependencies: `T310` complete; `T311`-`T313` in place where needed for actual event emission
+Target Files: addons/open_sign/models/*, addons/open_sign_portal/controllers/*, addons/open_sign_portal/tests/*, evidence/export docs
+Implementation Notes: Use the locked email-token event taxonomy from `T310`. Record lifecycle chronology without storing raw token values or full tokenized URLs in audit metadata.
+Acceptance Criteria: Behavior matches task goal, related tests pass, traceability references updated.
+Test Plan: Add/extend audit-log and export tests for issuance/open/reject/revoke event coverage and sanitization behavior.
+Security Notes: Audit evidence must describe token lifecycle safely without turning audit storage into a secret store.
+Rollback/Migration Impact: Document schema/data migration effects if model or XML data changes.
+
+## T315
+
+Task ID: T315
+Goal: Add end-to-end and denial-path tests for email-only signer flow (tampered/expired/revoked token, spoofed email no-access, replay, and controlled link-sharing behavior).
+Phase: Phase 3
+Requirements: `R-009`, `R-021`
+Dependencies: `T310`-`T314` complete enough for end-to-end behavior
+Target Files: addons/open_sign_portal/tests/*, related contract/security docs if needed
+Implementation Notes: Tests must target the locked `T310` strategy: same signer route family, signer `portal.mixin` token carrier, token-only external signer resolution, `min(72h, request expiry)` expiry policy, and no email-based ACL fallback for external email-only signers.
+Acceptance Criteria: Behavior matches task goal, related tests pass, traceability references updated.
+Test Plan: Add/extend end-to-end, denial-path, replay, and abuse tests for tampered/expired/revoked tokens, spoofed email access denial, and controlled link-sharing behavior under the accepted baseline risk model.
+Security Notes: The suite must prove the email-only track preserves the same no-leak and deterministic denial standards as the current portal baseline.
 Rollback/Migration Impact: Document schema/data migration effects if model or XML data changes.
 
 ## T40

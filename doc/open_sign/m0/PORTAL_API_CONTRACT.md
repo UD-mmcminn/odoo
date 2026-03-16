@@ -169,10 +169,22 @@ No additional success-only fields are returned on error responses.
 ## Current Runtime Notes
 
 - Invalid or rotated signer tokens currently return `invalid_token`.
+- Revoked signer tokens currently return `invalid_token`.
+- Backend copy-link surfaces now expose only currently distributable signer URLs and do not mint signer tokens on read.
+- Signer completion notifications skip when no currently distributable signer URL is available.
+- Explicit revoke is implemented as a manager-only pending-signer backend action; it does not introduce a new public route or response shape.
 - True token-expiry behavior is not implemented yet.
 - Durable idempotency is implemented for `submit` and `decline` only.
 - `save`, `otp/request`, and `otp/verify` do not use the durable idempotency registry yet.
 - Redirect-style success envelopes for `decline`, `otp/request`, and `otp/verify` are the authoritative v1 contract.
+
+## External Email-Only Signer Future Scope (`T310` Locked)
+
+- The external email-only signer track reuses the same signer portal route family and the same `access_token` query/payload parameter shape.
+- No email-based authentication endpoint or alternate signed-envelope URL format is planned for this track.
+- External email-only signer context is intended to resolve from `signer_id + access_token`; internal authenticated fallback remains limited to signers explicitly linked by `partner_id`.
+- Tampered, rotated, and revoked signer tokens map to `invalid_token`.
+- `expired_token` remains reserved until `T313` activates real runtime expiry enforcement for email-only signer tokens.
 
 ## Backward Compatibility
 

@@ -145,9 +145,9 @@ class TestOpenSignCron(TransactionCase):
 
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_notification_sign_url_for_delivery',
             autospec=True,
-            side_effect=lambda signer_record: self._fake_notification_url(signer_record),
+            side_effect=lambda signer_record, **kwargs: self._fake_notification_url(signer_record),
         ):
             due_request = self._create_sent_request(
                 'Reminder Due',
@@ -176,9 +176,9 @@ class TestOpenSignCron(TransactionCase):
 
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_notification_sign_url_for_delivery',
             autospec=True,
-            side_effect=lambda signer_record: self._fake_notification_url(signer_record),
+            side_effect=lambda signer_record, **kwargs: self._fake_notification_url(signer_record),
         ):
             self.env['open.sign.request']._cron_send_reminders()
         due_request.invalidate_recordset()
@@ -199,9 +199,9 @@ class TestOpenSignCron(TransactionCase):
 
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_notification_sign_url_for_delivery',
             autospec=True,
-            side_effect=lambda signer_record: self._fake_notification_url(signer_record),
+            side_effect=lambda signer_record, **kwargs: self._fake_notification_url(signer_record),
         ):
             self.env['open.sign.request']._cron_send_reminders()
         due_request.invalidate_recordset()
@@ -213,9 +213,9 @@ class TestOpenSignCron(TransactionCase):
 
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_notification_sign_url_for_delivery',
             autospec=True,
-            side_effect=lambda signer_record: self._fake_notification_url(signer_record),
+            side_effect=lambda signer_record, **kwargs: self._fake_notification_url(signer_record),
         ):
             request, first_signer, second_signer = self._create_ordered_sent_request(
                 'Ordered Reminder Wave',
@@ -228,9 +228,9 @@ class TestOpenSignCron(TransactionCase):
 
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_notification_sign_url_for_delivery',
             autospec=True,
-            side_effect=lambda signer_record: self._fake_notification_url(signer_record),
+            side_effect=lambda signer_record, **kwargs: self._fake_notification_url(signer_record),
         ):
             self.env['open.sign.request']._cron_send_reminders()
 
@@ -252,9 +252,9 @@ class TestOpenSignCron(TransactionCase):
 
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_notification_sign_url_for_delivery',
             autospec=True,
-            side_effect=lambda signer_record: self._fake_notification_url(signer_record),
+            side_effect=lambda signer_record, **kwargs: self._fake_notification_url(signer_record),
         ):
             request = self._create_sent_request(
                 'Reminder Missing Portal URL',
@@ -268,7 +268,7 @@ class TestOpenSignCron(TransactionCase):
 
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_notification_sign_url_for_delivery',
             autospec=True,
             return_value=False,
         ):
@@ -293,9 +293,9 @@ class TestOpenSignCron(TransactionCase):
 
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_notification_sign_url_for_delivery',
             autospec=True,
-            side_effect=lambda signer_record: self._fake_notification_url(signer_record),
+            side_effect=lambda signer_record, **kwargs: self._fake_notification_url(signer_record),
         ):
             request = self._create_sent_request(
                 'Reminder Queue Failure',
@@ -306,9 +306,9 @@ class TestOpenSignCron(TransactionCase):
         signer = request.signer_ids
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_notification_sign_url_for_delivery',
             autospec=True,
-            side_effect=lambda signer_record: self._fake_notification_url(signer_record),
+            side_effect=lambda signer_record, **kwargs: self._fake_notification_url(signer_record),
         ), patch(
             'odoo.addons.open_sign.services.notification_service._queue_template',
             side_effect=RuntimeError(self.QUEUE_FAILURE_WITH_TOKEN),
@@ -337,9 +337,9 @@ class TestOpenSignCron(TransactionCase):
 
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_notification_sign_url_for_delivery',
             autospec=True,
-            side_effect=lambda signer_record: self._fake_notification_url(signer_record),
+            side_effect=lambda signer_record, **kwargs: self._fake_notification_url(signer_record),
         ):
             request = self._create_sent_request(
                 'Reminder Service Failure',

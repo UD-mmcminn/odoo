@@ -236,7 +236,10 @@ def queue_request_invitations(sign_request, signers, *, trigger, raise_on_failur
         return queued_mail_ids
     for signer in signers:
         recipient_email = _normalize_email(signer.email)
-        notification_url = signer._get_notification_sign_url()
+        notification_url = signer._get_notification_sign_url_for_delivery(
+            notification_type='invitation',
+            trigger=trigger,
+        )
         if not notification_url:
             if raise_on_failure:
                 raise NotificationQueueFailure(
@@ -344,7 +347,10 @@ def queue_request_reminders(sign_request, signers, *, trigger, raise_on_failure=
         return queued_mail_ids
     for signer in signers:
         recipient_email = _normalize_email(signer.email)
-        notification_url = signer._get_notification_sign_url()
+        notification_url = signer._get_notification_sign_url_for_delivery(
+            notification_type='reminder',
+            trigger=trigger,
+        )
         if not notification_url:
             _append_notification_event(
                 sign_request,
@@ -496,7 +502,7 @@ def queue_request_completion_notifications(sign_request, *, raise_on_failure=Fal
     )
     for signer in sign_request.signer_ids:
         recipient_email = _normalize_email(signer.email)
-        notification_url = signer._get_notification_sign_url()
+        notification_url = signer._get_current_distributed_portal_url()
         if not signer_template:
             _append_notification_event(
                 sign_request,

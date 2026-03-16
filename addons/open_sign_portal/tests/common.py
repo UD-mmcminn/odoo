@@ -1,7 +1,18 @@
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 
 import base64
+from contextlib import contextmanager
+import hashlib
 import re
+from urllib.parse import urljoin
+
+import requests
+
+import odoo.http
+import odoo.sql_db
+from odoo import SUPERUSER_ID, api
+from odoo.addons.http_routing.tests.common import MockRequest
+from odoo.tests import HOST
 
 
 CONSENT_HASH_RE = re.compile(r'data-consent-hash="([0-9a-f]{64})"')
@@ -97,6 +108,17 @@ class OpenSignPortalTestMixin:
             return token
         replacement = '0' if token[-1] != '0' else '1'
         return f'{token[:-1]}{replacement}'
+
+    @staticmethod
+    def _bundle_signer_id(bundle, signer_key):
+        signer = bundle[signer_key]
+        return signer.id if hasattr(signer, 'id') else signer
+
+    def _refresh_bundle_token(self, bundle, *, signer_key='signer', token_key='token'):
+        signer = self.env['open.sign.request.signer'].browse(self._bundle_signer_id(bundle, signer_key))
+        signer.invalidate_recordset(['access_token'])
+        bundle[token_key] = signer.access_token
+        return bundle[token_key]
 
     @classmethod
     def _create_portal_session(
@@ -230,3 +252,166 @@ class OpenSignPortalTestMixin:
             'token_first': signer_first._portal_ensure_token(),
             'token_second': signer_second._portal_ensure_token(),
         }
+
+
+class OpenSignPortalHttpTestMixin(OpenSignPortalTestMixin):
+
+    def _new_isolated_http_session(self):
+        session = requests.Session()
+        session.cookies.update(self.opener.cookies)
+        return session
+
+    @staticmethod
+    def _extract_consent_hash_and_revision(html):
+        consent_match = CONSENT_HASH_RE.search(html)
+        revision_match = REQUEST_REVISION_RE.search(html)
+        assert consent_match, "Expected consent hash marker on portal page"
+        assert revision_match, "Expected request revision marker on portal page"
+        return consent_match.group(1), int(revision_match.group(1))
+
+    @staticmethod
+    def _expected_consent_hash():
+        return hashlib.sha256(
+            b'I agree to sign electronically and confirm my intent to sign this document.'
+        ).hexdigest()
+
+    @staticmethod
+    def _get_text_field_for_signer(signer):
+        return signer.request_id.template_id.field_ids.filtered(
+            lambda field: field.role_id == signer.role_id and field.type == 'text'
+        )[:1]
+
+    @staticmethod
+    def _build_submit_payload(*, revision, field_id, value, consent_hash, access_token, idempotency_key):
+        return {
+            'values': [{'field_id': field_id, 'value': value}],
+            'consent': {
+                'accepted': True,
+                'text_hash': consent_hash,
+                'timezone': 'UTC',
+            },
+            'idempotency_key': idempotency_key,
+            'request_revision': revision,
+            'access_token': access_token,
+        }
+
+    @staticmethod
+    def _build_decline_payload(*, revision, reason, access_token, idempotency_key):
+        return {
+            'reason': reason,
+            'idempotency_key': idempotency_key,
+            'request_revision': revision,
+            'access_token': access_token,
+        }
+
+    def _make_public_get_request(self, path, *, session=None, timeout=12, allow_redirects=False):
+        if session is None:
+            with self._new_isolated_http_session() as temp_session:
+                return self._make_public_get_request(
+                    path,
+                    session=temp_session,
+                    timeout=timeout,
+                    allow_redirects=allow_redirects,
+                )
+        response = session.get(
+            urljoin(self.base_url(), path),
+            timeout=timeout,
+            allow_redirects=allow_redirects,
+        )
+        response.raise_for_status()
+        return response
+
+    def _make_public_jsonrpc_request(self, route, payload, *, session=None, timeout=12):
+        if session is None:
+            with self._new_isolated_http_session() as temp_session:
+                return self._make_public_jsonrpc_request(
+                    route,
+                    payload,
+                    session=temp_session,
+                    timeout=timeout,
+                )
+        response = session.post(
+            urljoin(self.base_url(), route),
+            json={
+                'id': 0,
+                'jsonrpc': '2.0',
+                'method': 'call',
+                'params': payload,
+            },
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        decoded_response = response.json()
+        if 'error' in decoded_response:
+            raise AssertionError(f"Unexpected JSON-RPC error payload: {decoded_response['error']}")
+        return decoded_response.get('result')
+
+    def _public_jsonrpc_worker(self, route, payload, *, barrier=None, timeout=20):
+        with self._new_isolated_http_session() as session:
+            if barrier is not None:
+                barrier.wait(timeout=timeout)
+            return self._make_public_jsonrpc_request(
+                route,
+                payload,
+                session=session,
+                timeout=timeout,
+            )
+
+    def _open_public_submit_context(self, bundle, *, signer_key='signer', token_key='token', session=None, timeout=12):
+        signer = self.env['open.sign.request.signer'].browse(bundle[signer_key].id)
+        field = self._get_text_field_for_signer(signer)
+        assert field, "Expected a portal-editable text field for submit tests"
+        page_response = self._make_public_get_request(
+            f"/my/sign/{signer.id}?access_token={bundle[token_key]}",
+            session=session,
+            timeout=timeout,
+            allow_redirects=False,
+        )
+        consent_hash, revision = self._extract_consent_hash_and_revision(page_response.text)
+        return signer, field, consent_hash, revision
+
+
+class OpenSignPortalControllerTestMixin(OpenSignPortalHttpTestMixin):
+
+    @contextmanager
+    def _fresh_test_env(self, *, uid=SUPERUSER_ID, context=None):
+        with odoo.sql_db.db_connect(self.registry.db_name).cursor() as cr:
+            env = api.Environment(cr, uid, context or {})
+            try:
+                yield env
+            finally:
+                env.clear()
+
+    @contextmanager
+    def _portal_request_context(self, env, *, path, remote_addr=HOST, user_agent='PortalRaceTest/1.0'):
+        with MockRequest(env, path=path, remote_addr=remote_addr) as mocked_request:
+            mocked_request.type = 'jsonrpc'
+            mocked_request.httprequest.args = {}
+            mocked_request.httprequest.cookies = {}
+            mocked_request.httprequest.headers = {
+                'User-Agent': user_agent,
+            }
+            yield mocked_request
+
+    def _call_portal_controller(self, controller_cls, *, method_name, signer_id, payload, uid, barrier=None, timeout=20):
+        endpoint = method_name.rsplit('_', 1)[-1]
+        with self._fresh_test_env(uid=uid) as env:
+            controller = controller_cls()
+            with self._portal_request_context(env, path=f'/my/sign/{signer_id}/{endpoint}'):
+                if barrier is not None:
+                    barrier.wait(timeout=timeout)
+                try:
+                    result = getattr(controller, method_name)(signer_id, **payload)
+                    env.cr.commit()
+                except Exception:
+                    env.cr.rollback()
+                    raise
+        return result
+
+    def _refresh_bundle_token(self, bundle, *, signer_key='signer', token_key='token'):
+        signer_id = self._bundle_signer_id(bundle, signer_key)
+        token = self._read_committed(
+            lambda env: env['open.sign.request.signer'].sudo().browse(signer_id).access_token
+        )
+        bundle[token_key] = token
+        return token

@@ -26,6 +26,35 @@
                         readonly="1"
                         groups="open_sign.group_open_sign_user,open_sign.group_open_sign_manager"
                     />
+                    <field
+                        name="email_token_issued_at"
+                        optional="hide"
+                        readonly="1"
+                        groups="open_sign.group_open_sign_manager"
+                    />
+                    <field
+                        name="email_token_expires_at"
+                        optional="hide"
+                        readonly="1"
+                        groups="open_sign.group_open_sign_manager"
+                    />
+                    <field
+                        name="email_token_revoked_at"
+                        optional="hide"
+                        readonly="1"
+                        groups="open_sign.group_open_sign_manager"
+                    />
+                </xpath>
+                <xpath expr="//button[@name='action_resend_signer_request']" position="after">
+                    <button
+                        name="action_revoke_signer_portal_token"
+                        type="object"
+                        string="Revoke Link"
+                        class="btn-link"
+                        icon="fa-ban"
+                        groups="open_sign.group_open_sign_manager"
+                        confirm="This invalidates the current signer link. A new link will require resend."
+                    />
                 </xpath>
             </field>
         </record>
@@ -51,6 +80,30 @@
                         name="otp_verified_at"
                         readonly="1"
                         groups="open_sign.group_open_sign_user,open_sign.group_open_sign_manager"
+                    />
+                    <button
+                        name="action_revoke_signer_portal_token"
+                        type="object"
+                        string="Revoke Link"
+                        class="oe_link"
+                        groups="open_sign.group_open_sign_manager"
+                        invisible="not id"
+                        confirm="This invalidates the current signer link. A new link will require resend."
+                    />
+                    <field
+                        name="email_token_issued_at"
+                        readonly="1"
+                        groups="open_sign.group_open_sign_manager"
+                    />
+                    <field
+                        name="email_token_expires_at"
+                        readonly="1"
+                        groups="open_sign.group_open_sign_manager"
+                    />
+                    <field
+                        name="email_token_revoked_at"
+                        readonly="1"
+                        groups="open_sign.group_open_sign_manager"
                     />
                 </xpath>
             </field>
@@ -79,6 +132,36 @@
                         optional="hide"
                         readonly="1"
                         groups="open_sign.group_open_sign_user,open_sign.group_open_sign_manager"
+                    />
+                    <field
+                        name="email_token_issued_at"
+                        optional="hide"
+                        readonly="1"
+                        groups="open_sign.group_open_sign_manager"
+                    />
+                    <field
+                        name="email_token_expires_at"
+                        optional="hide"
+                        readonly="1"
+                        groups="open_sign.group_open_sign_manager"
+                    />
+                    <field
+                        name="email_token_revoked_at"
+                        optional="hide"
+                        readonly="1"
+                        groups="open_sign.group_open_sign_manager"
+                    />
+                </xpath>
+                <xpath expr="//field[@name='signer_ids']/list/button[@name='action_resend_signer_request']" position="after">
+                    <button
+                        name="action_revoke_signer_portal_token"
+                        type="object"
+                        string="Revoke Link"
+                        class="btn-link"
+                        icon="fa-ban"
+                        groups="open_sign.group_open_sign_manager"
+                        invisible="not id"
+                        confirm="This invalidates the current signer link. A new link will require resend."
                     />
                 </xpath>
             </field>

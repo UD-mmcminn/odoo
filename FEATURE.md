@@ -283,14 +283,14 @@ Out of scope for MVP:
 
 | Control ID | Control | Status |
 |---|---|---|
-| `SC-001` | Portal links use `portal.mixin` token lifecycle and constant-time token checks | `Open` |
+| `SC-001` | Portal links use `portal.mixin` token lifecycle and constant-time token checks | `Covered` |
 | `SC-002` | Token expiry and replay prevention | `Open` |
 | `SC-003` | Multi-company record rules validated with tests | `Open` |
 | `SC-004` | Audit log immutability constraints enforced post-completion | `Open` |
 | `SC-005` | PII minimization and retention enforcement | `Open` |
 | `SC-006` | Rate limit or abuse controls on public signing endpoints | `Open` |
-| `SC-007` | Idempotency keys and duplicate-submit protection on mutating portal endpoints | `Open` |
-| `SC-008` | Concurrency control prevents double-transition races in signer completion/decline | `Open` |
+| `SC-007` | Idempotency keys and duplicate-submit protection on mutating portal endpoints | `Covered` |
+| `SC-008` | Concurrency control prevents double-transition races in signer completion/decline | `Covered` |
 | `SC-009` | Trusted timestamp source policy (UTC clock, drift alerts) for legal evidence | `Open` |
 
 ### Security Roles and ACL Matrix (Baseline)
@@ -322,7 +322,7 @@ Implementation notes:
 | `D-008` | Approve field-level validation matrix defaults (length/date/format constraints) | Product/Backend | `M0` | `Resolved (Matrix v1)` |
 | `D-009` | Approve evidence package schema v1 and event taxonomy versioning policy | Product/Backend | `M0` | `Resolved (Schema v1)` |
 | `D-010` | Confirm whether a signature block is mandatory for completion workflows | Product/Backend | `M1` | `Resolved (participant required; signature field optional)` |
-| `D-011` | Approve external email-signer magic-link policy (TTL, one-time vs multi-use, resend/rotation, revoke semantics) | Product/Security | `M2` | `Open` |
+| `D-011` | Approve external email-signer magic-link policy (TTL, one-time vs multi-use, resend/rotation, revoke semantics) | Product/Security | `M2` | `Resolved (reuse signer portal.mixin token flow; multi-use until rotated/revoked/expired; future expiry = min(72h, request expiry))` |
 
 ### Phase 0 Decisions Locked (2026-02-26)
 
@@ -745,6 +745,19 @@ Standard `error_code` values:
 Current runtime note:
 - `idempotency_conflict` is active for `submit` and `decline` only after `T316`.
 - `expired_token` remains reserved/deferred.
+
+### Email-Only Signer Token Strategy (`T310` Locked)
+
+- External email-only signer links reuse `open.sign.request.signer.access_token` from `portal.mixin`; no separate signed-envelope or parallel email-token model is planned.
+- External email-only signers use the existing signer route family (`/my/sign/<signer_id>?access_token=...` and the related `save` / `submit` / `decline` / OTP JSONRPC endpoints).
+- External email-only signer access is token-only: signer context resolves from `signer_id + access_token`, and matching an internal user by email does not grant access.
+- Internal authenticated fallback remains limited to signers explicitly linked through `partner_id`.
+- Possession of a live magic link is the accepted baseline authentication factor for email-only signers; forwarded/shared links are an explicitly accepted baseline product risk for this track.
+- Email-only signer links are multi-use until rotated, revoked, expired, or blocked by request/signer terminal state; they are not one-time on open or one-time on completion.
+- Future token expiry policy is `min(72 hours from issuance, request.expires_at)`; `expired_token` remains reserved until `T313` activates runtime expiry checks.
+- Manual resend and signer contact correction rotate the signer token and invalidate the prior link; automatic reminders reuse a still-valid active token and should refresh it first only when the active token is expired or revoked.
+- Future token lifecycle metadata should live on `open.sign.request.signer` (`email_token_issued_at`, `email_token_expires_at`, `email_token_revoked_at`) rather than in a separate token model.
+- Future audit taxonomy for this track is locked to `token_issued`, `token_opened`, `token_rejected`, and `token_revoked` (`T314`).
 
 ### Database Entities
 
@@ -1246,13 +1259,14 @@ Legend:
 - [x] `T38` Implement endpoint response envelope/error codes and contract tests.
 - [x] `T39` Add portal addon ACL/rules for the current portal-persisted model surface (`open.sign.otp.challenge` as a system-only ORM model) and lock portal signer field exposure; future session/idempotency model ACLs remain deferred until those models exist.
 - [x] `T316` Implement idempotency-key handling and concurrency-safe locking for submit/decline.
-- [ ] `T317` Add duplicate-submit and race-condition test coverage for portal signer flows.
-- [ ] `T310` Define and document external email-signer token strategy (reuse `portal.mixin` token flow vs signed/expiring payloads), including accepted link-sharing risk and compensating controls.
-- [ ] `T311` Implement email-invitation magic-link issuance for email-only signers with resend rotation and explicit token revocation hooks.
-- [ ] `T312` Implement public token entry and signer-context resolution for email-only signers without email-based ACL authorization.
-- [ ] `T313` Implement token lifecycle hardening for email-only signers (expiry, revoke, replay handling, invalid-attempt throttling, and deterministic error codes).
+- [x] `T317` Add duplicate-submit and race-condition test coverage for portal signer flows.
+- [ ] `T317a` Add deferred live-HTTP overlap verification for portal signer flows using an out-of-band harness that bypasses `HttpCase`/`TestCursor` request serialization; non-blocking for `T310`.
+- [x] `T310` Define and document the external email-signer token strategy: reuse signer `portal.mixin` `access_token`, keep the existing signer route family, enforce token-only external access, accept baseline link-sharing risk, keep links multi-use until rotated/revoked/expired, and reserve `expired_token` until `T313`.
+- [x] `T311` Implement email-invitation magic-link issuance on signer `access_token`, with resend rotation, lifecycle metadata, reminder reuse/refresh policy, explicit manager-only revocation hooks, blank-until-issued backend copy-link behavior, and completion-link suppression when no currently distributable signer URL exists.
+- [ ] `T312` Implement public token entry and email-only signer context resolution on `signer_id + access_token`, with no email-based ACL authorization path.
+- [ ] `T313` Implement signer-token lifecycle hardening for email-only signers (`min(72h, request expiry)` expiry, revoke, replay handling, invalid-attempt throttling, and deterministic error codes including activating `expired_token`).
 - [ ] `T314` Extend audit/evidence taxonomy for email-token events (`token_issued`, `token_opened`, `token_rejected`, `token_revoked`) with export coverage.
-- [ ] `T315` Add end-to-end and denial-path tests for email-only signer flow (tampered/expired/revoked token, spoofed email no-access, replay, and controlled link-sharing behavior).
+- [ ] `T315` Add end-to-end and denial-path tests for the locked email-only signer token flow (tampered/expired/revoked token, spoofed email no-access, replay, and controlled link-sharing behavior).
 
 ### Phase 4: PDF Finalization and Audit Evidence
 
@@ -1352,10 +1366,10 @@ Legend:
 | `RK-011` | Portal endpoint contract drifts between frontend and backend | Medium | Lock v1 contract in `T95`, enforce contract tests in `T38` | Web/Backend | Open |
 | `RK-012` | Consent evidence is incomplete or unverifiable during audit/export | High | Persist consent hash/timestamp in `T46` and validate in security review `T61` | Product/Security | Open |
 | `RK-013` | Signed artifacts become accessible outside token scope | High | Enforce tokenized attachment policy in `T97`/`T47` and test abuse paths in `T36` | Security/Backend | Open |
-| `RK-014` | Duplicate submits or concurrent requests create inconsistent signer/request states | High | Implement idempotency + locking (`T316`) and race tests (`T317`) | Backend/Security | Open |
+| `RK-014` | Duplicate submits or concurrent requests create inconsistent signer/request states | High | Implemented durable idempotency + request-row locking in `T316`; overlap and side-effect singularity coverage added in `T317`; keep the portal race suite green in future slices | Backend/Security | Mitigated |
 | `RK-015` | Server clock drift undermines timestamp credibility in legal evidence | High | Define UTC clock policy and drift checks (`T410`) plus operational monitoring | Platform/Ops | Open |
 | `RK-016` | Missing or mismatched artifact digests weakens integrity proof during disputes | High | Persist and verify SHA-256 digests (`T411`) in evidence export flow | Backend | Open |
-| `RK-017` | Email-only signer magic links are forwarded/shared, allowing non-intended recipients to sign | High | Explicitly accept baseline risk, enforce short TTL + revoke/rotate controls (`T311`-`T313`), log token events (`T314`), and optionally require OTP (`T37`) for higher-assurance profiles | Product/Security | Open |
+| `RK-017` | Email-only signer magic links are forwarded/shared, allowing non-intended recipients to sign | High | Explicitly accept baseline possession-of-link risk, enforce `72h` / request-bounded TTL plus revoke/rotate controls (`T311`-`T313`), log token events (`T314`), and optionally require OTP (`T37`) for higher-assurance profiles | Product/Security | Open |
 
 ## Definition of Done (DoD)
 
@@ -1389,7 +1403,7 @@ Use this checklist in every implementation PR touching this feature:
 - [ ] Denial-path tests cover tamper attempts and invalid transitions for the changed scope.
 - [ ] UI writeability (`readonly`/invisible) is aligned with server authority for sensitive fields.
 - [ ] `jsonrpc` endpoints follow documented request/response/error envelope contract.
-- [ ] Mutating portal endpoints enforce idempotency keys and race-safe transition handling.
+- [x] Mutating portal endpoints enforce idempotency keys and race-safe transition handling.
 - [ ] Evidence timestamps are UTC and artifact digest fields are generated/verified as specified.
 - [ ] Signed artifacts and attachment payloads enforce token scope and expiry checks.
 - [ ] JS translation usage follows `_t` conventions and avoids `_('...')`.
@@ -1496,3 +1510,6 @@ Counts below track only `T*` development tasks in the phase task board.
 | `2026-03-13` | Codex | Completed `T38` by locking the shipped Phase 3 portal JSONRPC contract to a single controller response layer plus explicit contract tests. `doc/open_sign/m0/PORTAL_API_CONTRACT.md` now matches the runtime behavior, including redirect-style success envelopes for `decline`, `otp/request`, and `otp/verify`; active runtime error codes are now explicitly separated from reserved/deferred codes; and the new `test_portal_contract.py` suite locks exact success/error envelope shape, route-specific allowed error-code behavior, reserved-code non-emission, and no-token-leak guarantees for mutating portal routes. Revalidated with `/open_sign_portal`, `/open_sign`, and `scripts/review_gate_open_sign.sh --skip-web` (all green). |
 | `2026-03-13` | Codex | Completed `T39` by hardening the current implemented portal model surface rather than the older broader Phase 3 sketch: `open.sign.otp.challenge` now has explicit system-only ORM ACLs plus a company-scoped system record rule, its sensitive `code_hash` and `code_salt` fields are now restricted to `base.group_system`, and a new `test_portal_acl.py` suite locks model ACL denial for user/manager/auditor roles, company-scoped system access, signer-field exposure (`portal_sign_url`, `otp_required`, `otp_verified_at`) for user/manager only, system-only `access_token`, and the absence of any backend action/menu surface for OTP challenges. Revalidated with `/open_sign_portal` (`214 tests, 0 failed` / `196` post-install), `/open_sign` (`127 tests, 0 failed` / `107` post-install), and `scripts/review_gate_open_sign.sh --skip-web` (passed). |
 | `2026-03-15` | Codex | Completed `T316` by implementing durable idempotency for portal `submit` and `decline`: the new system-only `open.sign.portal.idempotency` model stores signer/endpoint-scoped request hashes plus exact committed success envelopes for replay; `portal_sign.py` now resolves exact replay, same-key different-payload conflicts (`idempotency_conflict`), and in-progress key locks before running business mutations; failed attempts persist retryable `failed` rows; submit/decline audit metadata now includes `idempotency_key`; repeated same-key different-payload misuse now logs a single `idempotency_conflict` audit event per idempotency record; expired rows stop being authoritative at runtime instead of waiting for cron cleanup; and the frontend now reuses pending submit/decline keys from `sessionStorage` across unresolved retries, including `request_locked` responses. Added `test_portal_idempotency.py`, plus portal JS unit coverage for pending-key retention/clearing behavior, extended contract coverage so `idempotency_conflict` is active for `submit` / `decline`, and revalidated with `/open_sign_portal`, `/open_sign`, and `scripts/review_gate_open_sign.sh --skip-web` (passed). |
+| `2026-03-16` | Codex | Completed `T317` by adding a dedicated portal race suite in `test_portal_race.py` plus reusable overlap helpers in `open_sign_portal/tests/common.py`. The new coverage proves same-key overlap resolves to `request_locked` then exact replay, same-key different-payload overlap resolves to `request_locked` first then `idempotency_conflict`, different-key overlap never replays and never duplicates terminal side effects, submit-vs-decline overlap cannot produce contradictory signer evidence, and ordered-signing cross-signer overlap behaves correctly once the request lock clears. Because `HttpCase` runs under `TestCursor`, which serializes concurrent requests, the shipped suite uses deterministic controller-level overlap orchestration with isolated DB cursors and mocked portal request contexts plus a minimal true-concurrency smoke layer at the controller/DB-lock level rather than literal live dispatcher-level HTTP overlap; that wider verification is preserved as deferred follow-up `T317a`. This is still sufficient to prove the legally relevant property for the current portal baseline: contradictory or duplicate business evidence is prevented at the controller, transaction, lock, idempotency, and audit side-effect layers. Revalidated with the race file on two fresh databases, `/open_sign_portal` (`269 tests, 0 failed` / `241` post-install), `/open_sign` (`127 tests, 0 failed` / `107` post-install), and `scripts/review_gate_open_sign.sh --skip-web` (passed). |
+| `2026-03-16` | Codex | Completed `T310` as a doc-only strategy lock for the deferred external email-signer track. The repo now explicitly commits to reusing signer `portal.mixin` `access_token` as the canonical magic-link secret, keeping the existing signer route family as the only public entry path, treating external email-only signers as token-only sessions without email-based ACL lookup, accepting baseline forwarded-link risk, keeping links multi-use until rotated/revoked/expired, using future expiry policy `min(72 hours from issuance, request expiry)`, rotating tokens on manual resend/contact correction, and reserving `expired_token` until `T313` activates runtime expiry enforcement. This leaves `T311`-`T315` decision-complete without changing runtime behavior. |
+| `2026-03-16` | Codex | Completed `T311`. Signer records now persist `email_token_issued_at`, `email_token_expires_at`, and `email_token_revoked_at`; invitation delivery uses explicit issue/reuse rules on signer `access_token`; initial send, wave-unblocked invitation, and manual resend always rotate to a fresh distributed token; reminders reuse an active token and refresh missing/revoked/metadata-expired tokens; backend copy-link surfaces now stay blank until a signer has a currently distributable token and never mint tokens on read; signer completion notifications now skip truthfully when no currently distributable signer URL exists, eliminating hidden post-revoke token leakage; explicit manager-only revoke invalidates the currently distributed signer link without changing request/signature business state; revoked links now fail with the existing `invalid_token` behavior across page/document/JSONRPC routes; and dedicated token lifecycle audit events remain deferred to `T314`. |

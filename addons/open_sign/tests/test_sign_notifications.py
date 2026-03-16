@@ -108,9 +108,9 @@ class TestOpenSignNotifications(TransactionCase):
         mail_count_before = self.env['mail.mail'].sudo().search_count([('email_to', '=', signer.email)])
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_notification_sign_url_for_delivery',
             autospec=True,
-            side_effect=lambda signer_record: self._fake_notification_url(signer_record),
+            side_effect=lambda signer_record, **kwargs: self._fake_notification_url(signer_record),
         ):
             request.action_send()
 
@@ -143,9 +143,9 @@ class TestOpenSignNotifications(TransactionCase):
 
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_notification_sign_url_for_delivery',
             autospec=True,
-            side_effect=lambda signer_record: self._fake_notification_url(signer_record),
+            side_effect=lambda signer_record, **kwargs: self._fake_notification_url(signer_record),
         ), patch(
             'odoo.addons.open_sign.services.notification_service._queue_template',
             side_effect=RuntimeError(self.QUEUE_FAILURE_WITH_TOKEN),
@@ -182,7 +182,7 @@ class TestOpenSignNotifications(TransactionCase):
 
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_notification_sign_url_for_delivery',
             autospec=True,
             return_value=False,
         ):
@@ -264,9 +264,9 @@ class TestOpenSignNotifications(TransactionCase):
 
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_notification_sign_url_for_delivery',
             autospec=True,
-            side_effect=lambda signer_record: self._fake_notification_url(signer_record),
+            side_effect=lambda signer_record, **kwargs: self._fake_notification_url(signer_record),
         ):
             request.action_send()
 
@@ -291,9 +291,9 @@ class TestOpenSignNotifications(TransactionCase):
         request.action_version()
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_notification_sign_url_for_delivery',
             autospec=True,
-            side_effect=lambda signer_record: self._fake_notification_url(signer_record),
+            side_effect=lambda signer_record, **kwargs: self._fake_notification_url(signer_record),
         ):
             request.action_send()
         request.write({
@@ -312,9 +312,9 @@ class TestOpenSignNotifications(TransactionCase):
         owner_mail_before = self.env['mail.mail'].sudo().search_count([('email_to', '=', owner_email)])
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_current_distributed_portal_url',
             autospec=True,
-            side_effect=lambda signer_record: self._fake_notification_url(signer_record),
+            side_effect=lambda signer_record, **kwargs: self._fake_notification_url(signer_record),
         ):
             request.action_complete()
 
@@ -348,9 +348,9 @@ class TestOpenSignNotifications(TransactionCase):
         request.action_version()
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_notification_sign_url_for_delivery',
             autospec=True,
-            side_effect=lambda signer_record: self._fake_notification_url(signer_record),
+            side_effect=lambda signer_record, **kwargs: self._fake_notification_url(signer_record),
         ):
             request.action_send()
         request.write({
@@ -370,7 +370,7 @@ class TestOpenSignNotifications(TransactionCase):
 
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_current_distributed_portal_url',
             autospec=True,
             return_value=False,
         ):
@@ -392,9 +392,9 @@ class TestOpenSignNotifications(TransactionCase):
         request.action_version()
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_notification_sign_url_for_delivery',
             autospec=True,
-            side_effect=lambda signer_record: self._fake_notification_url(signer_record),
+            side_effect=lambda signer_record, **kwargs: self._fake_notification_url(signer_record),
         ):
             request.action_send()
         request.write({
@@ -431,9 +431,9 @@ class TestOpenSignNotifications(TransactionCase):
         request.action_version()
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_notification_sign_url_for_delivery',
             autospec=True,
-            side_effect=lambda signer_record: self._fake_notification_url(signer_record),
+            side_effect=lambda signer_record, **kwargs: self._fake_notification_url(signer_record),
         ):
             request.action_send()
         request.write({
@@ -448,9 +448,9 @@ class TestOpenSignNotifications(TransactionCase):
 
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_current_distributed_portal_url',
             autospec=True,
-            side_effect=lambda signer_record: self._fake_notification_url(signer_record),
+            side_effect=lambda signer_record, **kwargs: self._fake_notification_url(signer_record),
         ), patch(
             'odoo.addons.open_sign.services.notification_service._queue_template',
             side_effect=RuntimeError(self.QUEUE_FAILURE_WITH_TOKEN),
@@ -484,9 +484,9 @@ class TestOpenSignNotifications(TransactionCase):
         request.action_version()
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_notification_sign_url_for_delivery',
             autospec=True,
-            side_effect=lambda signer_record: self._fake_notification_url(signer_record),
+            side_effect=lambda signer_record, **kwargs: self._fake_notification_url(signer_record),
         ):
             request.action_send()
         signer.write({
@@ -525,9 +525,9 @@ class TestOpenSignNotifications(TransactionCase):
         request.action_version()
         with patch.object(
             type(self.env['open.sign.request.signer']),
-            '_get_notification_sign_url',
+            '_get_notification_sign_url_for_delivery',
             autospec=True,
-            side_effect=lambda signer_record: self._fake_notification_url(signer_record),
+            side_effect=lambda signer_record, **kwargs: self._fake_notification_url(signer_record),
         ):
             request.action_send()
         signer.write({
@@ -562,7 +562,7 @@ class TestOpenSignNotifications(TransactionCase):
             type(self.env['open.sign.request.signer']),
             '_get_notification_sign_url',
             autospec=True,
-            side_effect=lambda signer_record: self._fake_notification_url(signer_record),
+            side_effect=lambda signer_record, **kwargs: self._fake_notification_url(signer_record),
         ):
             request.action_send()
 
