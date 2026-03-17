@@ -65,6 +65,23 @@ class OpenSignPortalController(CustomerPortal):
         return bool(access_token and signer_sudo.access_token and consteq(signer_sudo.access_token, access_token))
 
     @staticmethod
+    def _is_partner_linked_signer(signer_sudo):
+        return bool(signer_sudo.partner_id)
+
+    def _check_signer_external_token_access(self, signer_sudo, access_token):
+        if not self._token_matches_signer(signer_sudo, access_token):
+            raise AccessError(_("Signer session is not allowed for this user."))
+        return signer_sudo
+
+    def _check_signer_internal_partner_fallback_access(self, signer_sudo):
+        user = self._require_internal_user()
+        if not self._is_partner_linked_signer(signer_sudo) or signer_sudo.partner_id != user.partner_id:
+            raise AccessError(_("Signer session is not allowed for this user."))
+        signer = request.env['open.sign.request.signer'].browse(signer_sudo.id)
+        signer.with_user(user).check_access('read')
+        return signer_sudo
+
+    @staticmethod
     def _is_request_readonly(sign_request):
         return sign_request.status in READONLY_REQUEST_STATUSES
 
@@ -105,15 +122,10 @@ class OpenSignPortalController(CustomerPortal):
 
     def _check_signer_identity_access(self, signer_id, access_token=None):
         signer_sudo = self._get_signer_sudo(signer_id)
-        if self._token_matches_signer(signer_sudo, access_token):
-            return signer_sudo
-
-        user = self._require_internal_user()
-        if not signer_sudo.partner_id or signer_sudo.partner_id != user.partner_id:
-            raise AccessError(_("Signer session is not allowed for this user."))
-        signer = request.env['open.sign.request.signer'].browse(signer_id)
-        signer.with_user(user).check_access('read')
-        return signer_sudo
+        try:
+            return self._check_signer_external_token_access(signer_sudo, access_token)
+        except AccessError:
+            return self._check_signer_internal_partner_fallback_access(signer_sudo)
 
     def _check_signer_read_access(self, signer_id, access_token=None):
         signer_sudo = self._check_signer_identity_access(signer_id, access_token=access_token)
@@ -187,12 +199,14 @@ class OpenSignPortalController(CustomerPortal):
             )
         self._assert_signer_order_allows_mutation(signer)
 
-    def _check_signer_document_access(self, signer_id, access_token=None):
+    def _check_signer_document_access(self, signer_id, access_token=None, *, allow_preview=False):
         if access_token:
             return self._check_signer_read_access(signer_id, access_token=access_token)
         try:
             return self._check_signer_read_access(signer_id, access_token=access_token)
         except (AccessError, ValidationError):
+            if not allow_preview:
+                raise
             return self._check_signer_preview_access(signer_id)
 
     @staticmethod
@@ -954,6 +968,8 @@ class OpenSignPortalController(CustomerPortal):
             document_url = f'/my/sign/{signer_sudo.id}/document'
             if access_token:
                 document_url = f'{document_url}?access_token={access_token}'
+            elif preview_mode:
+                document_url = f'{document_url}?preview=1'
 
         portal_fields = []
         submit_blocked_reason = False
@@ -1093,8 +1109,13 @@ class OpenSignPortalController(CustomerPortal):
     def portal_sign_document(self, signer_id, access_token=None, **kwargs):
         del kwargs
         access_token = self._resolve_access_token(access_token)
+        allow_preview = request.httprequest.args.get('preview') == '1'
         try:
-            signer_sudo = self._check_signer_document_access(signer_id, access_token=access_token)
+            signer_sudo = self._check_signer_document_access(
+                signer_id,
+                access_token=access_token,
+                allow_preview=allow_preview,
+            )
         except (AccessError, MissingError, ValidationError):
             return request.redirect('/my')
         attachment = signer_sudo.request_id.template_version_id.source_attachment_id or signer_sudo.request_id.template_id.source_attachment_id

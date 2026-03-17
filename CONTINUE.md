@@ -641,12 +641,12 @@ Use this before marking any task complete (especially model/state/security work)
    - `./odoo-bin -d <db> -i open_sign_portal --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign_portal --stop-after-init`
    - `scripts/review_gate_open_sign.sh --skip-web -d <db>`
-2. If tests pass, continue Phase 3 with the remaining post-portal hardening tasks on top of the now-closed `T32`/`T33`/`T34`/`T35`/`T36`/`T37`/`T38`/`T39`/`T316`/`T317`/`T310`/`T311` portal baseline; the immediate unresolved items are the `T312`-`T315` external email-signer implementation track, with optional deferred verification follow-up `T317a` if literal live-HTTP overlap proof is still desired later.
+2. If tests pass, continue Phase 3 with the remaining post-portal hardening tasks on top of the now-closed `T32`/`T33`/`T34`/`T35`/`T36`/`T37`/`T38`/`T39`/`T316`/`T317`/`T310`/`T311`/`T312` portal baseline; the immediate unresolved items are the `T313`-`T315` external email-signer implementation track, with optional deferred verification follow-up `T317a` if literal live-HTTP overlap proof is still desired later.
 3. Re-run recurring hardening re-audit (`T610`) after each major phase slice and after every 3 completed implementation tasks.
 
 ## Next Tasks (Planned Order)
 
-1. `T312` Implement public token entry and email-only signer context resolution on `signer_id + access_token`, with no email-based ACL authorization path.
+1. `T313` Implement signer-token lifecycle hardening for email-only signers (`min(72h, request expiry)` expiry, revoke, replay handling, invalid-attempt throttling, and deterministic error codes including activating `expired_token`).
 2. `T317a` Optional deferred verification follow-up for literal live-HTTP overlap proof outside the `HttpCase`/`TestCursor` model.
 
 ## Notes For Next Chat
@@ -785,3 +785,9 @@ Use this before marking any task complete (especially model/state/security work)
   - revoked or rotated old links now fail with the existing `invalid_token` contract across signer page, document, and signer JSONRPC routes, while partner-linked internal fallback remains unchanged
   - signer completion notifications now skip truthfully when no currently distributable signer URL exists, so revoke cannot leak a hidden replacement token through completion mail
   - dedicated token lifecycle audit events (`token_issued`, `token_revoked`, etc.) remain deferred to `T314`
+- `T312` is now closed. Additional external email-only signer access guarantees now include:
+  - portal controller access resolution now makes the external token path and internal partner fallback path explicit instead of leaving them implicit inside one generic helper
+  - external email-only signer access remains strictly token-only on `signer_id + access_token`; matching an internal user by email still does not grant access
+  - exact linked internal fallback remains limited to `partner_id` and still works even if a wrong or stale token is present in the URL or JSON payload
+  - public GET denial remains redirect-to-`/my` and JSONRPC denial remains `invalid_token`; no new route shapes or error codes were introduced
+  - to preserve the separate internal preview surface while tightening no-token document access, preview pages now load PDF content through an internal-only `preview=1` document link rather than through the generic no-token document fallback

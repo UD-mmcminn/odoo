@@ -645,10 +645,10 @@ Phase: Phase 3
 Requirements: `R-009`
 Dependencies: `T310`, `T311` complete; portal token model available
 Target Files: addons/open_sign_portal/controllers/*, addons/open_sign_portal/models/*, addons/open_sign_portal/tests/*
-Implementation Notes: Use the existing signer route family and resolve external email-only signer context strictly from `signer_id + access_token`. Internal authenticated fallback remains allowed only for signers explicitly linked through `partner_id`; there must be no email-address-based access path.
+Implementation Notes: Completed. `open_sign_portal` controller access resolution now separates external signer token access from internal partner-linked fallback explicitly. External email-only signer access resolves strictly from `signer_id + access_token`; matching an internal user by email does not grant access; exact linked internal fallback remains limited to `partner_id`; and a wrong/stale token does not suppress that exact linked internal fallback. Public GET denial remains redirect-to-`/my`, JSONRPC denial remains `invalid_token`, and no new routes or error codes were introduced. To preserve the separate internal preview surface while tightening generic no-token document access, preview pages now use an internal-only `preview=1` PDF link rather than relying on the generic document fallback path.
 Acceptance Criteria: Behavior matches task goal, related tests pass, traceability references updated.
-Test Plan: Add/extend integration/http tests for token-only external signer resolution and denial of spoofed email-based access.
-Security Notes: Token identity must remain constant-time and server-authoritative; email similarity or mailbox overlap must not widen access.
+Test Plan: Completed with extended portal HTTP coverage for same-email spoof denial on page/document/JSON/OTP routes, authenticated valid-token success for unrelated internal users, exact `partner_id` fallback with wrong/stale token, and preview-document regression coverage.
+Security Notes: Token identity remains constant-time and server-authoritative; email similarity or mailbox overlap does not widen access; the internal preview surface remains separate from external signer token entry.
 Rollback/Migration Impact: Document schema/data migration effects if model or XML data changes.
 
 ## T313

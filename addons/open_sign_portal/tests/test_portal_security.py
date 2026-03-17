@@ -59,6 +59,12 @@ class TestOpenSignPortalSecurityHttp(HttpCase, OpenSignPortalTestMixin):
             password='open_sign_portal_security_outsider',
             groups='open_sign.group_open_sign_user',
         )
+        cls.open_sign_same_email = new_test_user(
+            cls.env,
+            login='open_sign_portal_security_same_email',
+            password='open_sign_portal_security_same_email',
+            groups='open_sign.group_open_sign_user',
+        )
         cls.open_sign_manager = new_test_user(
             cls.env,
             login='open_sign_portal_security_manager',
@@ -67,6 +73,7 @@ class TestOpenSignPortalSecurityHttp(HttpCase, OpenSignPortalTestMixin):
         )
         cls.open_sign_user.partner_id.email = 'open.sign.portal.security.user@example.com'
         cls.open_sign_outsider.partner_id.email = 'open.sign.portal.security.outsider@example.com'
+        cls.open_sign_same_email.partner_id.email = 'open.sign.portal.security.same.email@example.com'
         cls.open_sign_manager.partner_id.email = 'open.sign.portal.security.manager@example.com'
 
     def _build_payload(self, *, revision, values=None, consent=None, access_token=False, idempotency_key=None):
@@ -216,6 +223,9 @@ class TestOpenSignPortalSecurityHttp(HttpCase, OpenSignPortalTestMixin):
         ])
         for audit in audits:
             self._assert_no_url_or_token_leak(audit.metadata_json or {}, *forbidden_values)
+
+    def _set_same_email_user_email(self, signer):
+        self.open_sign_same_email.partner_id.write({'email': signer.email})
 
     def test_signer_page_denies_wrong_token(self):
         bundle = self._create_portal_session(
@@ -468,6 +478,149 @@ class TestOpenSignPortalSecurityHttp(HttpCase, OpenSignPortalTestMixin):
             ),
         )
         self.assertTrue(decline_response['ok'])
+
+    def test_email_only_signer_page_denies_internal_same_email_user_without_token(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Security Same Email Page Deny',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        self._set_same_email_user_email(signer)
+
+        self.authenticate(self.open_sign_same_email.login, self.open_sign_same_email.login)
+        response = self.url_open(f"/my/sign/{signer.id}", allow_redirects=False)
+        self._assert_redirect_denied(response)
+
+    def test_email_only_signer_document_denies_internal_same_email_user_without_token(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Security Same Email Document Deny',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        self._set_same_email_user_email(signer)
+
+        self.authenticate(self.open_sign_same_email.login, self.open_sign_same_email.login)
+        response = self.url_open(f"/my/sign/{signer.id}/document", allow_redirects=False)
+        self._assert_redirect_denied(response)
+
+    def test_email_only_signer_save_denies_internal_same_email_user_without_token(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Security Same Email Save Deny',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        field = self._get_text_field_for_signer(signer)
+        self._set_same_email_user_email(signer)
+
+        self.authenticate(self.open_sign_same_email.login, self.open_sign_same_email.login)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/save",
+            self._build_payload(
+                revision=signer.request_id.lock_version,
+                values=[{'field_id': field.id, 'value': 'same email save'}],
+            ),
+        )
+        self._assert_json_error(response, 'invalid_token')
+
+    def test_email_only_signer_submit_denies_internal_same_email_user_without_token(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Security Same Email Submit Deny',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        field = self._get_text_field_for_signer(signer)
+        self._set_same_email_user_email(signer)
+
+        self.authenticate(self.open_sign_same_email.login, self.open_sign_same_email.login)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/submit",
+            self._build_payload(
+                revision=signer.request_id.lock_version,
+                values=[{'field_id': field.id, 'value': 'same email submit'}],
+                consent={'accepted': True, 'text_hash': self._expected_consent_hash(), 'timezone': 'UTC'},
+            ),
+        )
+        self._assert_json_error(response, 'invalid_token')
+
+    def test_email_only_signer_decline_denies_internal_same_email_user_without_token(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Security Same Email Decline Deny',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        self._set_same_email_user_email(signer)
+
+        self.authenticate(self.open_sign_same_email.login, self.open_sign_same_email.login)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/decline",
+            self._build_decline_payload(
+                revision=signer.request_id.lock_version,
+                reason='same email decline',
+            ),
+        )
+        self._assert_json_error(response, 'invalid_token')
+
+    def test_email_only_signer_valid_token_allows_authenticated_same_email_user_via_token_path(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Security Same Email Valid Token',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        field = self._get_text_field_for_signer(signer)
+        self._set_same_email_user_email(signer)
+
+        self.authenticate(self.open_sign_same_email.login, self.open_sign_same_email.login)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/save",
+            self._build_payload(
+                revision=signer.request_id.lock_version,
+                values=[{'field_id': field.id, 'value': 'same email token path'}],
+                access_token=bundle['token'],
+            ),
+        )
+        self.assertTrue(response['ok'])
+
+    def test_partner_linked_internal_page_allows_exact_partner_with_wrong_token(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Security Internal Wrong Token Page',
+            owner=self.open_sign_user,
+            signer_partner=self.open_sign_user.partner_id,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        wrong_token = self._mutate_token(bundle['token'])
+
+        self.authenticate(self.open_sign_user.login, self.open_sign_user.login)
+        response = self.url_open(f"/my/sign/{signer.id}?access_token={wrong_token}", allow_redirects=False)
+        self.assertEqual(response.status_code, 200)
+
+    def test_partner_linked_internal_save_allows_exact_partner_with_wrong_token(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Security Internal Wrong Token Save',
+            owner=self.open_sign_user,
+            signer_partner=self.open_sign_user.partner_id,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        field = self._get_text_field_for_signer(signer)
+        wrong_token = self._mutate_token(bundle['token'])
+
+        self.authenticate(self.open_sign_user.login, self.open_sign_user.login)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/save",
+            self._build_payload(
+                revision=signer.request_id.lock_version,
+                values=[{'field_id': field.id, 'value': 'internal wrong token save'}],
+                access_token=wrong_token,
+            ),
+        )
+        self.assertTrue(response['ok'])
 
     def test_rotated_old_token_denied_on_signer_page(self):
         bundle = self._create_portal_session(

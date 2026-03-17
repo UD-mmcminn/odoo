@@ -183,6 +183,8 @@ No additional success-only fields are returned on error responses.
 - The external email-only signer track reuses the same signer portal route family and the same `access_token` query/payload parameter shape.
 - No email-based authentication endpoint or alternate signed-envelope URL format is planned for this track.
 - External email-only signer context is intended to resolve from `signer_id + access_token`; internal authenticated fallback remains limited to signers explicitly linked by `partner_id`.
+- Matching an internal user by email alone does not grant signer access.
+- If a signer is explicitly linked by `partner_id`, that exact linked internal fallback still works even when a wrong/stale `access_token` is present.
 - Tampered, rotated, and revoked signer tokens map to `invalid_token`.
 - `expired_token` remains reserved until `T313` activates real runtime expiry enforcement for email-only signer tokens.
 

@@ -731,6 +731,25 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
             ('event_type', '=', 'signer_opened'),
         ]))
 
+    def test_preview_page_document_link_preserves_internal_preview_access(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Preview Document Link',
+            owner=self.open_sign_user,
+        )
+
+        self.authenticate(self.open_sign_user.login, self.open_sign_user.login)
+        preview_response = self.url_open(f"/my/sign/{bundle['signer'].id}/preview", allow_redirects=False)
+        self.assertEqual(preview_response.status_code, 200)
+        self.assertIn(f'/my/sign/{bundle["signer"].id}/document?preview=1', preview_response.text)
+
+        document_response = self.url_open(
+            f"/my/sign/{bundle['signer'].id}/document?preview=1",
+            allow_redirects=False,
+        )
+        self.assertEqual(document_response.status_code, 200)
+        self.assertIn('application/pdf', document_response.headers.get('content-type'))
+
     def test_signer_route_denies_versioned_request_while_preview_allows_it(self):
         template = self._create_template(self.env, 'Portal Versioned Only')
         role = self._create_role(self.env, template, 'Versioned Signer', 10)

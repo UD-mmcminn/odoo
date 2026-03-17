@@ -145,6 +145,12 @@ class TestOpenSignPortalOtpHttp(HttpCase, OpenSignPortalTestMixin):
             password='open_sign_portal_otp_http_outsider',
             groups='open_sign.group_open_sign_user',
         )
+        cls.open_sign_same_email = new_test_user(
+            cls.env,
+            login='open_sign_portal_otp_http_same_email',
+            password='open_sign_portal_otp_http_same_email',
+            groups='open_sign.group_open_sign_user',
+        )
         cls.open_sign_manager = new_test_user(
             cls.env,
             login='open_sign_portal_otp_http_manager',
@@ -153,6 +159,7 @@ class TestOpenSignPortalOtpHttp(HttpCase, OpenSignPortalTestMixin):
         )
         cls.open_sign_user.partner_id.email = 'open.sign.portal.otp.http.user@example.com'
         cls.open_sign_outsider.partner_id.email = 'open.sign.portal.otp.http.outsider@example.com'
+        cls.open_sign_same_email.partner_id.email = 'open.sign.portal.otp.http.same.email@example.com'
         cls.open_sign_manager.partner_id.email = 'open.sign.portal.otp.http.manager@example.com'
 
     def _build_save_payload(self, *, revision, field_id, value, access_token=False):
@@ -230,6 +237,9 @@ class TestOpenSignPortalOtpHttp(HttpCase, OpenSignPortalTestMixin):
             ('request_id', '=', sign_request.id),
             ('event_type', '=', 'notification_failed'),
         ], order='id desc', limit=1).filtered(lambda audit: audit.metadata_json.get('notification_type') == notification_type)
+
+    def _set_same_email_user_email(self, signer):
+        self.open_sign_same_email.partner_id.write({'email': signer.email})
 
     def test_portal_page_shows_otp_panel_when_required(self):
         bundle = self._create_portal_session(
@@ -560,6 +570,31 @@ class TestOpenSignPortalOtpHttp(HttpCase, OpenSignPortalTestMixin):
         self.assertTrue(request_response['ok'])
         self.assertTrue(verify_response['ok'])
 
+    def test_internal_exact_partner_can_request_and_verify_with_wrong_token(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal OTP Internal Partner Wrong Token',
+            owner=self.open_sign_user,
+            signer_partner=self.open_sign_user.partner_id,
+            otp_required=True,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        wrong_token = self._mutate_token(bundle['token'])
+
+        self.authenticate(self.open_sign_user.login, self.open_sign_user.login)
+        _response, _consent_hash, revision = self._open_page_and_extract(signer.id)
+        with patch('odoo.addons.open_sign_portal.services.otp_service.generate_otp_code', return_value=self.OTP_CODE):
+            request_response = self.make_jsonrpc_request(
+                f"/my/sign/{signer.id}/otp/request",
+                self._build_otp_request_payload(revision=revision, access_token=wrong_token),
+            )
+        verify_response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/otp/verify",
+            self._build_otp_verify_payload(revision=request_response['request_revision'], code=self.OTP_CODE, access_token=wrong_token),
+        )
+        self.assertTrue(request_response['ok'])
+        self.assertTrue(verify_response['ok'])
+
     def test_internal_mismatched_partner_denied_on_otp_routes(self):
         bundle = self._create_portal_session(
             self.env,
@@ -570,6 +605,30 @@ class TestOpenSignPortalOtpHttp(HttpCase, OpenSignPortalTestMixin):
         )
         signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
         self.authenticate(self.open_sign_outsider.login, self.open_sign_outsider.login)
+        request_response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/otp/request",
+            self._build_otp_request_payload(revision=signer.request_id.lock_version),
+        )
+        verify_response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/otp/verify",
+            self._build_otp_verify_payload(revision=signer.request_id.lock_version, code=self.OTP_CODE),
+        )
+        self.assertFalse(request_response['ok'])
+        self.assertFalse(verify_response['ok'])
+        self.assertEqual(request_response['error_code'], 'invalid_token')
+        self.assertEqual(verify_response['error_code'], 'invalid_token')
+
+    def test_email_only_signer_same_email_user_denied_on_otp_routes_without_token(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal OTP Same Email Deny',
+            owner=self.open_sign_user,
+            otp_required=True,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        self._set_same_email_user_email(signer)
+
+        self.authenticate(self.open_sign_same_email.login, self.open_sign_same_email.login)
         request_response = self.make_jsonrpc_request(
             f"/my/sign/{signer.id}/otp/request",
             self._build_otp_request_payload(revision=signer.request_id.lock_version),
