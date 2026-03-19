@@ -641,13 +641,14 @@ Use this before marking any task complete (especially model/state/security work)
    - `./odoo-bin -d <db> -i open_sign_portal --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign_portal --stop-after-init`
    - `scripts/review_gate_open_sign.sh --skip-web -d <db>`
-2. If tests pass, continue Phase 3 with the remaining post-portal hardening tasks on top of the now-closed `T32`/`T33`/`T34`/`T35`/`T36`/`T37`/`T38`/`T39`/`T316`/`T317`/`T310`/`T311`/`T312` portal baseline; the immediate unresolved items are the `T313`-`T315` external email-signer implementation track, with optional deferred verification follow-up `T317a` if literal live-HTTP overlap proof is still desired later.
+2. If tests pass, continue Phase 3 with the remaining post-portal hardening tasks on top of the now-closed `T32`/`T33`/`T34`/`T35`/`T36`/`T37`/`T38`/`T39`/`T316`/`T317`/`T310`/`T311`/`T312`/`T313` portal baseline; the immediate unresolved items are the `T314`-`T315` external email-signer completion track, with optional deferred verification follow-up `T317a` if literal live-HTTP overlap proof is still desired later.
 3. Re-run recurring hardening re-audit (`T610`) after each major phase slice and after every 3 completed implementation tasks.
 
 ## Next Tasks (Planned Order)
 
-1. `T313` Implement signer-token lifecycle hardening for email-only signers (`min(72h, request expiry)` expiry, revoke, replay handling, invalid-attempt throttling, and deterministic error codes including activating `expired_token`).
-2. `T317a` Optional deferred verification follow-up for literal live-HTTP overlap proof outside the `HttpCase`/`TestCursor` model.
+1. `T314` Extend audit/evidence taxonomy for email-token events (`token_issued`, `token_opened`, `token_rejected`, `token_revoked`) with export coverage.
+2. `T315` Add end-to-end and denial-path tests for the locked email-only signer token flow.
+3. `T317a` Optional deferred verification follow-up for literal live-HTTP overlap proof outside the `HttpCase`/`TestCursor` model.
 
 ## Notes For Next Chat
 
@@ -693,9 +694,9 @@ Use this before marking any task complete (especially model/state/security work)
 - `T38` is now closed. Additional contract guarantees now include:
   - `doc/open_sign/m0/PORTAL_API_CONTRACT.md` now matches the shipped runtime rather than the older M0 draft drift, including redirect-style success envelopes for `decline`, `otp/request`, and `otp/verify`
   - mutating signer JSONRPC routes now build success and error envelopes through a shared controller contract layer instead of repeating inline response dicts and ad hoc exception mapping
-  - active runtime error codes are now explicitly locked to `invalid_token`, `validation_error`, `consent_required`, `signing_order_blocked`, `request_locked`, and `stale_revision`
-  - reserved/deferred code `expired_token` is now explicitly documented as non-active runtime contract behavior
-  - the dedicated `addons/open_sign_portal/tests/test_portal_contract.py` suite now locks exact success-envelope shape, exact error-envelope shape, route-level allowed error-code behavior, reserved-code non-emission, and token-safe denial-path behavior for `save`, `submit`, `decline`, `otp/request`, and `otp/verify`
+  - active runtime error codes are now explicitly locked to `invalid_token`, `expired_token`, `validation_error`, `consent_required`, `signing_order_blocked`, `request_locked`, and `stale_revision`
+  - `expired_token` is now active only for signer JSONRPC routes when the provided token exactly matches the current signer token but its lifecycle metadata is expired; public GET denial remains redirect-only
+  - the dedicated `addons/open_sign_portal/tests/test_portal_contract.py` suite now locks exact success-envelope shape, exact error-envelope shape, route-level allowed error-code behavior, token-safe denial-path behavior, and `expired_token` envelope semantics for `save`, `submit`, `decline`, `otp/request`, and `otp/verify`
 - `T39` is now closed. Additional portal ACL and field-exposure guarantees now include:
   - `open.sign.otp.challenge` is now enforced as a system-only ORM model with an explicit ACL row for `base.group_system` only and a company-scoped system record rule in `open_sign_portal_security.xml`
   - `code_hash` and `code_salt` on `open.sign.otp.challenge` are now restricted to `base.group_system` as defense in depth even if model ACLs are widened later
@@ -773,7 +774,7 @@ Use this before marking any task complete (especially model/state/security work)
   - preserve internal authenticated fallback only for signers explicitly linked through `partner_id`
   - accept possession of a live link as the baseline authentication factor, with forwarded/shared-link risk explicitly accepted and compensated later through TTL, rotate/revoke, audit, and optional OTP controls
   - keep links multi-use until rotated, revoked, expired, or blocked by terminal request/signer state; do not make them one-time on open or one-time on completion
-  - lock future expiry to `min(72 hours from issuance, request expiry)` while keeping `expired_token` reserved until `T313` activates runtime expiry checks
+  - lock runtime expiry to `min(72 hours from issuance, request expiry)`, with `expired_token` now active on signer JSONRPC routes only while public GET denial remains redirect-only
   - rotate tokens on manual resend and signer contact correction; ordinary reminders should reuse a still-valid active token
   - keep future token lifecycle metadata on `open.sign.request.signer` rather than adding a separate email-token model
 - `T311` is now closed. Additional signer token lifecycle guarantees now include:
@@ -791,3 +792,11 @@ Use this before marking any task complete (especially model/state/security work)
   - exact linked internal fallback remains limited to `partner_id` and still works even if a wrong or stale token is present in the URL or JSON payload
   - public GET denial remains redirect-to-`/my` and JSONRPC denial remains `invalid_token`; no new route shapes or error codes were introduced
   - to preserve the separate internal preview surface while tightening no-token document access, preview pages now load PDF content through an internal-only `preview=1` document link rather than through the generic no-token document fallback
+- `T313` is now closed. Additional signer token enforcement guarantees now include:
+  - current signer-token access now classifies exact current-token matches from lifecycle metadata as `valid`, `expired`, `revoked`, or `invalid`, and only a current-token exact match plus expired lifecycle metadata yields `expired_token`
+  - signer JSONRPC routes now emit `expired_token` for genuinely expired current links, while public page/document denial remains redirect-only and rotated/revoked/tampered/missing/metadata-incomplete links still map to `invalid_token`
+  - the T313 closeout now enforces signer+IP invalid-link throttling with rolling-window invalid-attempt tracking, concurrency-safe invalid-attempt persistence, a `15` minute block after the threshold, and no new public throttle error code
+  - readonly `/document` now participates in the same signer+IP throttle lifecycle for both invalid-attempt recording and valid-token clear attempts
+  - throttled invalid attempts remain externally indistinguishable from `invalid_token`, expired-token denials do not increment throttle state, and valid token-auth success attempts a best-effort non-blocking clear of the signer+IP throttle state
+  - exact linked internal fallback still works with wrong, revoked, or expired token input, but internal-fallback sessions no longer echo stale token state into portal DOM values, document URLs, refresh URLs, or success redirects
+  - hidden post-revoke current tokens are now denied at runtime rather than only through old-link invalidation, and reminder/reissue behavior from `T311` remains unchanged

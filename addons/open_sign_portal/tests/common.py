@@ -12,6 +12,7 @@ import odoo.http
 import odoo.sql_db
 from odoo import SUPERUSER_ID, api
 from odoo.addons.http_routing.tests.common import MockRequest
+from odoo.orm.environments import Transaction
 from odoo.tests import HOST
 
 
@@ -21,6 +22,10 @@ REQUEST_REVISION_RE = re.compile(r'data-request-revision="(\d+)"')
 
 class OpenSignPortalTestMixin:
     QUEUE_FAILURE_WITH_TOKEN = 'SMTP failure for https://example.test/my/sign/42?access_token=abc123'
+
+    @staticmethod
+    def _ip_headers(client_ip):
+        return {'X-Forwarded-For': client_ip}
 
     @classmethod
     def _create_attachment_static(cls, env, name='portal_template.pdf', *, res_model='open.sign.template'):
@@ -74,6 +79,20 @@ class OpenSignPortalTestMixin:
             'template_id': template.id,
             'owner_id': owner.id,
         })
+
+    def _run_committed(self, callback, *, uid=False, context=None):
+        with odoo.sql_db.db_connect(self.registry.db_name).cursor() as cr:
+            cr.transaction = Transaction(self.registry)
+            env = api.Environment(cr, uid or self.env.uid, context or {})
+            try:
+                result = callback(env)
+                cr.commit()
+                return result
+            except Exception:
+                cr.rollback()
+                raise
+            finally:
+                env.clear()
 
     @classmethod
     def _create_signer(cls, env, sign_request, role, *, email, sequence=10, partner=False):
@@ -175,13 +194,69 @@ class OpenSignPortalTestMixin:
         if otp_required:
             signer.write({'otp_required': True})
         cls._prepare_request_for_portal(sign_request)
+        signer.invalidate_recordset(['access_token', 'email_token_issued_at', 'email_token_expires_at'])
+        if not signer.email_token_issued_at or not signer.email_token_expires_at:
+            signer._issue_email_portal_token(trigger='initial_send')
+            signer.invalidate_recordset(['access_token'])
         return {
             'template': template,
             'role': role,
             'request': sign_request,
             'signer': signer,
-            'token': signer._portal_ensure_token(),
+            'token': signer.access_token,
         }
+
+    def _create_portal_session_committed(
+        self,
+        *,
+        name,
+        owner,
+        signer_partner=False,
+        with_required_signature=False,
+        otp_required=False,
+    ):
+        owner_id = owner.id if owner else False
+        signer_partner_id = signer_partner.id if signer_partner else False
+
+        bundle_data = self._run_committed(
+            lambda env: self._serialize_portal_bundle(
+                self._create_portal_session(
+                    env,
+                    name=name,
+                    owner=(env['res.users'].browse(owner_id).exists() or env.user) if owner_id else env.user,
+                    signer_partner=env['res.partner'].browse(signer_partner_id) if signer_partner_id else False,
+                    with_required_signature=with_required_signature,
+                    otp_required=otp_required,
+                )
+            )
+        )
+        return self._materialize_portal_bundle(bundle_data)
+
+    @staticmethod
+    def _serialize_portal_bundle(bundle):
+        serialized = {'token': bundle['token']}
+        for key, value in bundle.items():
+            if key == 'token':
+                continue
+            serialized[key] = value.id if hasattr(value, 'id') else value
+        return serialized
+
+    def _materialize_portal_bundle(self, bundle_data):
+        materialized = dict(bundle_data)
+        model_by_key = {
+            'template': 'open.sign.template',
+            'role': 'open.sign.role',
+            'request': 'open.sign.request',
+            'signer': 'open.sign.request.signer',
+            'field_first': 'open.sign.template.field',
+            'field_second': 'open.sign.template.field',
+            'signer_first': 'open.sign.request.signer',
+            'signer_second': 'open.sign.request.signer',
+        }
+        for key, model_name in model_by_key.items():
+            if key in materialized and materialized[key]:
+                materialized[key] = self.env[model_name].browse(materialized[key])
+        return materialized
 
     @classmethod
     def _create_ordered_two_signer_session(
@@ -242,6 +317,14 @@ class OpenSignPortalTestMixin:
         if second_otp_required:
             signer_second.write({'otp_required': True})
         cls._prepare_request_for_portal(sign_request)
+        signer_first.invalidate_recordset(['access_token', 'email_token_issued_at', 'email_token_expires_at'])
+        signer_second.invalidate_recordset(['access_token', 'email_token_issued_at', 'email_token_expires_at'])
+        if not signer_first.email_token_issued_at or not signer_first.email_token_expires_at:
+            signer_first._issue_email_portal_token(trigger='initial_send')
+        if not signer_second.email_token_issued_at or not signer_second.email_token_expires_at:
+            signer_second._issue_email_portal_token(trigger='initial_send')
+        signer_first.invalidate_recordset(['access_token'])
+        signer_second.invalidate_recordset(['access_token'])
         return {
             'template': template,
             'request': sign_request,
@@ -249,8 +332,8 @@ class OpenSignPortalTestMixin:
             'signer_second': signer_second,
             'field_first': field_first,
             'field_second': field_second,
-            'token_first': signer_first._portal_ensure_token(),
-            'token_second': signer_second._portal_ensure_token(),
+            'token_first': signer_first.access_token,
+            'token_second': signer_second.access_token,
         }
 
 

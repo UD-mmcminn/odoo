@@ -94,6 +94,32 @@ class TestOpenSignPortalAcl(TransactionCase, OpenSignPortalTestMixin):
             'code_salt': 'cd' * 16,
             'code_hash': '1' * 64,
         })
+        cls.token_throttle_a = cls.env['open.sign.portal.token.throttle'].sudo().create({
+            'request_signer_id': cls.bundle_a['signer'].id,
+            'client_ip': '203.0.113.50',
+            'attempt_count': 1,
+            'first_attempt_at': '2099-01-01 00:00:00',
+            'last_attempt_at': '2099-01-01 00:00:00',
+            'blocked_until': False,
+        })
+        cls.token_throttle_b = cls.env['open.sign.portal.token.throttle'].sudo().create({
+            'request_signer_id': cls.bundle_b['signer'].id,
+            'client_ip': '203.0.113.51',
+            'attempt_count': 2,
+            'first_attempt_at': '2099-01-01 00:00:00',
+            'last_attempt_at': '2099-01-01 00:00:00',
+            'blocked_until': False,
+        })
+        cls.token_throttle_attempt_a = cls.env['open.sign.portal.token.throttle.attempt'].sudo().create({
+            'request_signer_id': cls.bundle_a['signer'].id,
+            'client_ip': '203.0.113.60',
+            'attempted_at': '2099-01-01 00:00:00',
+        })
+        cls.token_throttle_attempt_b = cls.env['open.sign.portal.token.throttle.attempt'].sudo().create({
+            'request_signer_id': cls.bundle_b['signer'].id,
+            'client_ip': '203.0.113.61',
+            'attempted_at': '2099-01-01 00:00:00',
+        })
 
     def _assert_challenge_model_denied(self, user):
         challenge_model = self.env['open.sign.otp.challenge'].with_user(user)
@@ -111,6 +137,39 @@ class TestOpenSignPortalAcl(TransactionCase, OpenSignPortalTestMixin):
         with self.assertRaises(AccessError):
             self.challenge_a.with_user(user).unlink()
 
+    def _assert_token_throttle_model_denied(self, user):
+        throttle_model = self.env['open.sign.portal.token.throttle'].with_user(user)
+        with self.assertRaises(AccessError):
+            throttle_model.check_access('read')
+        with self.assertRaises(AccessError):
+            throttle_model.create({
+                'request_signer_id': self.bundle_a['signer'].id,
+                'client_ip': '203.0.113.52',
+                'attempt_count': 1,
+                'first_attempt_at': '2099-01-02 00:00:00',
+                'last_attempt_at': '2099-01-02 00:00:00',
+                'blocked_until': False,
+            })
+        with self.assertRaises(AccessError):
+            self.token_throttle_a.with_user(user).write({'attempt_count': 2})
+        with self.assertRaises(AccessError):
+            self.token_throttle_a.with_user(user).unlink()
+
+    def _assert_token_throttle_attempt_model_denied(self, user):
+        attempt_model = self.env['open.sign.portal.token.throttle.attempt'].with_user(user)
+        with self.assertRaises(AccessError):
+            attempt_model.check_access('read')
+        with self.assertRaises(AccessError):
+            attempt_model.create({
+                'request_signer_id': self.bundle_a['signer'].id,
+                'client_ip': '203.0.113.62',
+                'attempted_at': '2099-01-02 00:00:00',
+            })
+        with self.assertRaises(AccessError):
+            self.token_throttle_attempt_a.with_user(user).write({'client_ip': '203.0.113.63'})
+        with self.assertRaises(AccessError):
+            self.token_throttle_attempt_a.with_user(user).unlink()
+
     def test_otp_challenge_denies_open_sign_user_all_model_access(self):
         self._assert_challenge_model_denied(self.open_sign_user)
 
@@ -119,6 +178,24 @@ class TestOpenSignPortalAcl(TransactionCase, OpenSignPortalTestMixin):
 
     def test_otp_challenge_denies_open_sign_auditor_all_model_access(self):
         self._assert_challenge_model_denied(self.open_sign_auditor)
+
+    def test_token_throttle_denies_open_sign_user_all_model_access(self):
+        self._assert_token_throttle_model_denied(self.open_sign_user)
+
+    def test_token_throttle_denies_open_sign_manager_all_model_access(self):
+        self._assert_token_throttle_model_denied(self.open_sign_manager)
+
+    def test_token_throttle_denies_open_sign_auditor_all_model_access(self):
+        self._assert_token_throttle_model_denied(self.open_sign_auditor)
+
+    def test_token_throttle_attempt_denies_open_sign_user_all_model_access(self):
+        self._assert_token_throttle_attempt_model_denied(self.open_sign_user)
+
+    def test_token_throttle_attempt_denies_open_sign_manager_all_model_access(self):
+        self._assert_token_throttle_attempt_model_denied(self.open_sign_manager)
+
+    def test_token_throttle_attempt_denies_open_sign_auditor_all_model_access(self):
+        self._assert_token_throttle_attempt_model_denied(self.open_sign_auditor)
 
     def test_otp_challenge_allows_system_group_access(self):
         model = self.env['open.sign.otp.challenge'].with_user(self.system_user_single)
@@ -139,6 +216,33 @@ class TestOpenSignPortalAcl(TransactionCase, OpenSignPortalTestMixin):
         self.assertEqual(challenge.attempt_count, 2)
         challenge.unlink()
 
+    def test_token_throttle_allows_system_group_access(self):
+        model = self.env['open.sign.portal.token.throttle'].with_user(self.system_user_single)
+        throttle = model.create({
+            'request_signer_id': self.bundle_a['signer'].id,
+            'client_ip': '203.0.113.53',
+            'attempt_count': 1,
+            'first_attempt_at': '2099-01-03 00:00:00',
+            'last_attempt_at': '2099-01-03 00:00:00',
+            'blocked_until': False,
+        })
+        self.assertTrue(model.search([('id', '=', self.token_throttle_a.id)]))
+        throttle.write({'attempt_count': 3})
+        self.assertEqual(throttle.attempt_count, 3)
+        throttle.unlink()
+
+    def test_token_throttle_attempt_allows_system_group_access(self):
+        model = self.env['open.sign.portal.token.throttle.attempt'].with_user(self.system_user_single)
+        attempt = model.create({
+            'request_signer_id': self.bundle_a['signer'].id,
+            'client_ip': '203.0.113.64',
+            'attempted_at': '2099-01-03 00:00:00',
+        })
+        self.assertTrue(model.search([('id', '=', self.token_throttle_attempt_a.id)]))
+        attempt.write({'client_ip': '203.0.113.65'})
+        self.assertEqual(attempt.client_ip, '203.0.113.65')
+        attempt.unlink()
+
     def test_otp_challenge_system_access_is_company_scoped(self):
         visible_single = set(
             self.env['open.sign.otp.challenge'].with_user(self.system_user_single).search([
@@ -152,6 +256,34 @@ class TestOpenSignPortalAcl(TransactionCase, OpenSignPortalTestMixin):
         )
         self.assertEqual(visible_single, {self.challenge_a.id})
         self.assertEqual(visible_multi, {self.challenge_a.id, self.challenge_b.id})
+
+    def test_token_throttle_system_access_is_company_scoped(self):
+        visible_single = set(
+            self.env['open.sign.portal.token.throttle'].with_user(self.system_user_single).search([
+                ('id', 'in', [self.token_throttle_a.id, self.token_throttle_b.id]),
+            ]).ids
+        )
+        visible_multi = set(
+            self.env['open.sign.portal.token.throttle'].with_user(self.system_user_multi).search([
+                ('id', 'in', [self.token_throttle_a.id, self.token_throttle_b.id]),
+            ]).ids
+        )
+        self.assertEqual(visible_single, {self.token_throttle_a.id})
+        self.assertEqual(visible_multi, {self.token_throttle_a.id, self.token_throttle_b.id})
+
+    def test_token_throttle_attempt_system_access_is_company_scoped(self):
+        visible_single = set(
+            self.env['open.sign.portal.token.throttle.attempt'].with_user(self.system_user_single).search([
+                ('id', 'in', [self.token_throttle_attempt_a.id, self.token_throttle_attempt_b.id]),
+            ]).ids
+        )
+        visible_multi = set(
+            self.env['open.sign.portal.token.throttle.attempt'].with_user(self.system_user_multi).search([
+                ('id', 'in', [self.token_throttle_attempt_a.id, self.token_throttle_attempt_b.id]),
+            ]).ids
+        )
+        self.assertEqual(visible_single, {self.token_throttle_attempt_a.id})
+        self.assertEqual(visible_multi, {self.token_throttle_attempt_a.id, self.token_throttle_attempt_b.id})
 
     def test_otp_challenge_hash_fields_are_system_only(self):
         user_fields = self.env['open.sign.otp.challenge'].with_user(self.open_sign_user).fields_get()
@@ -245,8 +377,20 @@ class TestOpenSignPortalAcl(TransactionCase, OpenSignPortalTestMixin):
         ])
         self.assertEqual(action_count, 0)
 
+    def test_no_action_window_exists_for_token_throttle(self):
+        action_count = self.env['ir.actions.act_window'].sudo().search_count([
+            ('res_model', '=', 'open.sign.portal.token.throttle'),
+        ])
+        self.assertEqual(action_count, 0)
+
     def test_no_menu_entry_exists_for_otp_challenge(self):
         for menu in self.env['ir.ui.menu'].sudo().search([('action', '!=', False)]):
             action = menu.action
             if action and action._name == 'ir.actions.act_window':
                 self.assertNotEqual(action.res_model, 'open.sign.otp.challenge')
+
+    def test_no_menu_entry_exists_for_token_throttle(self):
+        for menu in self.env['ir.ui.menu'].sudo().search([('action', '!=', False)]):
+            action = menu.action
+            if action and action._name == 'ir.actions.act_window':
+                self.assertNotEqual(action.res_model, 'open.sign.portal.token.throttle')

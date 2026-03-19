@@ -155,6 +155,7 @@ No additional success-only fields are returned on error responses.
 ### Active runtime codes
 
 - `invalid_token`
+- `expired_token`
 - `validation_error`
 - `consent_required`
 - `signing_order_blocked`
@@ -162,18 +163,17 @@ No additional success-only fields are returned on error responses.
 - `stale_revision`
 - `idempotency_conflict`
 
-### Reserved / deferred codes
-
-- `expired_token`
-
 ## Current Runtime Notes
 
-- Invalid or rotated signer tokens currently return `invalid_token`.
-- Revoked signer tokens currently return `invalid_token`.
+- Invalid, rotated, tampered, throttled, missing, and metadata-incomplete signer tokens return `invalid_token`.
+- Revoked signer tokens return `invalid_token`.
+- Exact current-token matches whose lifecycle metadata is expired return `expired_token` on signer JSONRPC routes.
+- Public page/document requests with expired signer tokens still deny by redirecting to `/my`; they do not expose a separate expired-link GET UX.
 - Backend copy-link surfaces now expose only currently distributable signer URLs and do not mint signer tokens on read.
 - Signer completion notifications skip when no currently distributable signer URL is available.
 - Explicit revoke is implemented as a manager-only pending-signer backend action; it does not introduce a new public route or response shape.
-- True token-expiry behavior is not implemented yet.
+- Invalid-link throttling is enforced per signer + client IP and remains externally indistinguishable from `invalid_token`.
+- Exact linked internal fallback no longer echoes stale/wrong token state into portal DOM values, document URLs, refresh URLs, or success redirects.
 - Durable idempotency is implemented for `submit` and `decline` only.
 - `save`, `otp/request`, and `otp/verify` do not use the durable idempotency registry yet.
 - Redirect-style success envelopes for `decline`, `otp/request`, and `otp/verify` are the authoritative v1 contract.
@@ -186,7 +186,8 @@ No additional success-only fields are returned on error responses.
 - Matching an internal user by email alone does not grant signer access.
 - If a signer is explicitly linked by `partner_id`, that exact linked internal fallback still works even when a wrong/stale `access_token` is present.
 - Tampered, rotated, and revoked signer tokens map to `invalid_token`.
-- `expired_token` remains reserved until `T313` activates real runtime expiry enforcement for email-only signer tokens.
+- Expired current signer tokens now map to `expired_token` on signer JSONRPC routes only; public GET denial remains redirect-only.
+- Readonly signer document access participates in the same signer+IP invalid-link throttle lifecycle as the other public signer routes, and valid token-auth success attempts a best-effort non-blocking clear of the same signer+IP throttle state. Throttled denials remain externally indistinguishable from `invalid_token`.
 
 ## Backward Compatibility
 

@@ -1,13 +1,17 @@
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 
+from datetime import timedelta
 import hashlib
+from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
+import odoo.sql_db
 from psycopg2.errors import LockNotAvailable
 
-from odoo import fields
+from odoo import api, fields
 from odoo.exceptions import AccessError, ValidationError
+from odoo.orm.environments import Transaction
 from odoo.tests.common import HttpCase, TransactionCase, new_test_user, tagged
 
 from odoo.addons.open_sign_portal.controllers.portal_sign import OpenSignPortalController
@@ -141,6 +145,59 @@ class TestOpenSignPortalSecurityHttp(HttpCase, OpenSignPortalTestMixin):
         signer.invalidate_recordset(['access_token'])
         self.assertNotEqual(signer.access_token, old_token)
         return old_token, signer.access_token
+
+    def _expire_signer_token(self, signer):
+        signer.sudo().write({'email_token_expires_at': fields.Datetime.now() - timedelta(minutes=1)})
+        signer.invalidate_recordset(['email_token_expires_at'])
+
+    def _read_committed(self, callback):
+        with odoo.sql_db.db_connect(self.registry.db_name).cursor() as cr:
+            cr.transaction = Transaction(self.registry)
+            env = api.Environment(cr, self.env.uid, {})
+            try:
+                return callback(env)
+            finally:
+                env.clear()
+
+    def _get_token_throttle_bucket(self, signer, client_ip=False):
+        domain = [('request_signer_id', '=', signer.id)]
+        if client_ip:
+            domain.append(('client_ip', '=', client_ip))
+        self.env.invalidate_all(flush=False)
+        records = self.env['open.sign.portal.token.throttle'].sudo().search_read(
+            domain,
+            ['attempt_count', 'blocked_until', 'first_attempt_at', 'last_attempt_at', 'client_ip'],
+            limit=1,
+        )
+        if not records:
+            records = self._read_committed(
+                lambda env: env['open.sign.portal.token.throttle'].sudo().search_read(
+                    domain,
+                    ['attempt_count', 'blocked_until', 'first_attempt_at', 'last_attempt_at', 'client_ip'],
+                    limit=1,
+                )
+            )
+        return SimpleNamespace(**records[0]) if records else False
+
+    def _get_token_throttle_attempts(self, signer, client_ip=False):
+        domain = [('request_signer_id', '=', signer.id)]
+        if client_ip:
+            domain.append(('client_ip', '=', client_ip))
+        self.env.invalidate_all(flush=False)
+        records = self.env['open.sign.portal.token.throttle.attempt'].sudo().search_read(
+            domain,
+            ['attempted_at', 'client_ip'],
+            order='attempted_at asc, id asc',
+        )
+        if records:
+            return records
+        return self._read_committed(
+            lambda env: env['open.sign.portal.token.throttle.attempt'].sudo().search_read(
+                domain,
+                ['attempted_at', 'client_ip'],
+                order='attempted_at asc, id asc',
+            )
+        )
 
     def _submit_signer_successfully(self, bundle, *, signer_key='signer', token_key='token', value='Signed Value'):
         signer = self.env['open.sign.request.signer'].browse(bundle[signer_key].id)
@@ -389,6 +446,106 @@ class TestOpenSignPortalSecurityHttp(HttpCase, OpenSignPortalTestMixin):
         )
         self._assert_redirect_denied(response, wrong_token)
 
+    def test_page_redirects_for_expired_current_token(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Security Expired Page',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        self._expire_signer_token(signer)
+
+        self.authenticate(None, None)
+        response = self.url_open(
+            f"/my/sign/{signer.id}?access_token={bundle['token']}",
+            allow_redirects=False,
+        )
+        self._assert_redirect_denied(response, bundle['token'])
+
+    def test_document_redirects_for_expired_current_token(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Security Expired Document',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        self._expire_signer_token(signer)
+
+        self.authenticate(None, None)
+        response = self.url_open(
+            f"/my/sign/{signer.id}/document?access_token={bundle['token']}",
+            allow_redirects=False,
+        )
+        self._assert_redirect_denied(response, bundle['token'])
+
+    def test_save_returns_expired_token_for_expired_current_token(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Security Expired Save',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        field = self._get_text_field_for_signer(signer)
+        self._expire_signer_token(signer)
+
+        self.authenticate(None, None)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/save",
+            self._build_payload(
+                revision=signer.request_id.lock_version,
+                values=[{'field_id': field.id, 'value': 'expired token save'}],
+                access_token=bundle['token'],
+            ),
+        )
+        self._assert_json_error(response, 'expired_token', bundle['token'])
+
+    def test_submit_returns_expired_token_for_expired_current_token(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Security Expired Submit',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        field = self._get_text_field_for_signer(signer)
+
+        self.authenticate(None, None)
+        page_response = self.url_open(
+            f"/my/sign/{signer.id}?access_token={bundle['token']}",
+            allow_redirects=False,
+        )
+        consent_hash, revision = self._extract_consent_hash_and_revision(page_response.text)
+        self._expire_signer_token(signer)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/submit",
+            self._build_payload(
+                revision=revision,
+                values=[{'field_id': field.id, 'value': 'expired token submit'}],
+                consent={'accepted': True, 'text_hash': consent_hash, 'timezone': 'UTC'},
+                access_token=bundle['token'],
+            ),
+        )
+        self._assert_json_error(response, 'expired_token', bundle['token'])
+
+    def test_decline_returns_expired_token_for_expired_current_token(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Security Expired Decline',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        self._expire_signer_token(signer)
+
+        self.authenticate(None, None)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/decline",
+            self._build_decline_payload(
+                revision=signer.request_id.lock_version,
+                reason='expired token decline',
+                access_token=bundle['token'],
+            ),
+        )
+        self._assert_json_error(response, 'expired_token', bundle['token'])
+
     def test_internal_mismatched_partner_denied_on_page_and_actions(self):
         bundle = self._create_portal_session(
             self.env,
@@ -621,6 +778,217 @@ class TestOpenSignPortalSecurityHttp(HttpCase, OpenSignPortalTestMixin):
             ),
         )
         self.assertTrue(response['ok'])
+
+    def test_exact_partner_internal_page_allows_expired_token_but_omits_token_from_dom(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Security Internal Expired Token Page',
+            owner=self.open_sign_user,
+            signer_partner=self.open_sign_user.partner_id,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        self._expire_signer_token(signer)
+
+        self.authenticate(self.open_sign_user.login, self.open_sign_user.login)
+        response = self.url_open(f"/my/sign/{signer.id}?access_token={bundle['token']}", allow_redirects=False)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('data-access-token=""', response.text)
+        self.assertNotIn(f'access_token={bundle["token"]}', response.text)
+
+    def test_exact_partner_internal_submit_redirect_omits_access_token_after_fallback(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Security Internal Wrong Token Submit Redirect',
+            owner=self.open_sign_user,
+            signer_partner=self.open_sign_user.partner_id,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        field = self._get_text_field_for_signer(signer)
+        wrong_token = self._mutate_token(bundle['token'])
+
+        self.authenticate(self.open_sign_user.login, self.open_sign_user.login)
+        page_response = self.url_open(f"/my/sign/{signer.id}", allow_redirects=False)
+        consent_hash, revision = self._extract_consent_hash_and_revision(page_response.text)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/submit",
+            self._build_payload(
+                revision=revision,
+                values=[{'field_id': field.id, 'value': 'internal submit without echoed token'}],
+                consent={'accepted': True, 'text_hash': consent_hash, 'timezone': 'UTC'},
+                access_token=wrong_token,
+            ),
+        )
+        self.assertTrue(response['ok'])
+        self.assertEqual(response['redirect_url'], f'/my/sign/{signer.id}?submitted=1')
+        self.assertNotIn('access_token=', response['redirect_url'])
+
+    def test_internal_fallback_with_wrong_or_expired_token_does_not_create_throttle_record(self):
+        wrong_bundle = self._create_portal_session(
+            self.env,
+            name='Portal Security Internal Wrong Token No Throttle',
+            owner=self.open_sign_user,
+            signer_partner=self.open_sign_user.partner_id,
+        )
+        wrong_signer = self.env['open.sign.request.signer'].browse(wrong_bundle['signer'].id)
+        wrong_field = self._get_text_field_for_signer(wrong_signer)
+        wrong_token = self._mutate_token(wrong_bundle['token'])
+
+        expired_bundle = self._create_portal_session(
+            self.env,
+            name='Portal Security Internal Expired Token No Throttle',
+            owner=self.open_sign_user,
+            signer_partner=self.open_sign_user.partner_id,
+        )
+        expired_signer = self.env['open.sign.request.signer'].browse(expired_bundle['signer'].id)
+        expired_field = self._get_text_field_for_signer(expired_signer)
+        self._expire_signer_token(expired_signer)
+
+        self.authenticate(self.open_sign_user.login, self.open_sign_user.login)
+        wrong_response = self.make_jsonrpc_request(
+            f"/my/sign/{wrong_signer.id}/save",
+            self._build_payload(
+                revision=wrong_signer.request_id.lock_version,
+                values=[{'field_id': wrong_field.id, 'value': 'wrong token no throttle'}],
+                access_token=wrong_token,
+            ),
+        )
+        expired_response = self.make_jsonrpc_request(
+            f"/my/sign/{expired_signer.id}/save",
+            self._build_payload(
+                revision=expired_signer.request_id.lock_version,
+                values=[{'field_id': expired_field.id, 'value': 'expired token no throttle'}],
+                access_token=expired_bundle['token'],
+            ),
+        )
+
+        self.assertTrue(wrong_response['ok'])
+        self.assertTrue(expired_response['ok'])
+        self.assertFalse(self._get_token_throttle_bucket(wrong_signer))
+        self.assertFalse(self._get_token_throttle_bucket(expired_signer))
+
+    def test_valid_token_for_unrelated_authenticated_user_still_uses_token_path(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Security Valid Token Unrelated User',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+
+        self.authenticate(self.open_sign_outsider.login, self.open_sign_outsider.login)
+        response = self.url_open(f"/my/sign/{signer.id}?access_token={bundle['token']}", allow_redirects=False)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(f'data-access-token="{bundle["token"]}"', response.text)
+
+    def test_page_invalid_token_throttle_rolling_window_blocks_after_spaced_attempts(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Security Rolling Page Throttle',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        wrong_token = self._mutate_token(bundle['token'])
+        client_ip = '203.0.113.31'
+        now = fields.Datetime.now()
+        stale_attempt = now - timedelta(minutes=15, seconds=12)
+        retained_attempts = [
+            now - timedelta(minutes=5, seconds=12),
+            now - timedelta(minutes=1, seconds=12),
+            now - timedelta(seconds=42),
+            now - timedelta(seconds=6),
+        ]
+
+        for attempted_at in [stale_attempt] + retained_attempts:
+            self.env['open.sign.portal.token.throttle.attempt'].sudo().create({
+                'request_signer_id': signer.id,
+                'client_ip': client_ip,
+                'attempted_at': attempted_at,
+            })
+
+        self.authenticate(None, None)
+        response = self.url_open(
+            f"/my/sign/{signer.id}?access_token={wrong_token}",
+            allow_redirects=False,
+            headers=self._ip_headers(client_ip),
+        )
+        self._assert_redirect_denied(response, wrong_token)
+
+        bucket = self._get_token_throttle_bucket(signer, client_ip)
+        self.assertTrue(bucket)
+        self.assertEqual(bucket.attempt_count, 5)
+        self.assertTrue(bucket.blocked_until)
+        self.assertEqual(len(self._get_token_throttle_attempts(signer, client_ip)), 5)
+
+    def test_invalid_token_throttle_same_signer_ip_still_returns_invalid_token_after_block(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Security Invalid Token Throttle',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        field = self._get_text_field_for_signer(signer)
+        wrong_token = self._mutate_token(bundle['token'])
+        client_ip = '203.0.113.32'
+
+        self.authenticate(None, None)
+        responses = []
+        for attempt in range(6):
+            responses.append(
+                self.make_jsonrpc_request(
+                    f"/my/sign/{signer.id}/save",
+                    self._build_payload(
+                        revision=signer.request_id.lock_version,
+                        values=[{'field_id': field.id, 'value': f'invalid throttle {attempt}'}],
+                        access_token=wrong_token,
+                    ),
+                    headers=self._ip_headers(client_ip),
+                )
+            )
+
+        for response in responses:
+            self._assert_json_error(response, 'invalid_token', wrong_token)
+        bucket = self._get_token_throttle_bucket(signer, client_ip)
+        self.assertTrue(bucket)
+        self.assertEqual(bucket.attempt_count, 5)
+        self.assertTrue(bucket.blocked_until)
+
+    def test_valid_token_succeeds_from_blocked_signer_ip_and_clears_bucket(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Security Valid Token Clears Throttle',
+            owner=self.open_sign_user,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        field = self._get_text_field_for_signer(signer)
+        wrong_token = self._mutate_token(bundle['token'])
+        client_ip = '203.0.113.33'
+
+        self.authenticate(None, None)
+        for attempt in range(5):
+            response = self.make_jsonrpc_request(
+                f"/my/sign/{signer.id}/save",
+                self._build_payload(
+                    revision=signer.request_id.lock_version,
+                    values=[{'field_id': field.id, 'value': f'blocked {attempt}'}],
+                    access_token=wrong_token,
+                ),
+                headers=self._ip_headers(client_ip),
+            )
+            self._assert_json_error(response, 'invalid_token', wrong_token)
+        self.assertTrue(self._get_token_throttle_bucket(signer, client_ip))
+
+        # The accepted contract is an uncontended successful token-auth clear.
+        # Contended clear remains best-effort and is covered at the service layer.
+        success_response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/save",
+            self._build_payload(
+                revision=signer.request_id.lock_version,
+                values=[{'field_id': field.id, 'value': 'valid after block'}],
+                access_token=bundle['token'],
+            ),
+            headers=self._ip_headers(client_ip),
+        )
+        self.assertTrue(success_response['ok'])
+        self.assertFalse(self._get_token_throttle_bucket(signer, client_ip))
 
     def test_rotated_old_token_denied_on_signer_page(self):
         bundle = self._create_portal_session(

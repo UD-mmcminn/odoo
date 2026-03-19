@@ -91,6 +91,10 @@ class TestOpenSignPortalEmailToken(TransactionCase, OpenSignPortalTestMixin):
         ])
         return old_public_token, signer.access_token
 
+    def _expire_signer_token(self, signer):
+        signer.sudo().write({'email_token_expires_at': fields.Datetime.now() - timedelta(minutes=1)})
+        signer.invalidate_recordset(['email_token_expires_at'])
+
     def test_backend_portal_sign_url_blank_before_initial_issue(self):
         bundle = self._create_versioned_request_bundle(
             self.env,
@@ -791,6 +795,44 @@ class TestOpenSignPortalEmailTokenHttp(HttpCase, OpenSignPortalTestMixin):
         ):
             self.assertFalse(response['ok'])
             self.assertEqual(response['error_code'], 'invalid_token')
+
+    def test_hidden_revoked_current_token_is_denied_as_invalid_token(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Email Token Hidden Revoked Current Token',
+            owner=self.open_sign_user,
+            otp_required=True,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        field = self._get_text_field_for_signer(signer)
+        _old_public_token, hidden_token = self._revoke_signer_token(signer)
+
+        self.authenticate(None, None)
+        page_response = self.url_open(f"/my/sign/{signer.id}?access_token={hidden_token}", allow_redirects=False)
+        document_response = self.url_open(f"/my/sign/{signer.id}/document?access_token={hidden_token}", allow_redirects=False)
+        save_response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/save",
+            self._build_save_payload(
+                revision=signer.request_id.lock_version,
+                field_id=field.id,
+                value='hidden revoked save',
+                access_token=hidden_token,
+            ),
+        )
+        otp_request_response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/otp/request",
+            self._build_otp_request_payload(
+                revision=signer.request_id.lock_version,
+                access_token=hidden_token,
+            ),
+        )
+
+        self.assertEqual(page_response.status_code, 303)
+        self.assertEqual(document_response.status_code, 303)
+        self.assertFalse(save_response['ok'])
+        self.assertEqual(save_response['error_code'], 'invalid_token')
+        self.assertFalse(otp_request_response['ok'])
+        self.assertEqual(otp_request_response['error_code'], 'invalid_token')
 
     def test_revoke_does_not_change_request_or_signer_business_state(self):
         bundle = self._create_portal_session(

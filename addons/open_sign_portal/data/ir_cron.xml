@@ -10,4 +10,14 @@
         <field name="state">code</field>
         <field name="code">model._cron_gc_portal_idempotency()</field>
     </record>
+    <record id="ir_cron_open_sign_portal_gc_token_throttle" model="ir.cron">
+        <field name="name">Open Sign Portal: GC Token Throttle</field>
+        <field name="active">True</field>
+        <field name="user_id" ref="base.user_root"/>
+        <field name="interval_number">1</field>
+        <field name="interval_type">days</field>
+        <field name="model_id" ref="open_sign_portal.model_open_sign_portal_token_throttle"/>
+        <field name="state">code</field>
+        <field name="code">model._cron_gc_portal_token_throttle()</field>
+    </record>
 </odoo>

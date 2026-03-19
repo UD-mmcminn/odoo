@@ -241,6 +241,10 @@ class TestOpenSignPortalOtpHttp(HttpCase, OpenSignPortalTestMixin):
     def _set_same_email_user_email(self, signer):
         self.open_sign_same_email.partner_id.write({'email': signer.email})
 
+    def _expire_signer_token(self, signer):
+        signer.sudo().write({'email_token_expires_at': fields.Datetime.now() - timedelta(minutes=1)})
+        signer.invalidate_recordset(['email_token_expires_at'])
+
     def test_portal_page_shows_otp_panel_when_required(self):
         bundle = self._create_portal_session(
             self.env,
@@ -641,6 +645,72 @@ class TestOpenSignPortalOtpHttp(HttpCase, OpenSignPortalTestMixin):
         self.assertFalse(verify_response['ok'])
         self.assertEqual(request_response['error_code'], 'invalid_token')
         self.assertEqual(verify_response['error_code'], 'invalid_token')
+
+    def test_otp_request_returns_expired_token_for_expired_current_token(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal OTP Expired Request',
+            owner=self.open_sign_user,
+            otp_required=True,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        self._expire_signer_token(signer)
+
+        self.authenticate(None, None)
+        request_response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/otp/request",
+            self._build_otp_request_payload(revision=signer.request_id.lock_version, access_token=bundle['token']),
+        )
+        self.assertFalse(request_response['ok'])
+        self.assertEqual(request_response['error_code'], 'expired_token')
+
+    def test_otp_verify_returns_expired_token_for_expired_current_token(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal OTP Expired Verify',
+            owner=self.open_sign_user,
+            otp_required=True,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        self._expire_signer_token(signer)
+
+        self.authenticate(None, None)
+        verify_response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/otp/verify",
+            self._build_otp_verify_payload(revision=signer.request_id.lock_version, code=self.OTP_CODE, access_token=bundle['token']),
+        )
+        self.assertFalse(verify_response['ok'])
+        self.assertEqual(verify_response['error_code'], 'expired_token')
+
+    def test_exact_partner_internal_otp_verify_redirect_omits_access_token_after_fallback(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal OTP Internal Fallback Redirect',
+            owner=self.open_sign_user,
+            signer_partner=self.open_sign_user.partner_id,
+            otp_required=True,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        wrong_token = self._mutate_token(bundle['token'])
+
+        self.authenticate(self.open_sign_user.login, self.open_sign_user.login)
+        _response, _consent_hash, revision = self._open_page_and_extract(signer.id)
+        with patch('odoo.addons.open_sign_portal.services.otp_service.generate_otp_code', return_value=self.OTP_CODE):
+            request_response = self.make_jsonrpc_request(
+                f"/my/sign/{signer.id}/otp/request",
+                self._build_otp_request_payload(revision=revision, access_token=wrong_token),
+            )
+        verify_response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/otp/verify",
+            self._build_otp_verify_payload(
+                revision=request_response['request_revision'],
+                code=self.OTP_CODE,
+                access_token=wrong_token,
+            ),
+        )
+        self.assertTrue(verify_response['ok'])
+        self.assertEqual(verify_response['redirect_url'], f'/my/sign/{signer.id}?otp_verified=1')
+        self.assertNotIn('access_token=', verify_response['redirect_url'])
 
     def test_otp_request_enforces_60_second_cooldown(self):
         bundle = self._create_portal_session(self.env, name='Portal OTP Cooldown', owner=self.open_sign_user, otp_required=True)

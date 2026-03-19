@@ -23,5 +23,25 @@
             <field name="perm_create" eval="True"/>
             <field name="perm_unlink" eval="True"/>
         </record>
+        <record id="rule_open_sign_portal_token_throttle_system_company" model="ir.rule">
+            <field name="name">Open Sign Portal Token Throttle System Company Scope</field>
+            <field name="model_id" ref="open_sign_portal.model_open_sign_portal_token_throttle"/>
+            <field name="groups" eval="[(4, ref('base.group_system'))]"/>
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+        <record id="rule_open_sign_portal_token_throttle_attempt_system_company" model="ir.rule">
+            <field name="name">Open Sign Portal Token Throttle Attempt System Company Scope</field>
+            <field name="model_id" ref="open_sign_portal.model_open_sign_portal_token_throttle_attempt"/>
+            <field name="groups" eval="[(4, ref('base.group_system'))]"/>
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
     </data>
 </odoo>

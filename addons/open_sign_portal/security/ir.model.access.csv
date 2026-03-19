@@ -1,3 +1,5 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
 access_open_sign_otp_challenge_system,open.sign.otp.challenge.system,model_open_sign_otp_challenge,base.group_system,1,1,1,1
 access_open_sign_portal_idempotency_system,open.sign.portal.idempotency.system,model_open_sign_portal_idempotency,base.group_system,1,1,1,1
+access_open_sign_portal_token_throttle_system,open.sign.portal.token.throttle.system,model_open_sign_portal_token_throttle,base.group_system,1,1,1,1
+access_open_sign_portal_token_throttle_attempt_system,open.sign.portal.token.throttle.attempt.system,model_open_sign_portal_token_throttle_attempt,base.group_system,1,1,1,1

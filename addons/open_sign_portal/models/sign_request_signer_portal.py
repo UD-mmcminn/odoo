@@ -8,6 +8,7 @@ from psycopg2.errors import LockNotAvailable
 from odoo import _, api, fields, models
 from odoo.addons.open_sign.models.sign_request_signer import PENDING_CORRECTION_REQUEST_STATUSES
 from odoo.exceptions import AccessError, ValidationError
+from odoo.tools import consteq
 
 from odoo.addons.open_sign_portal.services import otp_service
 
@@ -111,6 +112,23 @@ class OpenSignRequestSigner(models.Model):
             return True
         expires_at = fields.Datetime.to_datetime(self.email_token_expires_at)
         return expires_at <= now
+
+    def _classify_current_email_token_access(self, access_token, *, now=None):
+        self.ensure_one()
+        signer = self.sudo()
+        if not access_token or not signer.access_token or not consteq(signer.access_token, access_token):
+            return 'invalid'
+        if signer._has_revoked_email_token():
+            return 'revoked'
+        if not signer.email_token_issued_at or not signer.email_token_expires_at:
+            return 'invalid'
+        if signer._is_email_token_metadata_expired(now=now):
+            return 'expired'
+        return 'valid'
+
+    def _is_current_email_token_active(self, *, now=None):
+        self.ensure_one()
+        return self._classify_current_email_token_access(self.access_token, now=now) == 'valid'
 
     def _get_current_distributed_portal_url(self, *, now=None):
         self.ensure_one()

@@ -1,14 +1,17 @@
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 
 from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
+import odoo.sql_db
 from psycopg2.errors import LockNotAvailable
 
-from odoo import fields
+from odoo import api, fields
 from odoo.addons.open_sign_portal.controllers.portal_sign import OpenSignPortalController
 from odoo.addons.open_sign_portal.services import otp_service
+from odoo.orm.environments import Transaction
 from odoo.tests.common import HttpCase, TransactionCase, new_test_user, tagged
 
 from odoo.addons.open_sign_portal.tests.common import (
@@ -38,7 +41,6 @@ class TestOpenSignPortalContract(TransactionCase):
 class TestOpenSignPortalContractHttp(HttpCase, OpenSignPortalTestMixin):
 
     OTP_CODE = '123456'
-    RESERVED_ERROR_CODES = {'expired_token'}
 
     @classmethod
     def setUpClass(cls):
@@ -119,6 +121,39 @@ class TestOpenSignPortalContractHttp(HttpCase, OpenSignPortalTestMixin):
         consent_hash, revision = self._extract_consent_hash_and_revision(response.text)
         return response, consent_hash, revision
 
+    def _expire_signer_token(self, signer):
+        signer.sudo().write({'email_token_expires_at': fields.Datetime.now() - timedelta(minutes=1)})
+        signer.invalidate_recordset(['email_token_expires_at'])
+
+    def _read_committed(self, callback):
+        with odoo.sql_db.db_connect(self.registry.db_name).cursor() as cr:
+            cr.transaction = Transaction(self.registry)
+            env = api.Environment(cr, self.env.uid, {})
+            try:
+                return callback(env)
+            finally:
+                env.clear()
+
+    def _get_token_throttle_bucket(self, signer, client_ip=False):
+        domain = [('request_signer_id', '=', signer.id)]
+        if client_ip:
+            domain.append(('client_ip', '=', client_ip))
+        self.env.invalidate_all(flush=False)
+        records = self.env['open.sign.portal.token.throttle'].sudo().search_read(
+            domain,
+            ['attempt_count', 'blocked_until', 'first_attempt_at', 'last_attempt_at', 'client_ip'],
+            limit=1,
+        )
+        if not records:
+            records = self._read_committed(
+                lambda env: env['open.sign.portal.token.throttle'].sudo().search_read(
+                    domain,
+                    ['attempt_count', 'blocked_until', 'first_attempt_at', 'last_attempt_at', 'client_ip'],
+                    limit=1,
+                )
+            )
+        return SimpleNamespace(**records[0]) if records else False
+
     def _assert_exact_keys(self, payload, expected_keys):
         self.assertEqual(set(payload.keys()), set(expected_keys))
 
@@ -128,13 +163,20 @@ class TestOpenSignPortalContractHttp(HttpCase, OpenSignPortalTestMixin):
         self.assertEqual(response['error_code'], error_code)
         self._assert_no_url_or_token_leak(response, *forbidden_values)
 
-    def _assert_redirect_success(self, response, *, signer_id, token, query_flag, extra_keys=None):
+    def _assert_redirect_success(self, response, *, signer_id, token=False, query_flag, extra_keys=None):
         expected_keys = {'ok', 'force_refresh', 'redirect_url', 'request_revision'}
         if extra_keys:
             expected_keys |= set(extra_keys)
         self._assert_exact_keys(response, expected_keys)
         self.assertTrue(response['ok'])
-        expected_redirect = f'/my/sign/{signer_id}?access_token={token}&{query_flag}'
+        expected_redirect = f'/my/sign/{signer_id}'
+        query_params = []
+        if token:
+            query_params.append(f'access_token={token}')
+        if query_flag:
+            query_params.append(query_flag)
+        if query_params:
+            expected_redirect = f"{expected_redirect}?{'&'.join(query_params)}"
         self.assertEqual(response['redirect_url'], expected_redirect)
         if extra_keys and 'otp_verified' in extra_keys:
             self.assertTrue(response['otp_verified'])
@@ -417,6 +459,124 @@ class TestOpenSignPortalContractHttp(HttpCase, OpenSignPortalTestMixin):
         )
         self._assert_error_envelope(response, 'invalid_token', wrong_token)
 
+    def test_throttled_invalid_attempts_still_use_standard_invalid_token_envelope(self):
+        bundle = self._create_portal_session(self.env, name='Portal Contract Throttled Invalid', owner=self.open_sign_user)
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        field = self._get_text_field_for_signer(signer)
+        wrong_token = self._mutate_token(bundle['token'])
+        client_ip = '203.0.113.40'
+
+        self.authenticate(None, None)
+        response = False
+        for attempt in range(6):
+            response = self.make_jsonrpc_request(
+                f'/my/sign/{signer.id}/save',
+                self._build_save_payload(
+                    revision=signer.request_id.lock_version,
+                    field_id=field.id,
+                    value=f'invalid throttle {attempt}',
+                    access_token=wrong_token,
+                ),
+                headers=self._ip_headers(client_ip),
+            )
+
+        self.assertTrue(self._get_token_throttle_bucket(signer, client_ip))
+        self._assert_error_envelope(response, 'invalid_token', wrong_token)
+
+    def test_save_expired_token_error_envelope(self):
+        bundle = self._create_portal_session(self.env, name='Portal Contract Save Expired', owner=self.open_sign_user)
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        field = self._get_text_field_for_signer(signer)
+        self._expire_signer_token(signer)
+
+        self.authenticate(None, None)
+        response = self.make_jsonrpc_request(
+            f'/my/sign/{signer.id}/save',
+            self._build_save_payload(
+                revision=signer.request_id.lock_version,
+                field_id=field.id,
+                value='expired save',
+                access_token=bundle['token'],
+            ),
+        )
+        self._assert_error_envelope(response, 'expired_token', bundle['token'])
+
+    def test_submit_expired_token_error_envelope(self):
+        bundle = self._create_portal_session(self.env, name='Portal Contract Submit Expired', owner=self.open_sign_user)
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        field = self._get_text_field_for_signer(signer)
+        self.authenticate(None, None)
+        _page_response, consent_hash, revision = self._open_page_and_extract(signer.id, bundle['token'])
+        self._expire_signer_token(signer)
+        response = self.make_jsonrpc_request(
+            f'/my/sign/{signer.id}/submit',
+            self._build_submit_payload(
+                revision=revision,
+                field_id=field.id,
+                value='expired submit',
+                consent_hash=consent_hash,
+                access_token=bundle['token'],
+            ),
+        )
+        self._assert_error_envelope(response, 'expired_token', bundle['token'])
+
+    def test_decline_expired_token_error_envelope(self):
+        bundle = self._create_portal_session(self.env, name='Portal Contract Decline Expired', owner=self.open_sign_user)
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        self._expire_signer_token(signer)
+
+        self.authenticate(None, None)
+        response = self.make_jsonrpc_request(
+            f'/my/sign/{signer.id}/decline',
+            self._build_decline_payload(
+                revision=signer.request_id.lock_version,
+                reason='expired decline',
+                access_token=bundle['token'],
+            ),
+        )
+        self._assert_error_envelope(response, 'expired_token', bundle['token'])
+
+    def test_otp_request_expired_token_error_envelope(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Contract OTP Request Expired',
+            owner=self.open_sign_user,
+            otp_required=True,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        self._expire_signer_token(signer)
+
+        self.authenticate(None, None)
+        response = self.make_jsonrpc_request(
+            f'/my/sign/{signer.id}/otp/request',
+            self._build_otp_request_payload(
+                revision=signer.request_id.lock_version,
+                access_token=bundle['token'],
+            ),
+        )
+        self._assert_error_envelope(response, 'expired_token', bundle['token'])
+
+    def test_otp_verify_expired_token_error_envelope(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Contract OTP Verify Expired',
+            owner=self.open_sign_user,
+            otp_required=True,
+        )
+        signer = self.env['open.sign.request.signer'].browse(bundle['signer'].id)
+        self._expire_signer_token(signer)
+
+        self.authenticate(None, None)
+        response = self.make_jsonrpc_request(
+            f'/my/sign/{signer.id}/otp/verify',
+            self._build_otp_verify_payload(
+                revision=signer.request_id.lock_version,
+                code=self.OTP_CODE,
+                access_token=bundle['token'],
+            ),
+        )
+        self._assert_error_envelope(response, 'expired_token', bundle['token'])
+
     def test_save_allowed_error_codes(self):
         seen = set()
         self.authenticate(None, None)
@@ -434,6 +594,21 @@ class TestOpenSignPortalContractHttp(HttpCase, OpenSignPortalTestMixin):
             ),
         )
         seen.add(invalid_response['error_code'])
+
+        expired_bundle = self._create_portal_session(self.env, name='Portal Contract Save Codes Expired', owner=self.open_sign_user)
+        expired_signer = self.env['open.sign.request.signer'].browse(expired_bundle['signer'].id)
+        expired_field = self._get_text_field_for_signer(expired_signer)
+        self._expire_signer_token(expired_signer)
+        expired_response = self.make_jsonrpc_request(
+            f'/my/sign/{expired_signer.id}/save',
+            self._build_save_payload(
+                revision=expired_signer.request_id.lock_version,
+                field_id=expired_field.id,
+                value='expired',
+                access_token=expired_bundle['token'],
+            ),
+        )
+        seen.add(expired_response['error_code'])
 
         stale_bundle = self._create_portal_session(self.env, name='Portal Contract Save Codes Stale', owner=self.open_sign_user)
         stale_signer = self.env['open.sign.request.signer'].browse(stale_bundle['signer'].id)
@@ -504,7 +679,7 @@ class TestOpenSignPortalContractHttp(HttpCase, OpenSignPortalTestMixin):
 
         self.assertEqual(
             seen,
-            {'invalid_token', 'stale_revision', 'request_locked', 'signing_order_blocked', 'validation_error'},
+            {'invalid_token', 'expired_token', 'stale_revision', 'request_locked', 'signing_order_blocked', 'validation_error'},
         )
 
     def test_submit_allowed_error_codes(self):
@@ -526,6 +701,23 @@ class TestOpenSignPortalContractHttp(HttpCase, OpenSignPortalTestMixin):
             ),
         )
         seen.add(invalid_response['error_code'])
+
+        expired_bundle = self._create_portal_session(self.env, name='Portal Contract Submit Codes Expired', owner=self.open_sign_user)
+        expired_signer = self.env['open.sign.request.signer'].browse(expired_bundle['signer'].id)
+        expired_field = self._get_text_field_for_signer(expired_signer)
+        _page_response, expired_consent_hash, expired_revision = self._open_page_and_extract(expired_signer.id, expired_bundle['token'])
+        self._expire_signer_token(expired_signer)
+        expired_response = self.make_jsonrpc_request(
+            f'/my/sign/{expired_signer.id}/submit',
+            self._build_submit_payload(
+                revision=expired_revision,
+                field_id=expired_field.id,
+                value='expired',
+                consent_hash=expired_consent_hash,
+                access_token=expired_bundle['token'],
+            ),
+        )
+        seen.add(expired_response['error_code'])
 
         stale_bundle = self._create_portal_session(self.env, name='Portal Contract Submit Codes Stale', owner=self.open_sign_user)
         stale_signer = self.env['open.sign.request.signer'].browse(stale_bundle['signer'].id)
@@ -661,6 +853,7 @@ class TestOpenSignPortalContractHttp(HttpCase, OpenSignPortalTestMixin):
             seen,
             {
                 'invalid_token',
+                'expired_token',
                 'stale_revision',
                 'request_locked',
                 'signing_order_blocked',
@@ -685,6 +878,19 @@ class TestOpenSignPortalContractHttp(HttpCase, OpenSignPortalTestMixin):
             ),
         )
         seen.add(invalid_response['error_code'])
+
+        expired_bundle = self._create_portal_session(self.env, name='Portal Contract Decline Codes Expired', owner=self.open_sign_user)
+        expired_signer = self.env['open.sign.request.signer'].browse(expired_bundle['signer'].id)
+        self._expire_signer_token(expired_signer)
+        expired_response = self.make_jsonrpc_request(
+            f'/my/sign/{expired_signer.id}/decline',
+            self._build_decline_payload(
+                revision=expired_signer.request_id.lock_version,
+                reason='expired',
+                access_token=expired_bundle['token'],
+            ),
+        )
+        seen.add(expired_response['error_code'])
 
         stale_bundle = self._create_portal_session(self.env, name='Portal Contract Decline Codes Stale', owner=self.open_sign_user)
         stale_signer = self.env['open.sign.request.signer'].browse(stale_bundle['signer'].id)
@@ -782,7 +988,7 @@ class TestOpenSignPortalContractHttp(HttpCase, OpenSignPortalTestMixin):
         self.assertTrue(waiting_response['ok'])
         self.assertNotIn('error_code', waiting_response)
 
-        self.assertEqual(seen, {'invalid_token', 'stale_revision', 'request_locked', 'validation_error', 'idempotency_conflict'})
+        self.assertEqual(seen, {'invalid_token', 'expired_token', 'stale_revision', 'request_locked', 'validation_error', 'idempotency_conflict'})
         self.assertNotIn('signing_order_blocked', seen)
 
     def test_otp_request_allowed_error_codes(self):
@@ -804,6 +1010,23 @@ class TestOpenSignPortalContractHttp(HttpCase, OpenSignPortalTestMixin):
             ),
         )
         seen.add(invalid_response['error_code'])
+
+        expired_bundle = self._create_portal_session(
+            self.env,
+            name='Portal Contract OTP Request Codes Expired',
+            owner=self.open_sign_user,
+            otp_required=True,
+        )
+        expired_signer = self.env['open.sign.request.signer'].browse(expired_bundle['signer'].id)
+        self._expire_signer_token(expired_signer)
+        expired_response = self.make_jsonrpc_request(
+            f'/my/sign/{expired_signer.id}/otp/request',
+            self._build_otp_request_payload(
+                revision=expired_signer.request_id.lock_version,
+                access_token=expired_bundle['token'],
+            ),
+        )
+        seen.add(expired_response['error_code'])
 
         stale_bundle = self._create_portal_session(
             self.env,
@@ -877,7 +1100,7 @@ class TestOpenSignPortalContractHttp(HttpCase, OpenSignPortalTestMixin):
 
         self.assertEqual(
             seen,
-            {'invalid_token', 'stale_revision', 'request_locked', 'signing_order_blocked', 'validation_error'},
+            {'invalid_token', 'expired_token', 'stale_revision', 'request_locked', 'signing_order_blocked', 'validation_error'},
         )
 
     def test_otp_verify_allowed_error_codes(self):
@@ -900,6 +1123,24 @@ class TestOpenSignPortalContractHttp(HttpCase, OpenSignPortalTestMixin):
             ),
         )
         seen.add(invalid_response['error_code'])
+
+        expired_bundle = self._create_portal_session(
+            self.env,
+            name='Portal Contract OTP Verify Codes Expired',
+            owner=self.open_sign_user,
+            otp_required=True,
+        )
+        expired_signer = self.env['open.sign.request.signer'].browse(expired_bundle['signer'].id)
+        self._expire_signer_token(expired_signer)
+        expired_response = self.make_jsonrpc_request(
+            f'/my/sign/{expired_signer.id}/otp/verify',
+            self._build_otp_verify_payload(
+                revision=expired_signer.request_id.lock_version,
+                code=self.OTP_CODE,
+                access_token=expired_bundle['token'],
+            ),
+        )
+        seen.add(expired_response['error_code'])
 
         stale_bundle = self._create_portal_session(
             self.env,
@@ -1014,88 +1255,8 @@ class TestOpenSignPortalContractHttp(HttpCase, OpenSignPortalTestMixin):
 
         self.assertEqual(
             seen,
-            {'invalid_token', 'stale_revision', 'request_locked', 'signing_order_blocked', 'validation_error'},
+            {'invalid_token', 'expired_token', 'stale_revision', 'request_locked', 'signing_order_blocked', 'validation_error'},
         )
-
-    def test_current_routes_do_not_emit_reserved_codes(self):
-        self.authenticate(None, None)
-        responses = []
-
-        save_bundle = self._create_portal_session(self.env, name='Portal Contract Reserved Save', owner=self.open_sign_user)
-        save_signer = self.env['open.sign.request.signer'].browse(save_bundle['signer'].id)
-        save_field = self._get_text_field_for_signer(save_signer)
-        responses.append(
-            self.make_jsonrpc_request(
-                f'/my/sign/{save_signer.id}/save',
-                self._build_save_payload(
-                    revision=save_signer.request_id.lock_version,
-                    field_id=save_field.id,
-                    value='reserved save',
-                    access_token=self._mutate_token(save_bundle['token']),
-                ),
-            )
-        )
-
-        submit_bundle = self._create_portal_session(self.env, name='Portal Contract Reserved Submit', owner=self.open_sign_user)
-        submit_signer = self.env['open.sign.request.signer'].browse(submit_bundle['signer'].id)
-        submit_field = self._get_text_field_for_signer(submit_signer)
-        _page_response, submit_consent_hash, submit_revision = self._open_page_and_extract(submit_signer.id, submit_bundle['token'])
-        submit_signer.request_id.sudo().write({'lock_version': submit_revision + 1})
-        responses.append(
-            self.make_jsonrpc_request(
-                f'/my/sign/{submit_signer.id}/submit',
-                self._build_submit_payload(
-                    revision=submit_revision,
-                    field_id=submit_field.id,
-                    value='reserved submit',
-                    consent_hash=submit_consent_hash,
-                    access_token=submit_bundle['token'],
-                ),
-            )
-        )
-
-        decline_bundle = self._create_portal_session(self.env, name='Portal Contract Reserved Decline', owner=self.open_sign_user)
-        decline_signer = self.env['open.sign.request.signer'].browse(decline_bundle['signer'].id)
-        responses.append(
-            self.make_jsonrpc_request(
-                f'/my/sign/{decline_signer.id}/decline',
-                self._build_decline_payload(
-                    revision=decline_signer.request_id.lock_version,
-                    reason='reserved decline',
-                    access_token=self._mutate_token(decline_bundle['token']),
-                ),
-            )
-        )
-
-        otp_bundle = self._create_portal_session(
-            self.env,
-            name='Portal Contract Reserved OTP',
-            owner=self.open_sign_user,
-            otp_required=False,
-        )
-        otp_signer = self.env['open.sign.request.signer'].browse(otp_bundle['signer'].id)
-        responses.append(
-            self.make_jsonrpc_request(
-                f'/my/sign/{otp_signer.id}/otp/request',
-                self._build_otp_request_payload(
-                    revision=otp_signer.request_id.lock_version,
-                    access_token=otp_bundle['token'],
-                ),
-            )
-        )
-        responses.append(
-            self.make_jsonrpc_request(
-                f'/my/sign/{otp_signer.id}/otp/verify',
-                self._build_otp_verify_payload(
-                    revision=otp_signer.request_id.lock_version,
-                    code=self.OTP_CODE,
-                    access_token=otp_bundle['token'],
-                ),
-            )
-        )
-
-        for response in responses:
-            self.assertNotIn(response['error_code'], self.RESERVED_ERROR_CODES)
 
     def test_error_envelopes_do_not_echo_access_token(self):
         bundle = self._create_portal_session(self.env, name='Portal Contract No Leak Error', owner=self.open_sign_user)

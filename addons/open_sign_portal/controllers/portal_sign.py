@@ -11,7 +11,7 @@ from psycopg2.errors import LockNotAvailable
 from odoo import _, fields, http
 from odoo.addons.open_sign.services import notification_service, validation_service
 from odoo.addons.portal.controllers.portal import CustomerPortal
-from odoo.addons.open_sign_portal.services import idempotency_service, otp_service
+from odoo.addons.open_sign_portal.services import idempotency_service, otp_service, token_security_service
 from odoo.exceptions import AccessError, MissingError, ValidationError
 from odoo.http import request
 from odoo.tools import consteq
@@ -33,6 +33,7 @@ SIGNING_ORDER_BLOCKED_MARKER = 'SIGNING_ORDER_BLOCKED'
 CONSENT_REQUIRED_MARKER = 'CONSENT_REQUIRED'
 CONTRACT_UNAVAILABLE_MARKER = 'CONTRACT_UNAVAILABLE'
 IDEMPOTENCY_CONFLICT_MARKER = 'IDEMPOTENCY_CONFLICT'
+EXPIRED_TOKEN_MARKER = 'EXPIRED_TOKEN'
 OTP_REQUIRED_MARKER = 'OTP_REQUIRED'
 OTP_INVALID_MARKER = 'OTP_INVALID'
 OTP_EXPIRED_MARKER = 'OTP_EXPIRED'
@@ -65,13 +66,68 @@ class OpenSignPortalController(CustomerPortal):
         return bool(access_token and signer_sudo.access_token and consteq(signer_sudo.access_token, access_token))
 
     @staticmethod
+    def _build_auth_context(signer_sudo, *, auth_mode, effective_access_token=False):
+        return SimpleNamespace(
+            signer=signer_sudo,
+            auth_mode=auth_mode,
+            effective_access_token=effective_access_token or False,
+        )
+
+    def _get_client_ip(self):
+        return token_security_service.normalize_client_ip(request.env, self._extract_request_ip())
+
+    @staticmethod
     def _is_partner_linked_signer(signer_sudo):
         return bool(signer_sudo.partner_id)
 
-    def _check_signer_external_token_access(self, signer_sudo, access_token):
+    def _record_invalid_token_attempt(self, signer_sudo, client_ip, *, force_isolated=False):
+        if not client_ip:
+            return False
+        try:
+            return token_security_service.record_invalid_token_attempt(
+                signer_sudo,
+                client_ip,
+                force_isolated=force_isolated,
+            )
+        except Exception:  # pragma: no cover - defensive logging around abuse-control state
+            _logger.exception("Failed to record invalid portal token attempt for signer %s", signer_sudo.id)
+            return False
+
+    def _clear_invalid_token_attempts(self, signer_sudo, client_ip, *, force_isolated=False):
+        if not client_ip:
+            return 0
+        try:
+            return token_security_service.clear_invalid_token_attempts(
+                signer_sudo,
+                client_ip,
+                force_isolated=force_isolated,
+            )
+        except Exception:  # pragma: no cover - defensive logging around abuse-control state
+            _logger.exception("Failed to clear invalid portal token attempts for signer %s", signer_sudo.id)
+            return 0
+
+    def _check_signer_external_token_access(self, signer_sudo, access_token, *, token_state=False):
+        token_state = token_state or signer_sudo._classify_current_email_token_access(access_token)
+        client_ip = self._get_client_ip()
+        if token_state == 'valid':
+            if client_ip:
+                self._clear_invalid_token_attempts(
+                    signer_sudo,
+                    client_ip,
+                    force_isolated=bool(request.env.cr.readonly),
+                )
+            return self._build_auth_context(
+                signer_sudo,
+                auth_mode='token',
+                effective_access_token=access_token,
+            )
+        if token_state == 'expired':
+            raise AccessError(
+                f"{EXPIRED_TOKEN_MARKER}::" + _("This signing link has expired. Request a new link.")
+            )
         if not self._token_matches_signer(signer_sudo, access_token):
             raise AccessError(_("Signer session is not allowed for this user."))
-        return signer_sudo
+        raise AccessError(_("Signer session is not allowed for this user."))
 
     def _check_signer_internal_partner_fallback_access(self, signer_sudo):
         user = self._require_internal_user()
@@ -79,7 +135,7 @@ class OpenSignPortalController(CustomerPortal):
             raise AccessError(_("Signer session is not allowed for this user."))
         signer = request.env['open.sign.request.signer'].browse(signer_sudo.id)
         signer.with_user(user).check_access('read')
-        return signer_sudo
+        return self._build_auth_context(signer_sudo, auth_mode='internal_fallback', effective_access_token=False)
 
     @staticmethod
     def _is_request_readonly(sign_request):
@@ -118,24 +174,40 @@ class OpenSignPortalController(CustomerPortal):
         if not signer_sudo or not signer_sudo.request_id.active:
             raise MissingError(_("This signing request is no longer available."))
         self._assert_preview_access_allowed(signer_sudo.request_id)
-        return signer_sudo
+        return self._build_auth_context(signer_sudo, auth_mode='preview', effective_access_token=False)
 
     def _check_signer_identity_access(self, signer_id, access_token=None):
         signer_sudo = self._get_signer_sudo(signer_id)
+        token_state = signer_sudo._classify_current_email_token_access(access_token)
         try:
-            return self._check_signer_external_token_access(signer_sudo, access_token)
-        except AccessError:
-            return self._check_signer_internal_partner_fallback_access(signer_sudo)
+            return self._check_signer_external_token_access(
+                signer_sudo,
+                access_token,
+                token_state=token_state,
+            )
+        except AccessError as exc:
+            try:
+                return self._check_signer_internal_partner_fallback_access(signer_sudo)
+            except AccessError:
+                if token_state in {'invalid', 'revoked'}:
+                    client_ip = self._get_client_ip()
+                    if client_ip:
+                        self._record_invalid_token_attempt(
+                            signer_sudo,
+                            client_ip,
+                            force_isolated=bool(request.env.cr.readonly),
+                        )
+                raise exc
 
     def _check_signer_read_access(self, signer_id, access_token=None):
-        signer_sudo = self._check_signer_identity_access(signer_id, access_token=access_token)
-        self._assert_request_read_access_allowed(signer_sudo.request_id)
-        return signer_sudo
+        auth_context = self._check_signer_identity_access(signer_id, access_token=access_token)
+        self._assert_request_read_access_allowed(auth_context.signer.request_id)
+        return auth_context
 
     def _check_signer_action_access(self, signer_id, access_token=None):
-        signer_sudo = self._check_signer_identity_access(signer_id, access_token=access_token)
-        self._assert_request_action_access_allowed(signer_sudo.request_id)
-        return signer_sudo
+        auth_context = self._check_signer_identity_access(signer_id, access_token=access_token)
+        self._assert_request_action_access_allowed(auth_context.signer.request_id)
+        return auth_context
 
     @staticmethod
     def _is_signer_readonly(signer):
@@ -264,6 +336,12 @@ class OpenSignPortalController(CustomerPortal):
             _("Invalid or expired signing link."),
         )
 
+    def _expired_token_response(self, message=False):
+        return self._build_error_response(
+            'expired_token',
+            message or _("This signing link has expired. Request a new link."),
+        )
+
     @staticmethod
     def _extract_marked_message(message, marker):
         prefix = f'{marker}::'
@@ -271,12 +349,14 @@ class OpenSignPortalController(CustomerPortal):
             return message.split('::', 1)[1]
         return False
 
-    def _jsonrpc_error_from_access(self, exc, *, allow_order_block=False, allow_consent=False):
+    def _jsonrpc_error_from_access(self, exc, *, allow_order_block=False, allow_consent=False, allow_expired_token=False):
         message = str(exc)
         if allow_order_block and message.startswith(f'{SIGNING_ORDER_BLOCKED_MARKER}::'):
             return self._build_error_response('signing_order_blocked', message.split('::', 1)[1])
         if allow_consent and message.startswith(f'{CONSENT_REQUIRED_MARKER}::'):
             return self._build_error_response('consent_required', message.split('::', 1)[1])
+        if allow_expired_token and message.startswith(f'{EXPIRED_TOKEN_MARKER}::'):
+            return self._expired_token_response(message.split('::', 1)[1])
         return self._invalid_token_response()
 
     def _jsonrpc_error_from_validation(self, exc, *, allow_contract_message=False, allow_idempotency_conflict=False):
@@ -932,7 +1012,9 @@ class OpenSignPortalController(CustomerPortal):
             })
         return portal_fields, unsupported_required_fields
 
-    def _build_portal_page_values(self, signer_sudo, *, access_token=False, preview_mode=False, portal_error_message=False, **kwargs):
+    def _build_portal_page_values(self, auth_context, *, preview_mode=False, portal_error_message=False, **kwargs):
+        signer_sudo = auth_context.signer
+        access_token = False if preview_mode else auth_context.effective_access_token
         sign_request = signer_sudo.request_id
         attachment = sign_request.template_version_id.source_attachment_id or sign_request.template_id.source_attachment_id
         document_url = False
@@ -1002,7 +1084,7 @@ class OpenSignPortalController(CustomerPortal):
 
         values = self._get_page_view_values(
             signer_sudo,
-            access_token if not preview_mode else False,
+            access_token,
             {
                 'page_name': 'open_sign_document_preview' if preview_mode else 'open_sign_document',
                 'signer': signer_sudo,
@@ -1051,17 +1133,17 @@ class OpenSignPortalController(CustomerPortal):
 
     @http.route(['/my/sign/<int:signer_id>/preview'], type='http', auth='user', website=True, readonly=True)
     def portal_sign_preview_page(self, signer_id, **kwargs):
-        signer_sudo = None
+        auth_context = None
         try:
-            signer_sudo = self._check_signer_preview_access(signer_id)
-            values = self._build_portal_page_values(signer_sudo, preview_mode=True, **kwargs)
+            auth_context = self._check_signer_preview_access(signer_id)
+            values = self._build_portal_page_values(auth_context, preview_mode=True, **kwargs)
         except (AccessError, MissingError):
             return request.redirect('/my')
         except ValidationError as exc:
             contract_message = self._extract_marked_message(str(exc), CONTRACT_UNAVAILABLE_MARKER)
-            if signer_sudo and contract_message:
+            if auth_context and contract_message:
                 values = self._build_portal_page_values(
-                    signer_sudo,
+                    auth_context,
                     preview_mode=True,
                     portal_error_message=contract_message,
                     **kwargs,
@@ -1073,10 +1155,11 @@ class OpenSignPortalController(CustomerPortal):
     @http.route(['/my/sign/<int:signer_id>'], type='http', auth='public', website=True)
     def portal_sign_page(self, signer_id, access_token=None, **kwargs):
         access_token = self._resolve_access_token(access_token)
-        signer_sudo = None
+        auth_context = None
         try:
-            signer_sudo = self._check_signer_read_access(signer_id, access_token=access_token)
-            values = self._build_portal_page_values(signer_sudo, access_token=access_token, **kwargs)
+            auth_context = self._check_signer_read_access(signer_id, access_token=access_token)
+            signer_sudo = auth_context.signer
+            values = self._build_portal_page_values(auth_context, **kwargs)
             if (
                 signer_sudo.state in SIGNER_MUTABLE_STATES
                 and signer_sudo.request_id.status in SIGNER_MUTATION_REQUEST_STATUSES
@@ -1094,10 +1177,9 @@ class OpenSignPortalController(CustomerPortal):
             return request.redirect('/my')
         except ValidationError as exc:
             contract_message = self._extract_marked_message(str(exc), CONTRACT_UNAVAILABLE_MARKER)
-            if signer_sudo and contract_message:
+            if auth_context and contract_message:
                 values = self._build_portal_page_values(
-                    signer_sudo,
-                    access_token=access_token,
+                    auth_context,
                     portal_error_message=contract_message,
                     **kwargs,
                 )
@@ -1111,13 +1193,14 @@ class OpenSignPortalController(CustomerPortal):
         access_token = self._resolve_access_token(access_token)
         allow_preview = request.httprequest.args.get('preview') == '1'
         try:
-            signer_sudo = self._check_signer_document_access(
+            auth_context = self._check_signer_document_access(
                 signer_id,
                 access_token=access_token,
                 allow_preview=allow_preview,
             )
         except (AccessError, MissingError, ValidationError):
             return request.redirect('/my')
+        signer_sudo = auth_context.signer
         attachment = signer_sudo.request_id.template_version_id.source_attachment_id or signer_sudo.request_id.template_id.source_attachment_id
         if not attachment:
             return request.redirect('/my')
@@ -1127,7 +1210,8 @@ class OpenSignPortalController(CustomerPortal):
     def portal_sign_save(self, signer_id, access_token=None, **payload):
         access_token = self._resolve_access_token(access_token, payload=payload)
         try:
-            signer_sudo = self._check_signer_identity_access(signer_id, access_token=access_token)
+            auth_context = self._check_signer_identity_access(signer_id, access_token=access_token)
+            signer_sudo = auth_context.signer
             request_revision, parsed_values, _idempotency_key = self._validate_mutation_payload(payload)
             sign_request = signer_sudo.request_id.sudo()
             with request.env.cr.savepoint():
@@ -1164,7 +1248,7 @@ class OpenSignPortalController(CustomerPortal):
         except MissingError:
             return self._invalid_token_response()
         except AccessError as exc:
-            return self._jsonrpc_error_from_access(exc, allow_order_block=True)
+            return self._jsonrpc_error_from_access(exc, allow_order_block=True, allow_expired_token=True)
         except LockNotAvailable:
             return self._jsonrpc_request_locked_response()
         except ValidationError as exc:
@@ -1174,7 +1258,8 @@ class OpenSignPortalController(CustomerPortal):
     def portal_sign_submit(self, signer_id, access_token=None, **payload):
         access_token = self._resolve_access_token(access_token, payload=payload)
         try:
-            signer_sudo = self._check_signer_identity_access(signer_id, access_token=access_token)
+            auth_context = self._check_signer_identity_access(signer_id, access_token=access_token)
+            signer_sudo = auth_context.signer
             request_revision, parsed_values, idempotency_key = self._validate_mutation_payload(payload)
             sign_request = signer_sudo.request_id.sudo()
             newly_actionable_signers = request.env['open.sign.request.signer']
@@ -1248,7 +1333,7 @@ class OpenSignPortalController(CustomerPortal):
                     )
                     response = self._build_jsonrpc_success_redirect(
                         signer_id=signer_sudo.id,
-                        access_token=access_token,
+                        access_token=auth_context.effective_access_token,
                         request_revision=sign_request.lock_version,
                         query_flag='submitted=1',
                     )
@@ -1262,7 +1347,12 @@ class OpenSignPortalController(CustomerPortal):
         except MissingError:
             return self._invalid_token_response()
         except AccessError as exc:
-            return self._jsonrpc_error_from_access(exc, allow_order_block=True, allow_consent=True)
+            return self._jsonrpc_error_from_access(
+                exc,
+                allow_order_block=True,
+                allow_consent=True,
+                allow_expired_token=True,
+            )
         except LockNotAvailable:
             return self._jsonrpc_request_locked_response()
         except ValidationError as exc:
@@ -1276,7 +1366,8 @@ class OpenSignPortalController(CustomerPortal):
     def portal_sign_decline(self, signer_id, access_token=None, **payload):
         access_token = self._resolve_access_token(access_token, payload=payload)
         try:
-            signer_sudo = self._check_signer_identity_access(signer_id, access_token=access_token)
+            auth_context = self._check_signer_identity_access(signer_id, access_token=access_token)
+            signer_sudo = auth_context.signer
             request_revision, normalized_reason, idempotency_key = self._validate_decline_payload(payload)
             sign_request = signer_sudo.request_id.sudo()
             response = False
@@ -1322,7 +1413,7 @@ class OpenSignPortalController(CustomerPortal):
                     )
                     response = self._build_jsonrpc_success_redirect(
                         signer_id=signer_sudo.id,
-                        access_token=access_token,
+                        access_token=auth_context.effective_access_token,
                         request_revision=sign_request.lock_version,
                         query_flag='declined=1',
                     )
@@ -1336,7 +1427,7 @@ class OpenSignPortalController(CustomerPortal):
         except MissingError:
             return self._invalid_token_response()
         except AccessError as exc:
-            return self._jsonrpc_error_from_access(exc)
+            return self._jsonrpc_error_from_access(exc, allow_expired_token=True)
         except LockNotAvailable:
             return self._jsonrpc_request_locked_response()
         except ValidationError as exc:
@@ -1349,8 +1440,10 @@ class OpenSignPortalController(CustomerPortal):
     @http.route(['/my/sign/<int:signer_id>/otp/request'], type='jsonrpc', auth='public')
     def portal_sign_otp_request(self, signer_id, access_token=None, **payload):
         access_token = self._resolve_access_token(access_token, payload=payload)
+        signer_sudo = False
         try:
-            signer_sudo = self._check_signer_identity_access(signer_id, access_token=access_token)
+            auth_context = self._check_signer_identity_access(signer_id, access_token=access_token)
+            signer_sudo = auth_context.signer
             request_revision = self._validate_otp_request_payload(payload)
             sign_request = signer_sudo.request_id.sudo()
             with request.env.cr.savepoint():
@@ -1380,7 +1473,7 @@ class OpenSignPortalController(CustomerPortal):
 
             return self._build_jsonrpc_success_redirect(
                 signer_id=signer_sudo.id,
-                access_token=access_token,
+                access_token=auth_context.effective_access_token,
                 request_revision=sign_request.lock_version,
                 query_flag='otp_requested=1',
             )
@@ -1402,7 +1495,7 @@ class OpenSignPortalController(CustomerPortal):
         except MissingError:
             return self._invalid_token_response()
         except AccessError as exc:
-            return self._jsonrpc_error_from_access(exc, allow_order_block=True)
+            return self._jsonrpc_error_from_access(exc, allow_order_block=True, allow_expired_token=True)
         except LockNotAvailable:
             return self._jsonrpc_request_locked_response()
         except ValidationError as exc:
@@ -1412,7 +1505,8 @@ class OpenSignPortalController(CustomerPortal):
     def portal_sign_otp_verify(self, signer_id, access_token=None, **payload):
         access_token = self._resolve_access_token(access_token, payload=payload)
         try:
-            signer_sudo = self._check_signer_identity_access(signer_id, access_token=access_token)
+            auth_context = self._check_signer_identity_access(signer_id, access_token=access_token)
+            signer_sudo = auth_context.signer
             request_revision, normalized_code = self._validate_otp_verify_payload(payload)
             sign_request = signer_sudo.request_id.sudo()
             with request.env.cr.savepoint():
@@ -1452,13 +1546,13 @@ class OpenSignPortalController(CustomerPortal):
                 )
             return self._build_jsonrpc_success_otp_verified(
                 signer_id=signer_sudo.id,
-                access_token=access_token,
+                access_token=auth_context.effective_access_token,
                 request_revision=sign_request.lock_version,
             )
         except MissingError:
             return self._invalid_token_response()
         except AccessError as exc:
-            return self._jsonrpc_error_from_access(exc, allow_order_block=True)
+            return self._jsonrpc_error_from_access(exc, allow_order_block=True, allow_expired_token=True)
         except LockNotAvailable:
             return self._jsonrpc_request_locked_response()
         except ValidationError as exc:
