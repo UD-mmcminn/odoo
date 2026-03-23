@@ -641,14 +641,14 @@ Use this before marking any task complete (especially model/state/security work)
    - `./odoo-bin -d <db> -i open_sign_portal --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign_portal --stop-after-init`
    - `scripts/review_gate_open_sign.sh --skip-web -d <db>`
-2. If tests pass, continue Phase 3 with the remaining post-portal hardening tasks on top of the now-closed `T32`/`T33`/`T34`/`T35`/`T36`/`T37`/`T38`/`T39`/`T316`/`T317`/`T310`/`T311`/`T312`/`T313` portal baseline; the immediate unresolved items are the `T314`-`T315` external email-signer completion track, with optional deferred verification follow-up `T317a` if literal live-HTTP overlap proof is still desired later.
+2. If tests pass, continue Phase 4 work on top of the now-closed `T32`/`T33`/`T34`/`T35`/`T36`/`T37`/`T38`/`T39`/`T316`/`T317`/`T310`/`T311`/`T312`/`T313`/`T314`/`T315` portal baseline; `T317a` remains an optional deferred verification follow-up if literal live-HTTP overlap proof is still desired later, but the next implementation task is `T40`.
 3. Re-run recurring hardening re-audit (`T610`) after each major phase slice and after every 3 completed implementation tasks.
 
 ## Next Tasks (Planned Order)
 
-1. `T314` Extend audit/evidence taxonomy for email-token events (`token_issued`, `token_opened`, `token_rejected`, `token_revoked`) with export coverage.
-2. `T315` Add end-to-end and denial-path tests for the locked email-only signer token flow.
-3. `T317a` Optional deferred verification follow-up for literal live-HTTP overlap proof outside the `HttpCase`/`TestCursor` model.
+1. `T40` Implement value-to-PDF rendering/flattening.
+2. `T317a` Optional deferred verification follow-up for literal live-HTTP overlap proof outside the `HttpCase`/`TestCursor` model.
+3. `T41` Generate final signed attachment and lock request edits.
 
 ## Notes For Next Chat
 
@@ -785,7 +785,7 @@ Use this before marking any task complete (especially model/state/security work)
   - backend copy-link surfaces now stay blank until a signer has a currently distributable token, and remain blank for revoked or metadata-expired signers
   - revoked or rotated old links now fail with the existing `invalid_token` contract across signer page, document, and signer JSONRPC routes, while partner-linked internal fallback remains unchanged
   - signer completion notifications now skip truthfully when no currently distributable signer URL exists, so revoke cannot leak a hidden replacement token through completion mail
-  - dedicated token lifecycle audit events (`token_issued`, `token_revoked`, etc.) remain deferred to `T314`
+  - dedicated token lifecycle audit events were deferred here and are now implemented in `T314`
 - `T312` is now closed. Additional external email-only signer access guarantees now include:
   - portal controller access resolution now makes the external token path and internal partner fallback path explicit instead of leaving them implicit inside one generic helper
   - external email-only signer access remains strictly token-only on `signer_id + access_token`; matching an internal user by email still does not grant access
@@ -800,3 +800,23 @@ Use this before marking any task complete (especially model/state/security work)
   - throttled invalid attempts remain externally indistinguishable from `invalid_token`, expired-token denials do not increment throttle state, and valid token-auth success attempts a best-effort non-blocking clear of the signer+IP throttle state
   - exact linked internal fallback still works with wrong, revoked, or expired token input, but internal-fallback sessions no longer echo stale token state into portal DOM values, document URLs, refresh URLs, or success redirects
   - hidden post-revoke current tokens are now denied at runtime rather than only through old-link invalidation, and reminder/reissue behavior from `T311` remains unchanged
+- `T314` is now closed. Additional audit/evidence guarantees now include:
+  - `open.sign.audit.log` now recognizes `token_issued`, `token_opened`, `token_rejected`, and `token_revoked` as first-class audit event types
+  - signer token lifecycle creation now appends `token_issued` only when a fresh signer token lifecycle is actually written, independent of later mail delivery success/failure
+  - successful token-authenticated page/document entry now appends `token_opened` once per distributed token, while internal fallback and preview remain excluded
+  - denied current-token lifecycle states now append deduplicated `token_rejected` only for `expired` and explicit hidden-token `revoked` denials after fallback also fails; generic invalid/tampered/rotated/missing token attempts remain unaudited attack noise
+  - explicit manager revoke of a previously distributed signer token now appends `token_revoked`, while resend/reminder/contact-correction rotations remain represented only by later `token_issued`
+  - token-event metadata remains token-safe: no raw token values, no full tokenized URLs, and no hidden replacement token leakage
+  - `open.sign.audit.log._to_evidence_export_dict()` and `open.sign.request._get_evidence_export_audit_rows()` now provide internal schema-v1-shaped audit export seams for future evidence-package work without adding a public export endpoint
+  - `EVIDENCE_SCHEMA_V1.md` is now aligned to the full current runtime audit taxonomy, including notification/idempotency/contact-correction events and the new token events
+- `T314` follow-up closeout is complete:
+  - token-opened and token-rejected audit rows now consume auth-time token identity snapshots instead of re-deriving token identity from later signer state
+  - `/my/sign/<id>/document` now appends `token_opened` only after the document attachment is confirmed resolvable for streaming
+  - targeted controller-token-audit regression coverage now locks the auth-snapshot correctness path directly, while `test_portal_race.py` stays focused on request-state and idempotency overlap behavior
+- `T315` is now closed as a coverage-only closeout for the locked external email-only signer flow:
+  - new `addons/open_sign_portal/tests/test_portal_email_only_flow.py` proves end-to-end token use from first page open through submit, repeated pre-terminal link reuse, terminal review replay, and post-terminal mutation denial for `save`, `submit`, and `decline`
+  - the suite explicitly proves the accepted forwarded/shared-link baseline: an unrelated authenticated internal user with a live token still succeeds via the token path, while same-email internal access without a token remains denied
+  - denial-path coverage now includes a compact matrix for tampered, expired current, rotated old, and hidden revoked current links, preserving redirect-only GET denial, deterministic JSONRPC `invalid_token` / `expired_token`, and no token or URL leakage
+  - hidden revoked current-token denial is now explicitly covered on `submit`, `decline`, and `otp/verify`
+  - validation passed for targeted `test_portal_email_only_flow.py`, `test_portal_security.py`, `test_portal_email_token.py`, `test_portal_otp.py`, full `/open_sign_portal` (`360 tests, 0 failed`), full `/open_sign` (`111 tests, 0 failed`), and `scripts/review_gate_open_sign.sh --skip-web` (passed)
+  - no public routes, payloads, or error envelopes changed; `T317a` remains optional deferred verification rather than part of `T315`

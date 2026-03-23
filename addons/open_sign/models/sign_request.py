@@ -277,6 +277,13 @@ class OpenSignRequest(models.Model):
             event_at=event_at or fields.Datetime.now(),
         )
 
+    def _get_evidence_export_audit_rows(self):
+        self.ensure_one()
+        return [
+            audit_log._to_evidence_export_dict()
+            for audit_log in self.audit_log_ids.sorted(lambda log: (log.event_sequence, log.id))
+        ]
+
     def _check_can_send(self):
         for request in self:
             if not request.signer_ids:

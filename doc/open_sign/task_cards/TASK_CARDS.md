@@ -674,10 +674,10 @@ Requirements: `R-007`
 Dependencies: `T310` complete; `T311`-`T313` in place where needed for actual event emission
 Target Files: addons/open_sign/models/*, addons/open_sign_portal/controllers/*, addons/open_sign_portal/tests/*, evidence/export docs
 Implementation Notes: Use the locked email-token event taxonomy from `T310`. Record lifecycle chronology without storing raw token values or full tokenized URLs in audit metadata.
-Acceptance Criteria: Behavior matches task goal, related tests pass, traceability references updated.
-Test Plan: Add/extend audit-log and export tests for issuance/open/reject/revoke event coverage and sanitization behavior.
-Security Notes: Audit evidence must describe token lifecycle safely without turning audit storage into a secret store.
-Rollback/Migration Impact: Document schema/data migration effects if model or XML data changes.
+Acceptance Criteria: Completed. `open.sign.audit.log` now supports `token_issued`, `token_opened`, `token_rejected`, and `token_revoked`; issuance/revoke/open/reject events are emitted from the actual signer token lifecycle and controller entry points; export-oriented helpers now serialize schema-v1-shaped audit rows; token-event metadata remains token-safe; and no public routes, payloads, or error envelopes changed.
+Test Plan: Completed with extended core audit-log/export coverage plus a dedicated `test_portal_token_audit.py` suite covering issuance, reminder reuse vs refresh, explicit revoke, first-open dedupe, expired/revoked rejection dedupe, internal-fallback exclusions, preview exclusions, and metadata sanitization behavior.
+Security Notes: Completed. Audit evidence now describes token lifecycle safely without turning audit storage into a secret store; token-event metadata never stores raw token values or full tokenized URLs, and `token_rejected` stays limited to meaningful current-token lifecycle denials rather than generic invalid-link attack noise.
+Rollback/Migration Impact: No data migration required. This task adds no models, fields, ACL rows, or cron jobs; it expands audit taxonomy and helper coverage only.
 
 ## T315
 
@@ -688,10 +688,10 @@ Requirements: `R-009`, `R-021`
 Dependencies: `T310`-`T314` complete enough for end-to-end behavior
 Target Files: addons/open_sign_portal/tests/*, related contract/security docs if needed
 Implementation Notes: Tests must target the locked `T310` strategy: same signer route family, signer `portal.mixin` token carrier, token-only external signer resolution, `min(72h, request expiry)` expiry policy, and no email-based ACL fallback for external email-only signers.
-Acceptance Criteria: Behavior matches task goal, related tests pass, traceability references updated.
-Test Plan: Add/extend end-to-end, denial-path, replay, and abuse tests for tampered/expired/revoked tokens, spoofed email access denial, and controlled link-sharing behavior under the accepted baseline risk model.
-Security Notes: The suite must prove the email-only track preserves the same no-leak and deterministic denial standards as the current portal baseline.
-Rollback/Migration Impact: Document schema/data migration effects if model or XML data changes.
+Acceptance Criteria: Completed. The shipped coverage now proves the locked email-only signer flow end-to-end, including repeated pre-terminal token reuse, submit success, post-terminal review-only replay, deterministic denial for tampered/expired/rotated/hidden-revoked tokens, same-email no-token denial, and accepted forwarded-link success for an unrelated authenticated internal user via the token path.
+Test Plan: Completed with a dedicated `test_portal_email_only_flow.py` suite plus adjacent regression runs of `test_portal_security.py`, `test_portal_email_token.py`, and `test_portal_otp.py`, followed by full `/open_sign_portal`, full `/open_sign`, and `scripts/review_gate_open_sign.sh --skip-web`.
+Security Notes: Completed. The suite locks the current no-leak and deterministic denial contract for the email-only signer track while explicitly proving the accepted baseline risk model: possession of a live external token is sufficient even for a forwarded/shared link, but email-based ACL fallback does not exist for external signers.
+Rollback/Migration Impact: No schema, data, ACL, cron, or public-contract changes. This was a coverage-only closeout on top of `T310`-`T314`.
 
 ## T40
 

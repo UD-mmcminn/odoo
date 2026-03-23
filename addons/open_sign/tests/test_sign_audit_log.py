@@ -204,6 +204,92 @@ class TestOpenSignAuditLog(TransactionCase):
                 hash_chain='7' * 64,
             )
 
+    def test_audit_event_selection_includes_token_event_types(self):
+        event_types = dict(self.env['open.sign.audit.log']._fields['event_type'].selection)
+        self.assertIn('token_issued', event_types)
+        self.assertIn('token_opened', event_types)
+        self.assertIn('token_rejected', event_types)
+        self.assertIn('token_revoked', event_types)
+
+    def test_audit_export_helper_serializes_token_events_with_schema_v1_keys(self):
+        template = self._create_template('Audit Export Template')
+        request = self._create_request(template, name='Audit Export Request')
+        role = self._create_role(template, name='Audit Export Signer')
+        signer = self._create_signer(request, role, email='audit.export@example.com')
+        audit_log = request._append_audit_event(
+            'token_issued',
+            signer=signer,
+            metadata={
+                'trigger': 'initial_send',
+                'token_issued_at_utc': '2026-03-18 12:00:00',
+                'token_expires_at_utc': '2026-03-21 12:00:00',
+                'request_status_before': 'versioned',
+                'signer_state_before': 'pending',
+            },
+            event_at=fields.Datetime.now(),
+        )
+
+        exported = audit_log._to_evidence_export_dict()
+        self.assertEqual(
+            set(exported),
+            {'event_sequence', 'event_type', 'event_at_utc', 'hash_chain', 'previous_hash', 'metadata'},
+        )
+        self.assertEqual(exported['event_type'], 'token_issued')
+        self.assertEqual(exported['metadata']['trigger'], 'initial_send')
+        self.assertTrue(exported['event_at_utc'])
+
+    def test_audit_export_helper_preserves_event_order(self):
+        template = self._create_template('Audit Export Ordered Template')
+        request = self._create_request(template, name='Audit Export Ordered Request')
+        role = self._create_role(template, name='Audit Export Ordered Signer')
+        signer = self._create_signer(request, role, email='audit.export.ordered@example.com')
+
+        request._append_audit_event('request_sent', signer=signer, event_at=fields.Datetime.now())
+        request._append_audit_event(
+            'token_issued',
+            signer=signer,
+            metadata={'trigger': 'initial_send', 'token_issued_at_utc': '2026-03-18 12:00:00'},
+            event_at=fields.Datetime.now(),
+        )
+        request._append_audit_event(
+            'token_opened',
+            signer=signer,
+            metadata={'entrypoint': 'page', 'token_issued_at_utc': '2026-03-18 12:00:00'},
+            event_at=fields.Datetime.now(),
+        )
+
+        exported_rows = request._get_evidence_export_audit_rows()
+        self.assertEqual(
+            [row['event_type'] for row in exported_rows],
+            ['request_sent', 'token_issued', 'token_opened'],
+        )
+        self.assertEqual(
+            [row['event_sequence'] for row in exported_rows],
+            sorted(row['event_sequence'] for row in exported_rows),
+        )
+
+    def test_token_event_metadata_is_token_safe(self):
+        template = self._create_template('Audit Export Safe Template')
+        request = self._create_request(template, name='Audit Export Safe Request')
+        role = self._create_role(template, name='Audit Export Safe Signer')
+        signer = self._create_signer(request, role, email='audit.export.safe@example.com')
+        audit_log = request._append_audit_event(
+            'token_rejected',
+            signer=signer,
+            metadata={
+                'entrypoint': 'page',
+                'rejection_code': 'expired_token',
+                'token_state': 'expired',
+                'token_issued_at_utc': '2026-03-18 12:00:00',
+                'token_expires_at_utc': '2026-03-21 12:00:00',
+            },
+            event_at=fields.Datetime.now(),
+        )
+
+        exported = audit_log._to_evidence_export_dict()
+        self.assertNotIn('access_token', str(exported))
+        self.assertNotIn('/my/sign/', str(exported))
+
     def test_audit_log_is_append_only_before_completion(self):
         template = self._create_template('Audit Append Only Template')
         request = self._create_request(template, name='Audit Append Only Request')

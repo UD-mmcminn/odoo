@@ -107,8 +107,8 @@ class OpenSignSignerContactCorrectionWizard(models.TransientModel):
 
                 if delivery_disposition == 'queued_now':
                     notification_service.queue_request_invitations(
-                        sign_request,
-                        signer_sudo,
+                        sign_request.with_context(open_sign_manual_resend_reuse_current_token=True),
+                        signer_sudo.with_context(open_sign_manual_resend_reuse_current_token=True),
                         trigger='manual_resend',
                         raise_on_failure=True,
                     )

@@ -97,18 +97,29 @@ Required keys:
 Allowed event types:
 
 - `request_created`
+- `template_version_published`
+- `request_versioned`
 - `request_sent`
+- `notification_queued`
+- `notification_failed`
+- `notification_skipped`
 - `signer_opened`
 - `value_saved`
 - `signer_submitted`
 - `signer_declined`
+- `idempotency_conflict`
+- `signer_contact_corrected`
+- `request_completed`
+- `request_expired`
+- `request_voided`
 - `otp_requested`
 - `otp_verified`
 - `artifact_generated`
 - `artifact_downloaded`
-- `request_completed`
-- `request_expired`
-- `request_voided`
+- `token_issued`
+- `token_opened`
+- `token_rejected`
+- `token_revoked`
 
 ## Validation Rules
 
@@ -116,6 +127,14 @@ Allowed event types:
 - `hash_chain` continuity must be verifiable from first to last event.
 - Digest fields must be 64-char lowercase hex SHA-256.
 - All datetime fields are UTC values.
+- Token-event metadata must never contain raw token values or full tokenized URLs.
+
+## Token Event Notes
+
+- `token_issued` records fresh signer-token lifecycle creation, not guaranteed mail delivery.
+- `token_opened` records the first successful token-authenticated `GET` access for a distributed token.
+- `token_rejected` records denied current-token lifecycle states only (`expired` or explicit hidden-token `revoked` denial), not generic invalid/tampered/rotated/missing token attempts.
+- `token_revoked` records explicit manager revoke of a previously distributed signer token only.
 
 ## Compatibility Guidance
 

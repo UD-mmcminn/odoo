@@ -2,12 +2,17 @@
 
 import threading
 from contextlib import contextmanager
+from datetime import timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 from unittest.mock import patch
 
 import odoo.sql_db
-from odoo import api
+from psycopg2.extensions import ISOLATION_LEVEL_READ_COMMITTED
+from odoo import api, fields
 from odoo.addons.open_sign_portal.controllers.portal_sign import OpenSignPortalController
+from odoo.addons.open_sign_portal.models.sign_request_signer_portal import OpenSignRequestSigner as PortalSignerModel
+from odoo.orm.environments import Transaction
 from odoo.tests.common import TransactionCase, tagged
 
 from odoo.addons.open_sign_portal.tests.common import OpenSignPortalControllerTestMixin
@@ -123,6 +128,107 @@ class OpenSignPortalRaceCase(TransactionCase, OpenSignPortalControllerTestMixin)
             payload=payload,
             uid=self.public_user_id,
         )
+
+    def _start_token_opened_append_thread(self, *, signer_id, token_identity, entrypoint='page', barrier=None):
+        outcome = {}
+        cr = odoo.sql_db.db_connect(self.registry.db_name).cursor()
+        cr.connection.set_isolation_level(ISOLATION_LEVEL_READ_COMMITTED)
+        cr.transaction = Transaction(self.registry)
+        env = api.Environment(cr, self.public_user_id, {})
+        controller = OpenSignPortalController()
+
+        def runner():
+            try:
+                with self._portal_request_context(env, path=f'/my/sign/{signer_id}') as mocked_request:
+                    mocked_request.type = 'http'
+                    if barrier is not None:
+                        barrier.wait(timeout=20)
+                    auth_context = SimpleNamespace(
+                        signer=env['open.sign.request.signer'].sudo().browse(signer_id),
+                        auth_mode='token',
+                        effective_access_token=False,
+                        token_state='valid',
+                        token_audit_identity=token_identity,
+                    )
+                    outcome['result'] = bool(controller._append_token_opened_from_auth_context(
+                        auth_context,
+                        entrypoint=entrypoint,
+                    ))
+                    cr.commit()
+            except BaseException as exc:  # pragma: no cover - surfaced by join helper
+                cr.rollback()
+                outcome['error'] = exc
+            finally:
+                env.clear()
+                cr.close()
+
+        thread = threading.Thread(target=runner, daemon=True)
+        thread.start()
+        return thread, outcome
+
+    def _start_token_rejected_append_thread(
+        self,
+        *,
+        signer_id,
+        token_state,
+        rejection_code,
+        token_identity,
+        entrypoint='page',
+        barrier=None,
+    ):
+        outcome = {}
+        cr = odoo.sql_db.db_connect(self.registry.db_name).cursor()
+        cr.connection.set_isolation_level(ISOLATION_LEVEL_READ_COMMITTED)
+        cr.transaction = Transaction(self.registry)
+        env = api.Environment(cr, self.public_user_id, {})
+        controller = OpenSignPortalController()
+
+        def runner():
+            try:
+                with self._portal_request_context(env, path=f'/my/sign/{signer_id}') as mocked_request:
+                    mocked_request.type = 'http'
+                    if barrier is not None:
+                        barrier.wait(timeout=20)
+                    signer_sudo = env['open.sign.request.signer'].sudo().browse(signer_id)
+                    outcome['result'] = bool(signer_sudo._append_token_rejected_if_needed(
+                        entrypoint=entrypoint,
+                        token_state=token_state,
+                        rejection_code=rejection_code,
+                        token_identity=token_identity,
+                        event_at=fields.Datetime.now(),
+                        ip=controller._extract_request_ip(),
+                        user_agent=controller._extract_user_agent(),
+                        force_isolated=False,
+                    ))
+                    cr.commit()
+            except BaseException as exc:  # pragma: no cover - surfaced by join helper
+                cr.rollback()
+                outcome['error'] = exc
+            finally:
+                env.clear()
+                cr.close()
+
+        thread = threading.Thread(target=runner, daemon=True)
+        thread.start()
+        return thread, outcome
+
+    def _expire_current_token(self, signer_id):
+        def writer(env):
+            signer = env['open.sign.request.signer'].sudo().browse(signer_id)
+            signer.write({'email_token_expires_at': fields.Datetime.now() - timedelta(minutes=1)})
+            env.cr.commit()
+
+        self._read_committed(writer)
+
+    def _revoke_current_token(self, signer_id):
+        def writer(env):
+            signer = env['open.sign.request.signer'].sudo().browse(signer_id)
+            signer._revoke_email_portal_token(now=fields.Datetime.now())
+            hidden_token = signer.access_token
+            env.cr.commit()
+            return hidden_token
+
+        return self._read_committed(writer)
 
     def _event_count(self, *, request_id, event_type, signer_id=False):
         def reader(env):
@@ -249,9 +355,159 @@ class OpenSignPortalRaceCase(TransactionCase, OpenSignPortalControllerTestMixin)
             finally:
                 release_event.set()
 
+    @contextmanager
+    def _hold_token_audit_append_once(self, *, event_type, signer_id):
+        held_event = threading.Event()
+        release_event = threading.Event()
+        original = PortalSignerModel._append_email_token_audit_event_once
+
+        def wrapped(
+            signer,
+            current_event_type,
+            *,
+            token_identity,
+            event_at,
+            metadata=None,
+            rejection_code=False,
+            ip=False,
+            user_agent=False,
+            force_isolated=False,
+        ):
+            if current_event_type == event_type and signer.id == signer_id and not held_event.is_set():
+                held_event.set()
+                if not release_event.wait(timeout=20):
+                    raise AssertionError(
+                        f'Timed out waiting to release held token audit append {event_type} for signer {signer_id}.'
+                    )
+            return original(
+                signer,
+                current_event_type,
+                token_identity=token_identity,
+                event_at=event_at,
+                metadata=metadata,
+                rejection_code=rejection_code,
+                ip=ip,
+                user_agent=user_agent,
+                force_isolated=force_isolated,
+            )
+
+        with patch.object(PortalSignerModel, '_append_email_token_audit_event_once', new=wrapped):
+            try:
+                yield held_event, release_event
+            finally:
+                release_event.set()
 
 @tagged('post_install', '-at_install', 'open_sign_portal')
 class TestOpenSignPortalRaceDeterministic(OpenSignPortalRaceCase):
+
+    def test_concurrent_token_opened_appends_one_row_for_same_token(self):
+        bundle = self._create_committed_portal_bundle(name='Portal Race Token Opened Dedupe')
+        token_identity = self._read_committed(
+            lambda env: env['open.sign.request.signer'].sudo().browse(bundle['signer_id'])._get_current_email_token_audit_identity()
+        )
+
+        with self._hold_token_audit_append_once(event_type='token_opened', signer_id=bundle['signer_id']) as (held, release):
+            first_thread, first_outcome = self._start_token_opened_append_thread(
+                signer_id=bundle['signer_id'],
+                token_identity=token_identity,
+            )
+            self._wait_for_held_event(
+                held,
+                (first_thread, first_outcome),
+                message='First token_opened worker never reached the token audit append path.',
+            )
+            second_thread, second_outcome = self._start_token_opened_append_thread(
+                signer_id=bundle['signer_id'],
+                token_identity=token_identity,
+            )
+            release.set()
+            first_result = self._join_controller_thread(first_thread, first_outcome)
+            second_result = self._join_controller_thread(second_thread, second_outcome)
+
+        self.assertEqual(sum(bool(result) for result in (first_result, second_result)), 1)
+        self.assertEqual(self._event_count(
+            request_id=bundle['request_id'],
+            signer_id=bundle['signer_id'],
+            event_type='token_opened',
+        ), 1)
+
+    def test_concurrent_expired_token_rejected_appends_one_row_for_same_token(self):
+        bundle = self._create_committed_portal_bundle(name='Portal Race Token Rejected Expired Dedupe')
+        self._expire_current_token(bundle['signer_id'])
+        token_identity = self._read_committed(
+            lambda env: env['open.sign.request.signer'].sudo().browse(bundle['signer_id'])._get_current_email_token_audit_identity()
+        )
+
+        with self._hold_token_audit_append_once(event_type='token_rejected', signer_id=bundle['signer_id']) as (held, release):
+            first_thread, first_outcome = self._start_token_rejected_append_thread(
+                signer_id=bundle['signer_id'],
+                token_state='expired',
+                rejection_code='expired_token',
+                token_identity=token_identity,
+            )
+            self._wait_for_held_event(
+                held,
+                (first_thread, first_outcome),
+                message='First expired token_rejected worker never reached the token audit append path.',
+            )
+            second_thread, second_outcome = self._start_token_rejected_append_thread(
+                signer_id=bundle['signer_id'],
+                token_state='expired',
+                rejection_code='expired_token',
+                token_identity=token_identity,
+            )
+            release.set()
+            first_result = self._join_controller_thread(first_thread, first_outcome)
+            second_result = self._join_controller_thread(second_thread, second_outcome)
+
+        self.assertEqual(sum(bool(result) for result in (first_result, second_result)), 1)
+        rejected_logs = self._read_committed(lambda env: env['open.sign.audit.log'].sudo().search_read([
+            ('request_id', '=', bundle['request_id']),
+            ('signer_id', '=', bundle['signer_id']),
+            ('event_type', '=', 'token_rejected'),
+        ], ['metadata_json'], order='event_sequence asc, id asc'))
+        self.assertEqual(len(rejected_logs), 1)
+        self.assertEqual(rejected_logs[0]['metadata_json']['rejection_code'], 'expired_token')
+        self.assertEqual(rejected_logs[0]['metadata_json']['token_state'], 'expired')
+
+    def test_concurrent_revoked_token_rejected_appends_one_row_for_same_token(self):
+        bundle = self._create_committed_portal_bundle(name='Portal Race Token Rejected Revoked Dedupe')
+        self._revoke_current_token(bundle['signer_id'])
+        token_identity = self._read_committed(
+            lambda env: env['open.sign.request.signer'].sudo().browse(bundle['signer_id'])._get_current_email_token_audit_identity()
+        )
+
+        with self._hold_token_audit_append_once(event_type='token_rejected', signer_id=bundle['signer_id']) as (held, release):
+            first_thread, first_outcome = self._start_token_rejected_append_thread(
+                signer_id=bundle['signer_id'],
+                token_state='revoked',
+                rejection_code='invalid_token',
+                token_identity=token_identity,
+            )
+            self._wait_for_held_event(
+                held,
+                (first_thread, first_outcome),
+                message='First revoked token_rejected worker never reached the token audit append path.',
+            )
+            second_thread, second_outcome = self._start_token_rejected_append_thread(
+                signer_id=bundle['signer_id'],
+                token_state='revoked',
+                rejection_code='invalid_token',
+                token_identity=token_identity,
+            )
+            release.set()
+            first_result = self._join_controller_thread(first_thread, first_outcome)
+            second_result = self._join_controller_thread(second_thread, second_outcome)
+
+        self.assertEqual(sum(bool(result) for result in (first_result, second_result)), 1)
+        rejected_logs = self._read_committed(lambda env: env['open.sign.audit.log'].sudo().search_read([
+            ('request_id', '=', bundle['request_id']),
+            ('signer_id', '=', bundle['signer_id']),
+            ('event_type', '=', 'token_rejected'),
+        ], ['metadata_json'], order='event_sequence asc, id asc'))
+        self.assertEqual(len(rejected_logs), 1)
+        self.assertEqual(rejected_logs[0]['metadata_json']['rejection_code'], 'invalid_token')
+        self.assertEqual(rejected_logs[0]['metadata_json']['token_state'], 'revoked')
 
     def test_submit_same_key_overlap_returns_request_locked_then_replays_success(self):
         bundle = self._create_committed_ordered_bundle(name='Portal Race Submit Same Key', ordered_signing=True)

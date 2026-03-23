@@ -66,11 +66,20 @@ class OpenSignPortalController(CustomerPortal):
         return bool(access_token and signer_sudo.access_token and consteq(signer_sudo.access_token, access_token))
 
     @staticmethod
-    def _build_auth_context(signer_sudo, *, auth_mode, effective_access_token=False):
+    def _build_auth_context(
+        signer_sudo,
+        *,
+        auth_mode,
+        effective_access_token=False,
+        token_state=False,
+        token_audit_identity=False,
+    ):
         return SimpleNamespace(
             signer=signer_sudo,
             auth_mode=auth_mode,
             effective_access_token=effective_access_token or False,
+            token_state=token_state or False,
+            token_audit_identity=token_audit_identity or False,
         )
 
     def _get_client_ip(self):
@@ -106,7 +115,54 @@ class OpenSignPortalController(CustomerPortal):
             _logger.exception("Failed to clear invalid portal token attempts for signer %s", signer_sudo.id)
             return 0
 
-    def _check_signer_external_token_access(self, signer_sudo, access_token, *, token_state=False):
+    def _capture_token_audit_identity(self, signer_sudo, access_token, *, token_state):
+        if token_state not in {'valid', 'expired', 'revoked'}:
+            return False
+        if not self._token_matches_signer(signer_sudo, access_token):
+            return False
+        return signer_sudo._get_current_email_token_audit_identity()
+
+    def _append_token_opened_from_auth_context(self, auth_context, *, entrypoint):
+        if auth_context.auth_mode != 'token' or not auth_context.token_audit_identity:
+            return False
+        return auth_context.signer._append_token_opened_if_needed(
+            entrypoint=entrypoint,
+            token_identity=auth_context.token_audit_identity,
+            event_at=fields.Datetime.now(),
+            ip=self._extract_request_ip(),
+            user_agent=self._extract_user_agent(),
+            force_isolated=(entrypoint == 'document'),
+        )
+
+    def _append_token_rejected_from_snapshot(
+        self,
+        signer_sudo,
+        *,
+        entrypoint,
+        token_state,
+        rejection_code,
+        token_audit_identity,
+    ):
+        if not token_audit_identity:
+            return False
+        return signer_sudo._append_token_rejected_if_needed(
+            entrypoint=entrypoint,
+            token_state=token_state,
+            rejection_code=rejection_code,
+            token_identity=token_audit_identity,
+            event_at=fields.Datetime.now(),
+            ip=self._extract_request_ip(),
+            user_agent=self._extract_user_agent(),
+        )
+
+    def _check_signer_external_token_access(
+        self,
+        signer_sudo,
+        access_token,
+        *,
+        token_state=False,
+        token_audit_identity=False,
+    ):
         token_state = token_state or signer_sudo._classify_current_email_token_access(access_token)
         client_ip = self._get_client_ip()
         if token_state == 'valid':
@@ -120,6 +176,8 @@ class OpenSignPortalController(CustomerPortal):
                 signer_sudo,
                 auth_mode='token',
                 effective_access_token=access_token,
+                token_state=token_state,
+                token_audit_identity=token_audit_identity,
             )
         if token_state == 'expired':
             raise AccessError(
@@ -129,13 +187,19 @@ class OpenSignPortalController(CustomerPortal):
             raise AccessError(_("Signer session is not allowed for this user."))
         raise AccessError(_("Signer session is not allowed for this user."))
 
-    def _check_signer_internal_partner_fallback_access(self, signer_sudo):
+    def _check_signer_internal_partner_fallback_access(self, signer_sudo, *, token_state=False):
         user = self._require_internal_user()
         if not self._is_partner_linked_signer(signer_sudo) or signer_sudo.partner_id != user.partner_id:
             raise AccessError(_("Signer session is not allowed for this user."))
         signer = request.env['open.sign.request.signer'].browse(signer_sudo.id)
         signer.with_user(user).check_access('read')
-        return self._build_auth_context(signer_sudo, auth_mode='internal_fallback', effective_access_token=False)
+        return self._build_auth_context(
+            signer_sudo,
+            auth_mode='internal_fallback',
+            effective_access_token=False,
+            token_state=token_state,
+            token_audit_identity=False,
+        )
 
     @staticmethod
     def _is_request_readonly(sign_request):
@@ -176,19 +240,44 @@ class OpenSignPortalController(CustomerPortal):
         self._assert_preview_access_allowed(signer_sudo.request_id)
         return self._build_auth_context(signer_sudo, auth_mode='preview', effective_access_token=False)
 
-    def _check_signer_identity_access(self, signer_id, access_token=None):
+    def _check_signer_identity_access(self, signer_id, access_token=None, *, entrypoint=False):
         signer_sudo = self._get_signer_sudo(signer_id)
         token_state = signer_sudo._classify_current_email_token_access(access_token)
+        token_audit_identity = self._capture_token_audit_identity(
+            signer_sudo,
+            access_token,
+            token_state=token_state,
+        )
         try:
             return self._check_signer_external_token_access(
                 signer_sudo,
                 access_token,
                 token_state=token_state,
+                token_audit_identity=token_audit_identity,
             )
         except AccessError as exc:
             try:
-                return self._check_signer_internal_partner_fallback_access(signer_sudo)
+                return self._check_signer_internal_partner_fallback_access(
+                    signer_sudo,
+                    token_state=token_state,
+                )
             except AccessError:
+                if entrypoint and token_state in {'expired', 'revoked'}:
+                    rejection_code = 'expired_token' if token_state == 'expired' else 'invalid_token'
+                    try:
+                        self._append_token_rejected_from_snapshot(
+                            signer_sudo,
+                            entrypoint=entrypoint,
+                            token_state=token_state,
+                            rejection_code=rejection_code,
+                            token_audit_identity=token_audit_identity,
+                        )
+                    except Exception:  # pragma: no cover - preserve denial contract if audit append fails
+                        _logger.exception(
+                            "Failed to append token rejection audit for signer %s on %s",
+                            signer_sudo.id,
+                            entrypoint,
+                        )
                 if token_state in {'invalid', 'revoked'}:
                     client_ip = self._get_client_ip()
                     if client_ip:
@@ -199,13 +288,21 @@ class OpenSignPortalController(CustomerPortal):
                         )
                 raise exc
 
-    def _check_signer_read_access(self, signer_id, access_token=None):
-        auth_context = self._check_signer_identity_access(signer_id, access_token=access_token)
+    def _check_signer_read_access(self, signer_id, access_token=None, *, entrypoint=False):
+        auth_context = self._check_signer_identity_access(
+            signer_id,
+            access_token=access_token,
+            entrypoint=entrypoint,
+        )
         self._assert_request_read_access_allowed(auth_context.signer.request_id)
         return auth_context
 
-    def _check_signer_action_access(self, signer_id, access_token=None):
-        auth_context = self._check_signer_identity_access(signer_id, access_token=access_token)
+    def _check_signer_action_access(self, signer_id, access_token=None, *, entrypoint=False):
+        auth_context = self._check_signer_identity_access(
+            signer_id,
+            access_token=access_token,
+            entrypoint=entrypoint,
+        )
         self._assert_request_action_access_allowed(auth_context.signer.request_id)
         return auth_context
 
@@ -273,13 +370,25 @@ class OpenSignPortalController(CustomerPortal):
 
     def _check_signer_document_access(self, signer_id, access_token=None, *, allow_preview=False):
         if access_token:
-            return self._check_signer_read_access(signer_id, access_token=access_token)
+            return self._check_signer_read_access(
+                signer_id,
+                access_token=access_token,
+                entrypoint='document',
+            )
         try:
-            return self._check_signer_read_access(signer_id, access_token=access_token)
+            return self._check_signer_read_access(
+                signer_id,
+                access_token=access_token,
+                entrypoint='document',
+            )
         except (AccessError, ValidationError):
             if not allow_preview:
                 raise
             return self._check_signer_preview_access(signer_id)
+
+    @staticmethod
+    def _get_signer_document_attachment(signer_sudo):
+        return signer_sudo.request_id.template_version_id.source_attachment_id or signer_sudo.request_id.template_id.source_attachment_id
 
     @staticmethod
     def _build_error_response(error_code, message):
@@ -1157,8 +1266,20 @@ class OpenSignPortalController(CustomerPortal):
         access_token = self._resolve_access_token(access_token)
         auth_context = None
         try:
-            auth_context = self._check_signer_read_access(signer_id, access_token=access_token)
+            auth_context = self._check_signer_read_access(
+                signer_id,
+                access_token=access_token,
+                entrypoint='page',
+            )
             signer_sudo = auth_context.signer
+            if auth_context.auth_mode == 'token':
+                try:
+                    self._append_token_opened_from_auth_context(auth_context, entrypoint='page')
+                except Exception:  # pragma: no cover - preserve page contract if audit append fails
+                    _logger.exception(
+                        "Failed to append token opened audit for signer %s on page",
+                        signer_sudo.id,
+                    )
             values = self._build_portal_page_values(auth_context, **kwargs)
             if (
                 signer_sudo.state in SIGNER_MUTABLE_STATES
@@ -1201,16 +1322,28 @@ class OpenSignPortalController(CustomerPortal):
         except (AccessError, MissingError, ValidationError):
             return request.redirect('/my')
         signer_sudo = auth_context.signer
-        attachment = signer_sudo.request_id.template_version_id.source_attachment_id or signer_sudo.request_id.template_id.source_attachment_id
+        attachment = self._get_signer_document_attachment(signer_sudo)
         if not attachment:
             return request.redirect('/my')
+        if auth_context.auth_mode == 'token':
+            try:
+                self._append_token_opened_from_auth_context(auth_context, entrypoint='document')
+            except Exception:  # pragma: no cover - preserve document contract if audit append fails
+                _logger.exception(
+                    "Failed to append token opened audit for signer %s on document",
+                    signer_sudo.id,
+                )
         return request.env['ir.binary']._get_stream_from(attachment).get_response(as_attachment=False)
 
     @http.route(['/my/sign/<int:signer_id>/save'], type='jsonrpc', auth='public')
     def portal_sign_save(self, signer_id, access_token=None, **payload):
         access_token = self._resolve_access_token(access_token, payload=payload)
         try:
-            auth_context = self._check_signer_identity_access(signer_id, access_token=access_token)
+            auth_context = self._check_signer_identity_access(
+                signer_id,
+                access_token=access_token,
+                entrypoint='save',
+            )
             signer_sudo = auth_context.signer
             request_revision, parsed_values, _idempotency_key = self._validate_mutation_payload(payload)
             sign_request = signer_sudo.request_id.sudo()
@@ -1258,7 +1391,11 @@ class OpenSignPortalController(CustomerPortal):
     def portal_sign_submit(self, signer_id, access_token=None, **payload):
         access_token = self._resolve_access_token(access_token, payload=payload)
         try:
-            auth_context = self._check_signer_identity_access(signer_id, access_token=access_token)
+            auth_context = self._check_signer_identity_access(
+                signer_id,
+                access_token=access_token,
+                entrypoint='submit',
+            )
             signer_sudo = auth_context.signer
             request_revision, parsed_values, idempotency_key = self._validate_mutation_payload(payload)
             sign_request = signer_sudo.request_id.sudo()
@@ -1366,7 +1503,11 @@ class OpenSignPortalController(CustomerPortal):
     def portal_sign_decline(self, signer_id, access_token=None, **payload):
         access_token = self._resolve_access_token(access_token, payload=payload)
         try:
-            auth_context = self._check_signer_identity_access(signer_id, access_token=access_token)
+            auth_context = self._check_signer_identity_access(
+                signer_id,
+                access_token=access_token,
+                entrypoint='decline',
+            )
             signer_sudo = auth_context.signer
             request_revision, normalized_reason, idempotency_key = self._validate_decline_payload(payload)
             sign_request = signer_sudo.request_id.sudo()
@@ -1442,7 +1583,11 @@ class OpenSignPortalController(CustomerPortal):
         access_token = self._resolve_access_token(access_token, payload=payload)
         signer_sudo = False
         try:
-            auth_context = self._check_signer_identity_access(signer_id, access_token=access_token)
+            auth_context = self._check_signer_identity_access(
+                signer_id,
+                access_token=access_token,
+                entrypoint='otp_request',
+            )
             signer_sudo = auth_context.signer
             request_revision = self._validate_otp_request_payload(payload)
             sign_request = signer_sudo.request_id.sudo()
@@ -1505,7 +1650,11 @@ class OpenSignPortalController(CustomerPortal):
     def portal_sign_otp_verify(self, signer_id, access_token=None, **payload):
         access_token = self._resolve_access_token(access_token, payload=payload)
         try:
-            auth_context = self._check_signer_identity_access(signer_id, access_token=access_token)
+            auth_context = self._check_signer_identity_access(
+                signer_id,
+                access_token=access_token,
+                entrypoint='otp_verify',
+            )
             signer_sudo = auth_context.signer
             request_revision, normalized_code = self._validate_otp_verify_payload(payload)
             sign_request = signer_sudo.request_id.sudo()

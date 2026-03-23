@@ -31,6 +31,10 @@ AUDIT_EVENT_TYPE_SELECTION = [
     ('otp_verified', 'OTP Verified'),
     ('artifact_generated', 'Artifact Generated'),
     ('artifact_downloaded', 'Artifact Downloaded'),
+    ('token_issued', 'Token Issued'),
+    ('token_opened', 'Token Opened'),
+    ('token_rejected', 'Token Rejected'),
+    ('token_revoked', 'Token Revoked'),
 ]
 
 
@@ -247,3 +251,14 @@ class OpenSignAuditLog(models.Model):
         if self.filtered(lambda log: log.request_id.status in TERMINAL_REQUEST_STATUSES):
             raise ValidationError(_("Audit log records are immutable once the request is completed or voided."))
         raise ValidationError(_("Audit log records are append-only and cannot be deleted directly."))
+
+    def _to_evidence_export_dict(self):
+        self.ensure_one()
+        return {
+            'event_sequence': self.event_sequence,
+            'event_type': self.event_type,
+            'event_at_utc': fields.Datetime.to_string(fields.Datetime.to_datetime(self.event_at)),
+            'hash_chain': self.hash_chain,
+            'previous_hash': self.previous_hash or False,
+            'metadata': self.metadata_json or {},
+        }
