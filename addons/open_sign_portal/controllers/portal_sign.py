@@ -593,10 +593,13 @@ class OpenSignPortalController(CustomerPortal):
         return request_revision, normalized_code
 
     def _lock_request_for_update(self, sign_request):
-        request.env.cr.execute(
-            "SELECT id FROM open_sign_request WHERE id = %s FOR UPDATE NOWAIT",
-            [sign_request.id],
-        )
+        # Keep lock-miss handling isolated so JSON-RPC callers can return
+        # request_locked without leaving the outer HTTP transaction aborted.
+        with request.env.cr.savepoint():
+            request.env.cr.execute(
+                "SELECT id FROM open_sign_request WHERE id = %s FOR UPDATE NOWAIT",
+                [sign_request.id],
+            )
 
     def _assert_request_revision(self, sign_request, request_revision):
         if sign_request.lock_version != request_revision:

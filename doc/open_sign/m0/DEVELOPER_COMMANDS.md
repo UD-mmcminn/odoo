@@ -29,6 +29,20 @@ Date: 2026-02-26
 ./odoo-bin -d <db_name> --test-enable --test-tags /open_sign_web --stop-after-init
 ```
 
+## Live Overlap Verification
+
+```bash
+# Real public HTTP overlap proof for submit + decline through the dispatcher stack
+python scripts/verify_portal_live_overlap.py \
+  --db <db_name> \
+  --config .devcontainer/odoo.conf \
+  --db-host host.docker.internal \
+  --db-port 5432 \
+  --db-user odoo \
+  --db-password password \
+  --http-port 8088
+```
+
 ## Lint And Conformance
 
 ```bash
@@ -66,5 +80,5 @@ PY
 ## Working Rules
 
 - Always run module upgrade before functional tests when models/data XML changed.
-- For portal endpoint changes, run `test_portal_security`; add the future idempotency suite once `T316` / `T317` land.
+- For portal endpoint changes, run `test_portal_security`; for literal overlap verification beyond `HttpCase` / `TestCursor`, run `scripts/verify_portal_live_overlap.py`.
 - For schema changes, update migration hooks and rerun focused upgrade tests.

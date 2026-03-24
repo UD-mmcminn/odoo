@@ -591,23 +591,23 @@ Dependencies: Phase 1 ready; portal token model available
 Target Files: addons/open_sign_portal/controllers/*, addons/open_sign_portal/models/*, addons/open_sign_portal/security/*, addons/open_sign_portal/tests/*
 Implementation Notes: Completed in `T317` with a dedicated `test_portal_race.py` suite plus shared overlap helpers in `open_sign_portal/tests/common.py`. Because `HttpCase` runs under `TestCursor`, which serializes concurrent requests, the shipped coverage uses deterministic controller-level overlap orchestration with isolated DB cursors and mocked portal request contexts plus a minimal true-concurrency smoke layer at the controller/DB-lock level, with no public contract changes.
 Acceptance Criteria: Completed; same-key overlap, same-key different-payload overlap, different-key overlap, submit-vs-decline overlap, and ordered-signing cross-signer overlap are all covered with side-effect singularity assertions and related tests pass.
-Test Plan: Completed with new race coverage in `test_portal_race.py`, reused HTTP/controller helpers in `common.py`, full `/open_sign_portal` and `/open_sign` validation, and two additional fresh-database race-file runs to check for flake. Literal overlapping public HTTP dispatcher proof was not achievable under the current `HttpCase`/`TestCursor` model and is deferred separately to `T317a` if still desired.
+Test Plan: Completed with new race coverage in `test_portal_race.py`, reused HTTP/controller helpers in `common.py`, full `/open_sign_portal` and `/open_sign` validation, and two additional fresh-database race-file runs to check for flake. Literal overlapping public HTTP dispatcher proof was not achievable under the current `HttpCase`/`TestCursor` model during `T317` itself and was later closed separately in `T317a`.
 Security Notes: Coverage confirms request-row locking plus durable idempotency prevent contradictory terminal evidence, duplicate submit/decline side effects, and same-key replay drift under overlap.
 Rollback/Migration Impact: Document schema/data migration effects if model or XML data changes.
 
 ## T317a
 
 Task ID: T317a
-Goal: Add deferred live-HTTP overlap verification for portal signer flows using an out-of-band harness that bypasses `HttpCase`/`TestCursor` request serialization.
+Goal: Add live-HTTP overlap verification for portal signer flows using an out-of-band harness that bypasses `HttpCase`/`TestCursor` request serialization.
 Phase: Phase 3
 Requirements: `R-021`, `R-024`
 Dependencies: `T316`, `T317` complete; portal token model available
-Target Files: addons/open_sign_portal/tests/*, supporting local test harness files if needed
-Implementation Notes: Deferred and non-blocking for `T310`. Build a verification-only harness outside the standard `HttpCase` request path so real overlapping public portal HTTP requests can be exercised end-to-end with isolated clients and without `TestCursor` request serialization.
-Acceptance Criteria: Real overlapping public HTTP submit/decline requests are proven to preserve the same lock/idempotency/side-effect guarantees already covered by controller-level T317 tests, without changing the public contract.
-Test Plan: Use a separate process/server or other non-`TestCursor` harness to hit the real public portal routes with isolated HTTP clients and confirm the T317 controller/DB-lock outcomes hold through the full dispatcher stack.
-Security Notes: Verification-only follow-up; intended to widen confidence in overlap behavior, not to change current portal security semantics.
-Rollback/Migration Impact: None expected unless the deferred harness introduces dedicated support files.
+Target Files: `scripts/verify_portal_live_overlap.py`, `scripts/run_portal_live_overlap_server.py`, `addons/open_sign_portal/controllers/portal_sign.py`, `doc/open_sign/m0/DEVELOPER_COMMANDS.md`
+Implementation Notes: Completed as a verification-only harness outside the standard suite. `scripts/verify_portal_live_overlap.py` upgrades the target DB, prepares committed portal fixtures via `open_sign_portal.tests.common`, starts a real Odoo HTTP server subprocess through `scripts/run_portal_live_overlap_server.py`, deterministically holds `signer_submitted` / `signer_declined` audit emission through file-based IPC, drives isolated overlapping public `submit` and `decline` requests, and verifies DB-side side-effect singularity plus replay behavior. Live verification exposed and closed a real dispatcher bug: submit/decline `FOR UPDATE NOWAIT` misses were leaving the outer HTTP transaction aborted and breaking the intended `request_locked` envelope during session save; `_lock_request_for_update()` now isolates the lock probe in a savepoint, with no public contract changes.
+Acceptance Criteria: Completed; literal overlapping public HTTP `submit` / `decline` requests now prove one `ok`, one `request_locked`, exact replay after commit, one business audit row, one completed idempotency row, and no contradictory final request/signer state.
+Test Plan: Completed by running `scripts/review_gate_open_sign.sh --skip-web` and then executing `python scripts/verify_portal_live_overlap.py --db test_open_sign_t317a --config /tmp/odoo_t317a.conf --db-host host.docker.internal --db-port 5432 --db-user odoo --db-password password --http-port 8088`, which passed both `submit` and `decline` cases against the real dispatcher stack.
+Security Notes: Verification-only closeout; widens confidence in overlap behavior without changing current portal security semantics.
+Rollback/Migration Impact: None beyond removing the developer-run harness files if ever no longer needed.
 
 ## T310
 

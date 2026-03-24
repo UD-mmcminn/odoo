@@ -1,7 +1,7 @@
 # Open Sign Continuation Notes
 
-Last updated: 2026-03-13
-Scope checkpoint: T38 portal endpoint contract hardening closed on Odoo 19
+Last updated: 2026-03-23
+Scope checkpoint: T317a live-HTTP overlap verification closed on Odoo 19
 
 ## Why This Exists
 
@@ -641,14 +641,14 @@ Use this before marking any task complete (especially model/state/security work)
    - `./odoo-bin -d <db> -i open_sign_portal --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign_portal --stop-after-init`
    - `scripts/review_gate_open_sign.sh --skip-web -d <db>`
-2. If tests pass, continue Phase 4 work on top of the now-closed `T32`/`T33`/`T34`/`T35`/`T36`/`T37`/`T38`/`T39`/`T316`/`T317`/`T310`/`T311`/`T312`/`T313`/`T314`/`T315` portal baseline; `T317a` remains an optional deferred verification follow-up if literal live-HTTP overlap proof is still desired later, but the next implementation task is `T40`.
+2. If tests pass, continue Phase 4 work on top of the now-closed `T32`/`T33`/`T34`/`T35`/`T36`/`T37`/`T38`/`T39`/`T316`/`T317`/`T317a`/`T310`/`T311`/`T312`/`T313`/`T314`/`T315` portal baseline; the next implementation task is `T40`.
 3. Re-run recurring hardening re-audit (`T610`) after each major phase slice and after every 3 completed implementation tasks.
 
 ## Next Tasks (Planned Order)
 
 1. `T40` Implement value-to-PDF rendering/flattening.
-2. `T317a` Optional deferred verification follow-up for literal live-HTTP overlap proof outside the `HttpCase`/`TestCursor` model.
-3. `T41` Generate final signed attachment and lock request edits.
+2. `T41` Generate final signed attachment and lock request edits.
+3. `T42` Build completion certificate/evidence summary page.
 
 ## Notes For Next Chat
 
@@ -703,7 +703,6 @@ Use this before marking any task complete (especially model/state/security work)
   - `addons/open_sign_portal/tests/test_portal_acl.py` now locks denial of challenge-model ORM access for open-sign user/manager/auditor roles, company-scoped system access, system-only exposure of OTP hash fields, user/manager-only exposure of `portal_sign_url`, `otp_required`, and `otp_verified_at`, system-only `access_token`, and the absence of backend action/menu surface for OTP challenges
   - portal OTP request/verify runtime behavior remains controller/service-mediated under `sudo`; T39 does not add any operator-facing OTP challenge UI
 - Remaining deferred items remain deferred exactly as planned:
-  - `T317a`: optional live-HTTP overlap verification outside the `HttpCase`/`TestCursor` model
   - `T40`/`T41`: final completion/final PDF generation
 - Current notification semantics still stop at truthful queue creation through Odoo mail; remote SMTP acceptance/open proof remains out of scope.
 - If the next session starts at recurring hardening re-audit (`T610` / continuation `T118`), preserve `T17`/`T18`/`T19` invariants:
@@ -766,7 +765,10 @@ Use this before marking any task complete (especially model/state/security work)
   - ordered-signing cross-signer overlap coverage proving request-wide locking does not strand the next signer once the winning transaction commits
   - because `HttpCase` runs under `TestCursor`, which serializes concurrent requests, the shipped suite proves overlap at the controller/DB-lock level using isolated cursors plus mocked portal request contexts rather than literal dispatcher-level overlapping HTTP requests
   - that is still sufficient for the current legal/evidence boundary because duplicate or contradictory business evidence is prevented at the controller, transaction, lock, idempotency, and audit side-effect layers
-  - `T317a` is reserved as an optional non-blocking follow-up if we later want literal live-HTTP overlap proof through an out-of-band harness
+  - `T317a` is now closed with an out-of-band harness proving literal overlapping public `submit` / `decline` requests through the real dispatcher stack
+  - the harness lives in `scripts/verify_portal_live_overlap.py` plus `scripts/run_portal_live_overlap_server.py`
+  - it confirms one `ok`, one `request_locked`, exact replay after commit, one business audit row, and one completed idempotency row for both `submit` and `decline`
+  - live verification exposed and closed a real HTTP-transaction bug: submit/decline request-row lock misses were aborting the outer transaction and breaking the intended `request_locked` envelope during session save; `_lock_request_for_update()` now isolates the lock probe in a savepoint
 - `T310` is now closed as a documentation/strategy lock for the deferred external email-signer track. The locked policy is:
   - reuse signer `portal.mixin` `access_token` as the only canonical magic-link secret; no separate signed-envelope or parallel token model is planned
   - keep the existing signer route family (`/my/sign/<id>?access_token=...` plus related JSONRPC routes) as the only public entry path
@@ -819,4 +821,4 @@ Use this before marking any task complete (especially model/state/security work)
   - denial-path coverage now includes a compact matrix for tampered, expired current, rotated old, and hidden revoked current links, preserving redirect-only GET denial, deterministic JSONRPC `invalid_token` / `expired_token`, and no token or URL leakage
   - hidden revoked current-token denial is now explicitly covered on `submit`, `decline`, and `otp/verify`
   - validation passed for targeted `test_portal_email_only_flow.py`, `test_portal_security.py`, `test_portal_email_token.py`, `test_portal_otp.py`, full `/open_sign_portal` (`360 tests, 0 failed`), full `/open_sign` (`111 tests, 0 failed`), and `scripts/review_gate_open_sign.sh --skip-web` (passed)
-  - no public routes, payloads, or error envelopes changed; `T317a` remains optional deferred verification rather than part of `T315`
+  - no public routes, payloads, or error envelopes changed; `T317a` later closed as a separate verification-only follow-up
