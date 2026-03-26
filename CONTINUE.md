@@ -1,7 +1,7 @@
 # Open Sign Continuation Notes
 
-Last updated: 2026-03-23
-Scope checkpoint: T317a live-HTTP overlap verification closed on Odoo 19
+Last updated: 2026-03-26
+Scope checkpoint: M3 WYSIWYG signer UX follow-up is in progress; `T318` is complete and `T319`-`T322` remain before `T40`
 
 ## Why This Exists
 
@@ -31,7 +31,7 @@ Scope checkpoint: T317a live-HTTP overlap verification closed on Odoo 19
 
 - M1: Build a trustworthy backend core (models, constraints, state logic, ACL basics).
 - M2: Add internal editor UX on top of stable backend semantics.
-- M3: Expose signer experience via portal with strict token/abuse controls.
+- M3: Expose signer experience via portal with strict token/abuse controls and an on-document WYSIWYG signer surface.
 - M4: Finalize document evidence pipeline (flattened artifacts + audit package).
 - M5: Add certificate-based signing as optional extension, not core dependency.
 - M6: Hardening, operations, and release confidence.
@@ -641,14 +641,16 @@ Use this before marking any task complete (especially model/state/security work)
    - `./odoo-bin -d <db> -i open_sign_portal --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign_portal --stop-after-init`
    - `scripts/review_gate_open_sign.sh --skip-web -d <db>`
-2. If tests pass, continue Phase 4 work on top of the now-closed `T32`/`T33`/`T34`/`T35`/`T36`/`T37`/`T38`/`T39`/`T316`/`T317`/`T317a`/`T310`/`T311`/`T312`/`T313`/`T314`/`T315` portal baseline; the next implementation task is `T40`.
+2. If tests pass, continue the reopened Phase 3 signer-UX follow-up on top of the now-closed `T32`/`T33`/`T34`/`T35`/`T36`/`T37`/`T38`/`T39`/`T316`/`T317`/`T317a`/`T310`/`T311`/`T312`/`T313`/`T314`/`T315`/`T318` portal security baseline; the next implementation task is `T319`, not `T40`.
 3. Re-run recurring hardening re-audit (`T610`) after each major phase slice and after every 3 completed implementation tasks.
 
 ## Next Tasks (Planned Order)
 
-1. `T40` Implement value-to-PDF rendering/flattening.
-2. `T41` Generate final signed attachment and lock request edits.
-3. `T42` Build completion certificate/evidence summary page.
+1. `T319` Add guided field navigation, `Next field`, and `Tab` / `Shift+Tab` keyboard flow.
+2. `T320` Implement portal signature/stamp capture on the overlay surface.
+3. `T321` Integrate the WYSIWYG surface with existing portal contracts and readonly/waiting/preview parity.
+4. `T322` Add frontend/controller/E2E coverage and reclose `M3`.
+5. `T40` Implement value-to-PDF rendering/flattening.
 
 ## Notes For Next Chat
 
@@ -662,8 +664,14 @@ Use this before marking any task complete (especially model/state/security work)
   - request-version snapshot-backed portal rendering/validation, including legacy snapshot fallback and fail-closed contract errors
   - unsupported portal fields excluded from serialization so existing stored values are preserved
   - active-request field role/delete guards to prevent live template drift from breaking in-flight contracts
-  - tokenized document access aligned with read-only review states and still serving the source PDF until `T40`/`T41`
+  - tokenized document access aligned with read-only review states, while `/document` still serves the raw source PDF and the new inline signer surface now lives on `/my/sign/<id>` pending guided-navigation/capture follow-ups in `T319`-`T321` and later artifact work in `T40`/`T41`
   - explicit regression coverage proving terminal preview remains non-mutating and scaffold action endpoints stay immutable on terminal requests
+- Current signer UX gap reopened under `M3`:
+  - `T318` is complete: `/my/sign/<id>` now renders a split-view PDF-first signer surface with continuous stacked pages, positioned signer-field overlays, sidebar summary/actions, and snapshot-backed geometry/value payloads
+  - the inline viewer now uses `viewer=1` plus a signed `viewer_token`, so PDF rasterization does not create document-level `token_opened` audit noise but bare or invalid `viewer=1` requests still fall back to normal raw `/document` auditing
+  - signature/stamp fields now appear in-place as disabled placeholders, but actual portal capture is still deferred to `T320`
+  - portal completion state now follows backend-authored `has_value`, so explicit stored `false` checkbox/strikethrough values remain present without rendering checked, and signature/stamp placeholders no longer expose raw stored payload dicts before `T320`
+  - `T319`-`T322` must still deliver guided navigation, actual signature/stamp capture, parity/coverage closeout, and `M3` reclose before `T40`
 - `T33` is now closed. Additional portal ordering guarantees now include:
   - sequential out-of-turn signers render as read-only waiting sessions instead of failing only at submit time
   - sequential out-of-turn `save` and `submit` both return `signing_order_blocked`
@@ -822,3 +830,10 @@ Use this before marking any task complete (especially model/state/security work)
   - hidden revoked current-token denial is now explicitly covered on `submit`, `decline`, and `otp/verify`
   - validation passed for targeted `test_portal_email_only_flow.py`, `test_portal_security.py`, `test_portal_email_token.py`, `test_portal_otp.py`, full `/open_sign_portal` (`360 tests, 0 failed`), full `/open_sign` (`111 tests, 0 failed`), and `scripts/review_gate_open_sign.sh --skip-web` (passed)
   - no public routes, payloads, or error envelopes changed; `T317a` later closed as a separate verification-only follow-up
+- `T318` is now closed as the first WYSIWYG signer-surface slice:
+  - `/my/sign/<id>` now renders a split-view inline `pdf.js` signer surface with a continuous stacked-page PDF viewer, positioned overlay fields, and a secondary sidebar for metadata, summary, consent, and actions
+  - portal page values now expose structured snapshot-backed field payloads for the active signer only, including page, geometry, type, label, required, options, value, `supported_on_portal`, and `editable`
+  - `/my/sign/<id>/document?viewer=1&viewer_token=...` is now used for internal rasterization so the inline PDF viewer does not create document-level `token_opened` audit noise; bare, invalid, expired, or mismatched viewer proofs fall back to normal raw `/document` auditing without changing the public route contract
+  - signature/stamp fields now render in-place as disabled placeholders until `T320`; they are excluded from editable payload collection in `T318`, and the page now exposes presence-only metadata rather than raw stored signature/stamp payload dicts
+  - portal field completion state now follows backend-authoritative `has_value`, so stored `false` checkbox/strikethrough values remain present without rendering checked
+  - validation passed for targeted scaffold, token-audit, portal JS, and shared `open_sign_web` JS suites, plus full `/open_sign_portal` (`366 tests, 0 failed`), full `/open_sign` (`111 tests, 0 failed`), and `scripts/review_gate_open_sign.sh` on database `test_open_sign_t318_followup`

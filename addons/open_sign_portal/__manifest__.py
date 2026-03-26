@@ -5,7 +5,7 @@
     'summary': 'Portal routes and templates for Open Sign',
     'category': 'Productivity',
     'version': '1.3',
-    'depends': ['open_sign', 'portal'],
+    'depends': ['open_sign', 'open_sign_web', 'portal'],
     'data': [
         'security/ir.model.access.csv',
         'security/open_sign_portal_security.xml',
@@ -15,12 +15,17 @@
     ],
     'assets': {
         'web.assets_frontend': [
+            'open_sign_web/static/src/js/pdf_surface_utils.js',
+            'open_sign_portal/static/src/interactions/portal_pdf_surface.js',
             'open_sign_portal/static/src/interactions/portal_sign_session.js',
+            'open_sign_portal/static/src/scss/open_sign_portal.scss',
         ],
         'web.assets_tests': [
             'open_sign_portal/static/tests/**/*',
         ],
         'web.assets_unit_tests': [
+            'open_sign_web/static/src/js/pdf_surface_utils.js',
+            'open_sign_portal/static/src/interactions/portal_pdf_surface.js',
             'open_sign_portal/static/src/interactions/portal_sign_session.js',
             'open_sign_portal/static/tests/**/*.test.js',
         ],

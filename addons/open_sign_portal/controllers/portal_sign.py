@@ -1,11 +1,13 @@
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 
+import json
 import hashlib
 import logging
 import re
 from types import SimpleNamespace
 from uuid import UUID
 
+from markupsafe import Markup
 from psycopg2.errors import LockNotAvailable
 
 from odoo import _, fields, http
@@ -15,6 +17,7 @@ from odoo.addons.open_sign_portal.services import idempotency_service, otp_servi
 from odoo.exceptions import AccessError, MissingError, ValidationError
 from odoo.http import request
 from odoo.tools import consteq
+from odoo.tools.misc import hash_sign, verify_hash_signed
 
 
 UUID_RE = re.compile(r'^[0-9a-fA-F-]{36}$')
@@ -40,6 +43,8 @@ OTP_EXPIRED_MARKER = 'OTP_EXPIRED'
 OTP_ATTEMPTS_EXCEEDED_MARKER = 'OTP_ATTEMPTS_EXCEEDED'
 OTP_REQUEST_COOLDOWN_MARKER = 'OTP_REQUEST_COOLDOWN'
 DECLINE_REASON_MAX_LENGTH = 4000
+INLINE_PDF_VIEWER_SCOPE = 'open_sign_portal.inline_pdf_viewer'
+INLINE_PDF_VIEWER_TOKEN_HOURS = 8
 
 _logger = logging.getLogger(__name__)
 
@@ -153,6 +158,44 @@ class OpenSignPortalController(CustomerPortal):
             event_at=fields.Datetime.now(),
             ip=self._extract_request_ip(),
             user_agent=self._extract_user_agent(),
+        )
+
+    def _get_inline_pdf_viewer_context(self, auth_context):
+        if auth_context.auth_mode == 'preview':
+            return 'preview'
+        if auth_context.auth_mode == 'token':
+            return 'token'
+        return 'internal'
+
+    def _build_inline_pdf_viewer_token(self, signer_sudo, attachment, *, viewer_context):
+        return hash_sign(
+            request.env['ir.config_parameter'].sudo().env,
+            INLINE_PDF_VIEWER_SCOPE,
+            {
+                'signer_id': signer_sudo.id,
+                'attachment_id': attachment.id,
+                'viewer_context': viewer_context,
+            },
+            expiration_hours=INLINE_PDF_VIEWER_TOKEN_HOURS,
+        )
+
+    def _verify_inline_pdf_viewer_token(self, signer_sudo, attachment, viewer_token, *, viewer_context):
+        if not viewer_token or not attachment:
+            return False
+        try:
+            payload = verify_hash_signed(
+                request.env['ir.config_parameter'].sudo().env,
+                INLINE_PDF_VIEWER_SCOPE,
+                viewer_token,
+            )
+        except Exception:
+            return False
+        if not isinstance(payload, dict):
+            return False
+        return (
+            payload.get('signer_id') == signer_sudo.id
+            and payload.get('attachment_id') == attachment.id
+            and payload.get('viewer_context') == viewer_context
         )
 
     def _check_signer_external_token_access(
@@ -1096,9 +1139,20 @@ class OpenSignPortalController(CustomerPortal):
             if isinstance(request_value.value_json, dict):
                 return bool(request_value.value_json.get('applied'))
             return False
+        if contract_field['type'] in UNSUPPORTED_CAPTURE_TYPES:
+            return False
         return ''
 
-    def _build_portal_fields(self, signer):
+    def _portal_field_has_value(self, contract_field, request_value):
+        if not request_value:
+            return False
+        return self._is_value_present(
+            contract_field['type'],
+            request_value.value_text,
+            request_value.value_json,
+        )
+
+    def _build_portal_fields(self, signer, *, readonly_mode=False):
         signer_fields = self._get_signer_contract_fields(signer)
         signer_values = signer.request_id.value_ids.filtered(
             lambda value: value.signer_id == signer and value.template_field_id.id in {
@@ -1111,6 +1165,7 @@ class OpenSignPortalController(CustomerPortal):
         unsupported_required_fields = []
         for field in signer_fields:
             field_value = values_by_field_id.get(field['template_field_id'])
+            normalized_value = self._build_portal_field_value(field, field_value)
             if field['required'] and field['type'] in UNSUPPORTED_CAPTURE_TYPES:
                 unsupported_required_fields.append(field['label'])
             portal_fields.append({
@@ -1118,11 +1173,39 @@ class OpenSignPortalController(CustomerPortal):
                 'label': field['label'],
                 'type': field['type'],
                 'required': field['required'],
+                'page': field['page'],
+                'x': field['x'],
+                'y': field['y'],
+                'width': field['width'],
+                'height': field['height'],
                 'supported_on_portal': field['supported_on_portal'],
-                'value': self._build_portal_field_value(field, field_value),
+                'editable': bool(field['supported_on_portal'] and not readonly_mode),
+                'value': normalized_value,
+                'has_value': self._portal_field_has_value(field, field_value),
                 'options': field['options'],
             })
         return portal_fields, unsupported_required_fields
+
+    def _build_pdf_render_url(self, auth_context, *, preview_mode=False):
+        signer_sudo = auth_context.signer
+        attachment = self._get_signer_document_attachment(signer_sudo)
+        if not attachment:
+            return False
+        viewer_token = self._build_inline_pdf_viewer_token(
+            signer_sudo,
+            attachment,
+            viewer_context=self._get_inline_pdf_viewer_context(auth_context),
+        )
+        pdf_render_url = (
+            f'/my/sign/{signer_sudo.id}/document?viewer=1'
+            f'&viewer_token={viewer_token}'
+        )
+        access_token = False if preview_mode else auth_context.effective_access_token
+        if access_token:
+            pdf_render_url = f'{pdf_render_url}&access_token={access_token}'
+        elif preview_mode:
+            pdf_render_url = f'{pdf_render_url}&preview=1'
+        return pdf_render_url
 
     def _build_portal_page_values(self, auth_context, *, preview_mode=False, portal_error_message=False, **kwargs):
         signer_sudo = auth_context.signer
@@ -1187,12 +1270,22 @@ class OpenSignPortalController(CustomerPortal):
         decline_route = f'/my/sign/{signer_sudo.id}/decline' if decline_available else False
         declined_reason_display = signer_sudo.declined_reason if signer_sudo.state == 'declined' else False
         if not portal_error_message:
-            portal_fields, unsupported_required_fields = self._build_portal_fields(signer_sudo)
+            portal_fields, unsupported_required_fields = self._build_portal_fields(
+                signer_sudo,
+                readonly_mode=readonly_mode,
+            )
             if unsupported_required_fields:
                 submit_blocked_reason = _(
                     "Submitting is blocked until portal signature/stamp capture is implemented for: %(labels)s",
                     labels=', '.join(unsupported_required_fields),
                 )
+        pdf_render_url = self._build_pdf_render_url(
+            auth_context,
+            preview_mode=preview_mode,
+        )
+        portal_fields_json = Markup(
+            json.dumps(portal_fields, separators=(',', ':')).replace('</', '<\\/')
+        )
 
         values = self._get_page_view_values(
             signer_sudo,
@@ -1202,6 +1295,7 @@ class OpenSignPortalController(CustomerPortal):
                 'signer': signer_sudo,
                 'sign_request': sign_request,
                 'portal_fields': portal_fields,
+                'portal_fields_json': portal_fields_json,
                 'portal_error_message': portal_error_message,
                 'preview_mode': preview_mode,
                 'waiting_mode': waiting_mode,
@@ -1211,6 +1305,7 @@ class OpenSignPortalController(CustomerPortal):
                 'consent_text': self._get_consent_text(),
                 'consent_hash': self._get_consent_hash(),
                 'document_url': document_url,
+                'pdf_render_url': pdf_render_url,
                 'refresh_url': refresh_url,
                 'request_revision': sign_request.lock_version,
                 'submit_blocked_reason': submit_blocked_reason,
@@ -1316,6 +1411,8 @@ class OpenSignPortalController(CustomerPortal):
         del kwargs
         access_token = self._resolve_access_token(access_token)
         allow_preview = request.httprequest.args.get('preview') == '1'
+        viewer_mode = request.httprequest.args.get('viewer') == '1'
+        viewer_token = request.httprequest.args.get('viewer_token')
         try:
             auth_context = self._check_signer_document_access(
                 signer_id,
@@ -1328,7 +1425,17 @@ class OpenSignPortalController(CustomerPortal):
         attachment = self._get_signer_document_attachment(signer_sudo)
         if not attachment:
             return request.redirect('/my')
-        if auth_context.auth_mode == 'token':
+        viewer_context = self._get_inline_pdf_viewer_context(auth_context)
+        trusted_viewer_mode = (
+            viewer_mode
+            and self._verify_inline_pdf_viewer_token(
+                signer_sudo,
+                attachment,
+                viewer_token,
+                viewer_context=viewer_context,
+            )
+        )
+        if auth_context.auth_mode == 'token' and not trusted_viewer_mode:
             try:
                 self._append_token_opened_from_auth_context(auth_context, entrypoint='document')
             except Exception:  # pragma: no cover - preserve document contract if audit append fails

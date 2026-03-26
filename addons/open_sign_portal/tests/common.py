@@ -3,6 +3,7 @@
 import base64
 from contextlib import contextmanager
 import hashlib
+import json
 import re
 from urllib.parse import urljoin
 
@@ -18,6 +19,11 @@ from odoo.tests import HOST
 
 CONSENT_HASH_RE = re.compile(r'data-consent-hash="([0-9a-f]{64})"')
 REQUEST_REVISION_RE = re.compile(r'data-request-revision="(\d+)"')
+PDF_RENDER_URL_RE = re.compile(r'data-pdf-render-url="([^"]*)"')
+PORTAL_FIELDS_JSON_RE = re.compile(
+    r'<script type="application/json" class="o_open_sign_fields_payload">(.*?)</script>',
+    re.S,
+)
 
 
 class OpenSignPortalTestMixin:
@@ -351,6 +357,18 @@ class OpenSignPortalHttpTestMixin(OpenSignPortalTestMixin):
         assert consent_match, "Expected consent hash marker on portal page"
         assert revision_match, "Expected request revision marker on portal page"
         return consent_match.group(1), int(revision_match.group(1))
+
+    @staticmethod
+    def _extract_pdf_render_url(html):
+        url_match = PDF_RENDER_URL_RE.search(html or "")
+        return url_match.group(1) if url_match else False
+
+    @staticmethod
+    def _extract_portal_fields_payload(html):
+        payload_match = PORTAL_FIELDS_JSON_RE.search(html or "")
+        if not payload_match:
+            return []
+        return json.loads(payload_match.group(1))
 
     @staticmethod
     def _expected_consent_hash():

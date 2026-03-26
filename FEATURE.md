@@ -5,10 +5,10 @@
 | Field | Value |
 |---|---|
 | Document ID | `FEATURE-OPEN-SIGN` |
-| Version | `1.1.0` |
+| Version | `1.1.2` |
 | Status | `Active (Living Document)` |
 | Created | `2026-02-26` |
-| Last Updated | `2026-03-23` |
+| Last Updated | `2026-03-26` |
 | Product Area | `Open Sign Odoo Addons` |
 | Primary Owner | `Engineering` |
 | Review Cadence | `Weekly or at milestone close` |
@@ -27,25 +27,25 @@
 
 These M0 artifacts are now available and linked to `T90`-`T99`:
 
-- [DESIGN_DATA_COLLECTION_NOTES.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/DESIGN_DATA_COLLECTION_NOTES.md) (`T90`)
-- [TASK_CARDS.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/task_cards/TASK_CARDS.md) (`T91`)
-- [PULL_REQUEST_TEMPLATE.md](/home/mmcminn/Projects/src/odoo/.github/PULL_REQUEST_TEMPLATE.md) Open Sign checklist block (`T92`)
-- [DEVELOPER_COMMANDS.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/DEVELOPER_COMMANDS.md) (`T93`)
-- [SECURITY_ACL_POLICY.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/SECURITY_ACL_POLICY.md) (`T94`)
-- [PORTAL_API_CONTRACT.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/PORTAL_API_CONTRACT.md) (`T95`)
-- [LEGAL_CONSENT_STRATEGY.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/LEGAL_CONSENT_STRATEGY.md) (`T96`)
-- [ATTACHMENT_ACCESS_POLICY.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/ATTACHMENT_ACCESS_POLICY.md) (`T97`)
-- [VALIDATION_TEST_VECTORS.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/VALIDATION_TEST_VECTORS.md) (`T98`)
-- [EVIDENCE_SCHEMA_V1.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/EVIDENCE_SCHEMA_V1.md) (`T99`)
+- [DESIGN_DATA_COLLECTION_NOTES.md](/workspaces/odoo/doc/open_sign/m0/DESIGN_DATA_COLLECTION_NOTES.md) (`T90`)
+- [TASK_CARDS.md](/workspaces/odoo/doc/open_sign/task_cards/TASK_CARDS.md) (`T91`)
+- [PULL_REQUEST_TEMPLATE.md](/workspaces/odoo/.github/PULL_REQUEST_TEMPLATE.md) Open Sign checklist block (`T92`)
+- [DEVELOPER_COMMANDS.md](/workspaces/odoo/doc/open_sign/m0/DEVELOPER_COMMANDS.md) (`T93`)
+- [SECURITY_ACL_POLICY.md](/workspaces/odoo/doc/open_sign/m0/SECURITY_ACL_POLICY.md) (`T94`)
+- [PORTAL_API_CONTRACT.md](/workspaces/odoo/doc/open_sign/m0/PORTAL_API_CONTRACT.md) (`T95`)
+- [LEGAL_CONSENT_STRATEGY.md](/workspaces/odoo/doc/open_sign/m0/LEGAL_CONSENT_STRATEGY.md) (`T96`)
+- [ATTACHMENT_ACCESS_POLICY.md](/workspaces/odoo/doc/open_sign/m0/ATTACHMENT_ACCESS_POLICY.md) (`T97`)
+- [VALIDATION_TEST_VECTORS.md](/workspaces/odoo/doc/open_sign/m0/VALIDATION_TEST_VECTORS.md) (`T98`)
+- [EVIDENCE_SCHEMA_V1.md](/workspaces/odoo/doc/open_sign/m0/EVIDENCE_SCHEMA_V1.md) (`T99`)
 
 Supplemental Phase 0 artifacts:
 
-- [WIREFRAME_APPROVAL.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/WIREFRAME_APPROVAL.md) (`T04`)
-- [OBSERVABILITY_BASELINE_PROPOSAL.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/OBSERVABILITY_BASELINE_PROPOSAL.md) (`T08`)
-- [MERGE_GATE_POLICY_PROPOSAL.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/MERGE_GATE_POLICY_PROPOSAL.md) (`T09`)
-- [PDF_SIGNING_STACK_RECOMMENDATION.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/PDF_SIGNING_STACK_RECOMMENDATION.md) (`T05`)
-- [LEGAL_ACCEPTANCE_CRITERIA.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/LEGAL_ACCEPTANCE_CRITERIA.md) (`T03`)
-- [RETENTION_ARCHIVAL_PURGE_POLICY.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/RETENTION_ARCHIVAL_PURGE_POLICY.md) (`T07`)
+- [WIREFRAME_APPROVAL.md](/workspaces/odoo/doc/open_sign/m0/WIREFRAME_APPROVAL.md) (`T04`)
+- [OBSERVABILITY_BASELINE_PROPOSAL.md](/workspaces/odoo/doc/open_sign/m0/OBSERVABILITY_BASELINE_PROPOSAL.md) (`T08`)
+- [MERGE_GATE_POLICY_PROPOSAL.md](/workspaces/odoo/doc/open_sign/m0/MERGE_GATE_POLICY_PROPOSAL.md) (`T09`)
+- [PDF_SIGNING_STACK_RECOMMENDATION.md](/workspaces/odoo/doc/open_sign/m0/PDF_SIGNING_STACK_RECOMMENDATION.md) (`T05`)
+- [LEGAL_ACCEPTANCE_CRITERIA.md](/workspaces/odoo/doc/open_sign/m0/LEGAL_ACCEPTANCE_CRITERIA.md) (`T03`)
+- [RETENTION_ARCHIVAL_PURGE_POLICY.md](/workspaces/odoo/doc/open_sign/m0/RETENTION_ARCHIVAL_PURGE_POLICY.md) (`T07`)
 
 ## Review Outcomes (2026-02-26)
 
@@ -76,9 +76,10 @@ This revision addresses initial planning gaps found during control review:
 | Signature adoption + optional certificate signing | Covered | `R-005`, `R-010`, `T25`, `T50`-`T52` | Certificate path remains optional behind milestone gate |
 | Status lifecycle and transition integrity | Covered | status matrix + `R-006`, `R-012`, `T06`, `T14` | Transition guard tests must include invalid state jumps |
 | Immutable template version capture before send | Covered | `T06`, schema contract `open.sign.template.version` + request invariants | Enforce snapshot immutability and no post-send template drift |
-| Audit evidence and consent capture | Covered | `R-007`, `R-022`, `T03`, `T43`, `T46` | Jurisdiction-specific wording still requires Legal signoff workflow |
-| Portal/public signing security posture | Covered | `R-009`, `R-020`, `R-021`, `R-023`, `T31`, `T36`, `T38`, `T39` | Replay/expiry/abuse test depth to be validated in QA |
-| Endpoint idempotency and race safety | Covered (this revision) | `R-024`, `T316`, `T317`, `T317a`, endpoint contract v1 | Retry and parallel-submit edge cases must be regression-tested |
+| Audit evidence and consent capture | Covered | `R-007`, `R-022`, `T03`, `T43`, `T46`, `T314` | Jurisdiction-specific wording still requires Legal signoff workflow; full evidence package assembly remains in `M4` |
+| Portal/public signing security posture | Covered | `R-009`, `R-020`, `R-021`, `R-023`, `T31`, `T36`, `T38`, `T39`, `T310`-`T315` | Security baseline is closed; WYSIWYG signer-surface completeness is tracked separately in `T318`-`T322` |
+| Signer WYSIWYG portal experience | Partial | `T318` shipped the inline PDF overlay surface; `T319`-`T322` remain required before `T40` | PDF-first signing is now in place, but guided next-field flow, portal signature/stamp capture, and final parity coverage are still open |
+| Endpoint idempotency and race safety | Covered | `R-024`, `T316`, `T317`, `T317a`, endpoint contract v1 + live-HTTP overlap harness | Keep controller race tests and the explicit live harness green in future slices |
 | Timestamp trust and evidence reproducibility | Covered (this revision) | `R-025`, `R-028`, `T410`, `T411` | NTP and deployment clock-drift controls must be operationalized |
 | Validation and audit taxonomy clarity | Covered (this revision) | `R-026`, `R-027`, validation matrix + audit taxonomy sections | Matrix updates must remain aligned with code and tests |
 | Odoo codebase compliance and module structure | Covered | Odoo alignment principles + `R-017`, `T09`, `T69` | Must be continuously enforced in PR reviews |
@@ -199,7 +200,7 @@ Use this as mandatory design research before implementation of each subsystem.
 
 | Item | Owner | Status | Notes |
 |---|---|---|---|
-| Portal/token reference notes | Backend | `Completed` | See [DESIGN_DATA_COLLECTION_NOTES.md](/home/mmcminn/Projects/src/odoo/doc/open_sign/m0/DESIGN_DATA_COLLECTION_NOTES.md). |
+| Portal/token reference notes | Backend | `Completed` | See [DESIGN_DATA_COLLECTION_NOTES.md](/workspaces/odoo/doc/open_sign/m0/DESIGN_DATA_COLLECTION_NOTES.md). |
 | Signature UI reuse decision memo | Web | `Completed` | Reuse decision recorded in design notes and ADRs. |
 | Lint constraints summary | Backend | `Completed` | Lint constraints recorded with reference links. |
 | ACL and record rule pattern notes | Backend/Security | `Completed` | Security matrix and policy finalized in M0 docs. |
@@ -235,37 +236,43 @@ Out of scope for MVP:
 
 ### Requirements Baseline
 
+Status legend:
+
+- `Covered`: implemented and validated in the current repo baseline.
+- `Partial`: baseline behavior exists, but later milestone or operational work is still planned.
+- `Open`: not yet implemented.
+
 | Req ID | Requirement | Priority | Status |
 |---|---|---|---|
-| `R-001` | Upload/use PDF templates and place fields by page coordinates | Must | `Open` |
-| `R-002` | Support all required field types listed in scope | Must | `Open` |
-| `R-003` | Required/optional behavior per field with validation | Must | `Open` |
-| `R-004` | Multi-signer workflows with role assignment | Must | `Open` |
-| `R-005` | Signature adoption: draw/type/upload | Must | `Open` |
-| `R-006` | Document statuses and transition logging | Must | `Open` |
-| `R-007` | Audit trail capturing who/when/how signed | Must | `Open` |
+| `R-001` | Upload/use PDF templates and place fields by page coordinates | Must | `Partial` |
+| `R-002` | Support all required field types listed in scope | Must | `Partial` |
+| `R-003` | Required/optional behavior per field with validation | Must | `Partial` |
+| `R-004` | Multi-signer workflows with role assignment | Must | `Partial` |
+| `R-005` | Signature adoption: draw/type/upload | Must | `Partial` |
+| `R-006` | Document statuses and transition logging | Must | `Partial` |
+| `R-007` | Audit trail capturing who/when/how signed | Must | `Partial` |
 | `R-008` | Final signed PDF generation and storage | Must | `Open` |
-| `R-009` | Portal/public signing links with secure tokens | Must | `Open` |
+| `R-009` | Portal/public signing links with secure tokens | Must | `Covered` |
 | `R-010` | Optional certificate digital signing at completion | Should | `Open` |
-| `R-011` | Multi-company ACL isolation and least-privilege access model | Must | `Open` |
-| `R-012` | Enforced status transition rules and invalid-transition rejection | Must | `Open` |
-| `R-013` | Evidence retention and export policy support | Must | `Open` |
-| `R-014` | Backward-compatible schema migration strategy across module versions | Must | `Open` |
-| `R-015` | Operational observability (metrics, key events, failure diagnosis) | Should | `Open` |
-| `R-016` | Optional signer identity verification step (email OTP at minimum) | Should | `Open` |
-| `R-017` | Conformance with Odoo lint and addon structure conventions in this repository | Must | `Open` |
-| `R-018` | Task execution must follow documented DoR/Task Card/PR checklist process | Must | `Open` |
-| `R-019` | Design decisions must cite concrete Odoo code references before implementation | Must | `Open` |
-| `R-020` | Security groups and ACL/record-rule matrix explicitly defined and tested | Must | `Open` |
-| `R-021` | Portal `jsonrpc` endpoint contract (payloads, responses, error codes) documented and tested | Must | `Open` |
-| `R-022` | Signer consent/legal disclosure snapshot captured as part of audit evidence | Must | `Open` |
-| `R-023` | Signed artifacts and payload attachments follow tokenized binary access policy | Must | `Open` |
-| `R-024` | Mutating signer endpoints (`save`, `submit`, `decline`) are idempotent and race-safe | Must | `Open` |
-| `R-025` | Evidence timestamps are canonical UTC from trusted server clock policy (drift-controlled) | Must | `Open` |
-| `R-026` | Field-type validation and normalization matrix is documented and enforced client/server | Must | `Open` |
-| `R-027` | Audit event taxonomy and evidence package schema are versioned and backward-compatible | Must | `Open` |
+| `R-011` | Multi-company ACL isolation and least-privilege access model | Must | `Partial` |
+| `R-012` | Enforced status transition rules and invalid-transition rejection | Must | `Partial` |
+| `R-013` | Evidence retention and export policy support | Must | `Partial` |
+| `R-014` | Backward-compatible schema migration strategy across module versions | Must | `Partial` |
+| `R-015` | Operational observability (metrics, key events, failure diagnosis) | Should | `Partial` |
+| `R-016` | Optional signer identity verification step (email OTP at minimum) | Should | `Partial` |
+| `R-017` | Conformance with Odoo lint and addon structure conventions in this repository | Must | `Partial` |
+| `R-018` | Task execution must follow documented DoR/Task Card/PR checklist process | Must | `Partial` |
+| `R-019` | Design decisions must cite concrete Odoo code references before implementation | Must | `Covered` |
+| `R-020` | Security groups and ACL/record-rule matrix explicitly defined and tested | Must | `Partial` |
+| `R-021` | Portal `jsonrpc` endpoint contract (payloads, responses, error codes) documented and tested | Must | `Covered` |
+| `R-022` | Signer consent/legal disclosure snapshot captured as part of audit evidence | Must | `Partial` |
+| `R-023` | Signed artifacts and payload attachments follow tokenized binary access policy | Must | `Partial` |
+| `R-024` | Mutating signer endpoints (`save`, `submit`, `decline`) are idempotent and race-safe | Must | `Covered` |
+| `R-025` | Evidence timestamps are canonical UTC from trusted server clock policy (drift-controlled) | Must | `Partial` |
+| `R-026` | Field-type validation and normalization matrix is documented and enforced client/server | Must | `Partial` |
+| `R-027` | Audit event taxonomy and evidence package schema are versioned and backward-compatible | Must | `Partial` |
 | `R-028` | Source and final PDF SHA-256 digests are stored immutably for integrity verification | Must | `Open` |
-| `R-029` | Requests require at least one participant role/signer, while signature fields remain optional for non-signature acknowledgement workflows | Must | `Open` |
+| `R-029` | Requests require at least one participant role/signer, while signature fields remain optional for non-signature acknowledgement workflows | Must | `Partial` |
 
 ### Design Control Block
 
@@ -284,11 +291,11 @@ Out of scope for MVP:
 | Control ID | Control | Status |
 |---|---|---|
 | `SC-001` | Portal links use `portal.mixin` token lifecycle and constant-time token checks | `Covered` |
-| `SC-002` | Token expiry and replay prevention | `Open` |
-| `SC-003` | Multi-company record rules validated with tests | `Open` |
-| `SC-004` | Audit log immutability constraints enforced post-completion | `Open` |
+| `SC-002` | Token expiry and replay prevention | `Partial` |
+| `SC-003` | Multi-company record rules validated with tests | `Partial` |
+| `SC-004` | Audit log immutability constraints enforced post-completion | `Covered` |
 | `SC-005` | PII minimization and retention enforcement | `Open` |
-| `SC-006` | Rate limit or abuse controls on public signing endpoints | `Open` |
+| `SC-006` | Rate limit or abuse controls on public signing endpoints | `Partial` |
 | `SC-007` | Idempotency keys and duplicate-submit protection on mutating portal endpoints | `Covered` |
 | `SC-008` | Concurrency control prevents double-transition races in signer completion/decline | `Covered` |
 | `SC-009` | Trusted timestamp source policy (UTC clock, drift alerts) for legal evidence | `Open` |
@@ -323,6 +330,7 @@ Implementation notes:
 | `D-009` | Approve evidence package schema v1 and event taxonomy versioning policy | Product/Backend | `M0` | `Resolved (Schema v1)` |
 | `D-010` | Confirm whether a signature block is mandatory for completion workflows | Product/Backend | `M1` | `Resolved (participant required; signature field optional)` |
 | `D-011` | Approve external email-signer magic-link policy (TTL, one-time vs multi-use, resend/rotation, revoke semantics) | Product/Security | `M2` | `Resolved (reuse signer portal.mixin token flow; multi-use until rotated/revoked/expired; future expiry = min(72h, request expiry))` |
+| `D-012` | Choose signer portal interaction model (`detached field list` vs inline PDF overlay) for live signing | Product/Web/Backend | `M3` | `Resolved (primary signer surface is inline pdf.js overlay on /my/sign/<signer_id>; /document remains the raw document route)` |
 
 ### Phase 0 Decisions Locked (2026-02-26)
 
@@ -353,6 +361,7 @@ Implementation notes:
 | `CR-010` | `2026-02-26` | Applied final Phase 0 approvals (`T04/T05/T08/T09`) and feature-branch-only `FEATURE.md` merge-gate rule | M0 closure and workflow policy refinement | Approved |
 | `CR-011` | `2026-02-27` | Clarified workflow invariant: at least one participant role/signer is required for send flows, but signature fields are optional | Prevents false signature-field dependency and preserves form/acknowledgement use cases | Approved |
 | `CR-012` | `2026-02-28` | Added deferred external email-signer authentication track (magic-link token lifecycle, expiry/revocation, and abuse-test coverage) | Clarifies scope and sequencing for unauthenticated signer support without weakening ACL posture | Approved |
+| `CR-013` | `2026-03-25` | Reopened `M3` for WYSIWYG signer UX completion before `T40`, including inline PDF overlays, guided navigation, and portal signature/stamp capture | Portal signer UX completeness, signer error-rate reduction, and alignment with the intended product bar | Approved |
 
 ### Architecture Decisions (ADRs Summary)
 
@@ -369,6 +378,7 @@ Implementation notes:
 | `ADR-009` | Version audit event taxonomy and evidence package schema from v1 onward | Accepted |
 | `ADR-010` | Require immutable template version snapshots before sending requests (`draft -> versioned -> sent`) | Accepted |
 | `ADR-011` | Enforce participant-required send flows while keeping signature fields optional | Accepted |
+| `ADR-012` | Use an inline `pdf.js` overlay as the primary signer portal surface; keep `/document` as the raw document route | Accepted |
 
 ## Addons To Create
 
@@ -611,7 +621,10 @@ Normalization rules:
 
 ### Audit Event Taxonomy and Evidence Schema (v1)
 
-Audit event taxonomy baseline:
+Audit event taxonomy current summary:
+
+- The canonical exhaustive event list and export shape live in [EVIDENCE_SCHEMA_V1.md](/workspaces/odoo/doc/open_sign/m0/EVIDENCE_SCHEMA_V1.md).
+- Token-event metadata must remain token-safe: no raw tokens and no full tokenized URLs.
 
 | Event Type | Actor Context | Required Metadata Keys | Transition Impact |
 |---|---|---|---|
@@ -619,12 +632,21 @@ Audit event taxonomy baseline:
 | `template_version_published` | internal user | `template_id`, `template_version_id`, `version_number` | none |
 | `request_versioned` | internal user/system | `request_id`, `template_version_id`, `source_pdf_sha256` | `draft` -> `versioned` |
 | `request_sent` | internal user/system | `request_id`, `recipient_count` | `versioned` -> `sent` |
+| `notification_queued` | internal user/system | `request_id`, `signer_id`, `notification_type`, `channel` | none |
+| `notification_failed` | internal user/system | `request_id`, `signer_id`, `notification_type`, `failure_reason` | none |
+| `notification_skipped` | internal user/system | `request_id`, `signer_id`, `notification_type`, `reason` | none |
 | `signer_opened` | signer | `request_id`, `signer_id`, `ip`, `user_agent` | `sent`/`pending` visibility updates |
 | `value_saved` | signer | `request_id`, `signer_id`, `field_count` | none |
 | `signer_submitted` | signer | `request_id`, `signer_id`, `signature_method`, `idempotency_key` | signer state -> `signed` |
 | `signer_declined` | signer | `request_id`, `signer_id`, `reason` | request may move to `declined` |
+| `idempotency_conflict` | signer/system | `request_id`, `signer_id`, `endpoint`, `idempotency_key` | none |
+| `signer_contact_corrected` | manager | `request_id`, `signer_id`, `reason` | none |
 | `otp_requested` | signer/system | `request_id`, `signer_id` | none |
 | `otp_verified` | signer/system | `request_id`, `signer_id` | unlocks submit when OTP enabled |
+| `token_issued` | internal user/system | `request_id`, `signer_id`, `token_issued_at_utc`, `token_expires_at_utc` | none |
+| `token_opened` | signer | `signer_id`, `token_issued_at_utc`, `entrypoint` | none |
+| `token_rejected` | signer/system | `signer_id`, `token_state`, `rejection_code` | none |
+| `token_revoked` | manager/system | `signer_id`, `token_issued_at_utc`, `token_revoked_at_utc` | none |
 | `artifact_generated` | system | `request_id`, `final_attachment_id`, `final_pdf_sha256` | supports `completed` |
 | `request_completed` | system | `request_id`, `completed_at` | -> `completed` |
 | `request_expired` | system/cron | `request_id`, `expires_at` | -> `expired` |
@@ -708,7 +730,7 @@ addons/open_sign_web/
 ### Interfaces
 
 - HTTP routes/controllers:
-  - `GET /my/sign/<int:signer_id>?access_token=...`: open signing page.
+  - `GET /my/sign/<int:signer_id>?access_token=...`: open the primary signer surface.
   - `POST /my/sign/<int:signer_id>/save` (`jsonrpc`): save draft values.
   - `POST /my/sign/<int:signer_id>/submit` (`jsonrpc`): submit signer completion.
   - `POST /my/sign/<int:signer_id>/decline` (`jsonrpc`): decline with reason.
@@ -746,6 +768,15 @@ Current runtime note:
 - `idempotency_conflict` is active for `submit` and `decline` only after `T316`.
 - `expired_token` is active for signer JSONRPC routes when the provided token exactly matches the current signer token but its lifecycle metadata is expired; public GET routes still deny with redirect-to-`/my`.
 - Rotated, revoked, tampered, missing, throttled, and metadata-missing signer-token attempts continue to map to `invalid_token`.
+
+### Portal Signer Surface Direction (`T318`-`T322`)
+
+- `/my/sign/<int:signer_id>` is the primary live-signing surface and must become an inline `pdf.js` viewer with positioned HTML overlays for signer fields.
+- `/my/sign/<int:signer_id>/document` remains the raw source-PDF stream/view route and is not repurposed as the main signing UI.
+- No new public JSONRPC endpoints are planned for this slice; the existing `save` / `submit` / `decline` / OTP route family remains authoritative.
+- Portal page values must grow to include signer-visible field geometry and display metadata: `page`, `x`, `y`, `width`, `height`, `type`, `label`, `required`, `options`, current normalized `value`, and supported/editable state.
+- Guided navigation is part of the required product behavior: `Next field`, `Tab`, `Shift+Tab`, cross-page focus/scroll, completed-vs-incomplete cues, and first-invalid focus on save/submit validation failure.
+- Mobile responsiveness is required, but a separate wizard flow is not planned.
 
 ### Email-Only Signer Token Strategy (`T310` Locked)
 
@@ -817,6 +848,16 @@ addons/open_sign_portal/
 
 - `TokenState`: `active`, `expired`, `revoked`, `consumed`.
 - `PortalSubmitPayload`: signer values plus submit metadata.
+- `PortalOverlayFieldDescriptor`: `field_id: int`, `page: int`, `x: float`, `y: float`, `width: float`, `height: float`, `type: string`, `label: string`, `required: bool`, `options: list`, `value: any`, `supported_on_portal: bool`, `readonly: bool`.
+
+### Portal WYSIWYG Validation Expectations (`T318`-`T322`)
+
+- Geometry correctness must hold across multi-page PDFs.
+- Guided navigation must work on desktop keyboard flow (`Next field`, `Tab`, `Shift+Tab`) and move focus across pages correctly.
+- Portal signature/stamp capture must work through the same server-authoritative validation/storage contract as other signer values.
+- Waiting, preview, readonly-review, and terminal review states must preserve the same authority boundaries while rendering non-editable overlays.
+- JSONRPC success/error envelopes, token/OTP/idempotency behavior, and denial semantics must remain unchanged.
+- Mobile rendering must remain usable without switching to a separate wizard.
 
 ---
 
@@ -1268,6 +1309,11 @@ Legend:
 - [x] `T313` Enforce current signer-token lifecycle metadata at runtime for email-only signers, activate `expired_token` on signer JSONRPC routes, add signer+IP invalid-link throttling with no new public error code, close the throttle layer with rolling-window invalid-attempt tracking, concurrency-safe invalid-attempt persistence, and best-effort non-blocking clear semantics, include readonly `/document` in the same throttle lifecycle, and suppress stale/wrong token echo when access succeeds through exact internal fallback.
 - [x] `T314` Extend audit/evidence taxonomy for email-token events (`token_issued`, `token_opened`, `token_rejected`, `token_revoked`) with export coverage.
 - [x] `T315` Add end-to-end and denial-path tests for the locked email-only signer token flow (tampered/expired/revoked token, spoofed email no-access, replay, and controlled link-sharing behavior).
+- [x] `T318` Replace the detached field-list signer page with an inline PDF viewer plus positioned signer-field overlays on `/my/sign/<signer_id>`, reusing `pdf.js` rendering and normalized geometry conventions from `open_sign_web`, exposing page/geometry metadata from the portal controller, rendering only the active signer’s fields, and preserving waiting/readonly/preview/error-state behavior. Post-closeout hardening is also complete: internal viewer fetches now require a signed `viewer_token`, portal field completion state now follows backend-authoritative `has_value`, and signature/stamp placeholders now expose presence-only metadata until `T320`.
+- [ ] `T319` Add guided field navigation and keyboard flow to the WYSIWYG signer surface, including active-field state, `Next field`, `Tab` / `Shift+Tab`, cross-page focus/scroll, completed-vs-incomplete cues, and first-invalid focus on save/submit validation failure.
+- [ ] `T320` Implement portal signature/stamp capture directly on the overlay surface, remove the current unsupported-field blocker for required signature/stamp fields, reuse the `T25` adoption/capture strategy, and preserve the existing attachment-backed payload contract and server-authoritative validation/storage rules.
+- [ ] `T321` Integrate the WYSIWYG surface with the existing portal flow without changing public route or JSONRPC envelopes: keep save/submit/decline/OTP/idempotency/token/order semantics intact, keep `/document` as the raw document route, and preserve waiting/preview/readonly/terminal-review parity with non-editable overlays.
+- [ ] `T322` Add focused frontend, HTTP, and end-to-end coverage for the WYSIWYG signer UX, including geometry rendering, guided navigation, signature/stamp capture, state parity, unchanged route envelopes, mobile responsiveness, and full `/open_sign_portal` + `/open_sign` + review-gate closeout before `M3` is reclosed.
 
 ### Phase 4: PDF Finalization and Audit Evidence
 
@@ -1308,15 +1354,15 @@ Legend:
 
 | Requirement | Tasks | Addon | Validation |
 |---|---|---|---|
-| `R-001` | `T11`, `T21`, `T40` | `open_sign`, `open_sign_web` | Unit + E2E tests |
-| `R-002` | `T13`, `T24`, `T44` | `open_sign`, `open_sign_web` | Field-type test suite |
+| `R-001` | `T11`, `T21`, `T318`, `T40` | `open_sign`, `open_sign_web`, `open_sign_portal` | Unit + E2E tests |
+| `R-002` | `T13`, `T24`, `T320`, `T44` | `open_sign`, `open_sign_web`, `open_sign_portal` | Field-type test suite |
 | `R-003` | `T18`, `T24`, `T44` | `open_sign`, `open_sign_web` | Server/client validation tests |
 | `R-004` | `T12`, `T15`, `T33`, `T44` | `open_sign`, `open_sign_portal` | Workflow tests |
-| `R-005` | `T25`, `T32`, `T44` | `open_sign_web`, `open_sign_portal` | UI + submit tests |
+| `R-005` | `T25`, `T32`, `T320`, `T322`, `T44` | `open_sign_web`, `open_sign_portal` | UI + submit tests |
 | `R-006` | `T06`, `T14`, `T43`, `T44` | `open_sign` | State transition tests |
 | `R-007` | `T17`, `T43`, `T61`, `T314` | `open_sign`, `open_sign_portal` | Audit integrity + security review |
 | `R-008` | `T40`, `T41`, `T44`, `T411` | `open_sign` | PDF output validation |
-| `R-009` | `T31`, `T32`, `T36`, `T310`, `T311`, `T312`, `T313`, `T315` | `open_sign_portal` | Portal security tests |
+| `R-009` | `T31`, `T32`, `T36`, `T310`, `T311`, `T312`, `T313`, `T315`, `T318`, `T321` | `open_sign_portal` | Portal security and signer UX tests |
 | `R-010` | `T50`, `T51`, `T52` | `open_sign_certificate` | Signature verification tests |
 | `R-011` | `T06`, `T94`, `T113`, `T61` | `open_sign`, `open_sign_portal` | ACL and multi-company rule tests |
 | `R-012` | `T06`, `T14`, `T44` | `open_sign` | Invalid transition tests |
@@ -1328,15 +1374,15 @@ Legend:
 | `R-018` | `T91`, `T92`, `T93`, `T610`, `T65` | All | Review process audit |
 | `R-019` | `T90`, `T05`, `T06` | All | Referenced design evidence in PRs |
 | `R-020` | `T39`, `T94`, `T113`, `T61` | `open_sign`, `open_sign_portal` | ACL/rule matrix and access-boundary tests |
-| `R-021` | `T95`, `T38`, `T36`, `T316`, `T317`, `T317a`, `T313`, `T315` | `open_sign_portal` | Endpoint contract and abuse/replay tests |
+| `R-021` | `T95`, `T38`, `T36`, `T316`, `T317`, `T317a`, `T313`, `T315`, `T321` | `open_sign_portal` | Endpoint contract and abuse/replay tests |
 | `R-022` | `T03`, `T96`, `T46` | `open_sign`, `open_sign_portal` | Consent evidence persistence and export checks |
 | `R-023` | `T97`, `T47`, `T36` | `open_sign`, `open_sign_portal` | Tokenized artifact access and security tests |
 | `R-024` | `T95`, `T316`, `T317`, `T317a`, `T38`, `T36` | `open_sign_portal` | Idempotency and race-condition tests |
 | `R-025` | `T08`, `T410`, `T61` | `open_sign`, `open_sign_portal` | UTC timestamp and drift-control validation |
-| `R-026` | `T98`, `T16`, `T18`, `T24`, `T44` | `open_sign`, `open_sign_web` | Validation matrix conformance tests |
+| `R-026` | `T98`, `T16`, `T18`, `T24`, `T319`, `T320`, `T322`, `T44` | `open_sign`, `open_sign_web`, `open_sign_portal` | Validation matrix conformance tests |
 | `R-027` | `T99`, `T42`, `T45`, `T63` | `open_sign` | Evidence schema and event taxonomy checks |
 | `R-028` | `T40`, `T41`, `T411`, `T45` | `open_sign` | Artifact digest integrity verification |
-| `R-029` | `T12`, `T14`, `T15`, `T44` | `open_sign`, `open_sign_portal` | Participant-required flow tests without mandatory signature field |
+| `R-029` | `T12`, `T14`, `T15`, `T321`, `T44` | `open_sign`, `open_sign_portal` | Participant-required flow tests without mandatory signature field |
 
 ## Milestones and Exit Criteria
 
@@ -1344,8 +1390,8 @@ Legend:
 |---|---|---|
 | `M0` Design Freeze | `2026-02-26 (Complete)` | `T01`-`T09`, `T90`-`T99` complete, ADRs updated |
 | `M1` Core Backend | `Complete (2026-03-01)` | `T10`-`T19`, `T110`-`T113` complete + tests green |
-| `M2` Editor UX | TBD | `T20`-`T26` complete + demo approved |
-| `M3` Portal Signing | TBD | `T30`-`T39`, `T310`-`T317`, `T317a` complete + security baseline pass |
+| `M2` Editor UX | Implementation complete; demo sign-off pending | `T20`-`T26` complete + demo approved |
+| `M3` Portal Signing | `In progress (reopened 2026-03-25)` | `T30`-`T39`, `T310`-`T317`, `T317a`, `T318`-`T322` complete + security baseline pass |
 | `M4` PDF + Audit | TBD | `T40`-`T47`, `T410`-`T411` complete + E2E pass |
 | `M5` Certificate (Optional) | TBD | `T50`-`T54` complete + verification pass |
 | `M6` Release | TBD | `T60`-`T69` complete + UAT signoff |
@@ -1355,7 +1401,7 @@ Legend:
 | Risk ID | Risk | Severity | Mitigation | Owner | Status |
 |---|---|---|---|---|---|
 | `RK-001` | PDF rendering inconsistencies across viewers | High | Validate with multiple PDF libraries/viewers, add golden tests | Backend | Open |
-| `RK-002` | Token leakage or replay attacks | High | Use `portal.mixin` tokens with strict expiry/revocation policy, optional OTP, replay tests | Security | Open |
+| `RK-002` | Token leakage or replay attacks | High | Use `portal.mixin` tokens with strict expiry/revocation policy, current-token runtime expiry enforcement, rotate/revoke controls, invalid-link throttling, optional OTP, and replay/race coverage (`T311`-`T317a`); accepted shared-link residual risk is tracked separately in `RK-017` | Security | Open |
 | `RK-003` | Field coordinate drift on responsive layouts | Medium | Normalize coordinates and fixed PDF viewport mapping | Frontend | Open |
 | `RK-004` | Legal expectations exceed MVP evidence model | High | Early legal review and explicit compliance baseline | Product | Open |
 | `RK-005` | Certificate support complexity impacts timeline | Medium | Keep addon optional and behind milestone gate | Engineering | Open |
@@ -1364,13 +1410,14 @@ Legend:
 | `RK-008` | Retention/purge process removes evidence prematurely | High | Controlled policy, dry-run mode, audit on purge events | Ops/Product | Open |
 | `RK-009` | Addon diverges from Odoo lint/convention expectations | Medium | Track `T09` + `T69`, enforce review checklist in PRs | Engineering | Open |
 | `RK-010` | Junior implementation diverges from intended architecture | High | Enforce task card + PR checklist + code reference evidence (`T90`-`T92`) | Engineering | Open |
-| `RK-011` | Portal endpoint contract drifts between frontend and backend | Medium | Lock v1 contract in `T95`, enforce contract tests in `T38` | Web/Backend | Open |
+| `RK-011` | Portal endpoint contract drifts between frontend and backend | Medium | Lock v1 contract in `T95`, enforce contract tests in `T38`, keep email-only denial-path coverage from `T315` green, and rerun the live overlap harness from `T317a` after portal contract/race changes | Web/Backend | Mitigated |
 | `RK-012` | Consent evidence is incomplete or unverifiable during audit/export | High | Persist consent hash/timestamp in `T46` and validate in security review `T61` | Product/Security | Open |
 | `RK-013` | Signed artifacts become accessible outside token scope | High | Enforce tokenized attachment policy in `T97`/`T47` and test abuse paths in `T36` | Security/Backend | Open |
 | `RK-014` | Duplicate submits or concurrent requests create inconsistent signer/request states | High | Implemented durable idempotency + request-row locking in `T316`; overlap and side-effect singularity coverage added in `T317`; live-HTTP dispatcher overlap proof added in `T317a`; keep the portal race suite and harness green in future slices | Backend/Security | Mitigated |
 | `RK-015` | Server clock drift undermines timestamp credibility in legal evidence | High | Define UTC clock policy and drift checks (`T410`) plus operational monitoring | Platform/Ops | Open |
 | `RK-016` | Missing or mismatched artifact digests weakens integrity proof during disputes | High | Persist and verify SHA-256 digests (`T411`) in evidence export flow | Backend | Open |
 | `RK-017` | Email-only signer magic links are forwarded/shared, allowing non-intended recipients to sign | High | Explicitly accept baseline possession-of-link risk; `T311`-`T313` now enforce rotate/revoke controls, `72h` / request-bounded TTL, runtime expiry checks, invalid-link throttling, and no-token-echo internal fallback hygiene; `T314` now records token lifecycle chronology in token-safe audit evidence, and OTP (`T37`) remains the higher-assurance option | Product/Security | Open |
+| `RK-018` | Detached field-list portal signing causes signer confusion, missed fields, and lower completion confidence versus the intended on-document signing experience | High | Reopen `M3`; deliver inline PDF overlays, guided navigation, and portal signature/stamp capture in `T318`-`T322`; keep waiting/preview/readonly parity and mobile responsiveness under regression coverage | Product/Web/Backend | Open |
 
 ## Definition of Done (DoD)
 
@@ -1520,3 +1567,7 @@ Counts below track only `T*` development tasks in the phase task board.
 | `2026-03-19` | Codex | Closed the T314 follow-up correctness gap. Token-opened and token-rejected audit append paths now consume auth-time token identity snapshots instead of re-deriving token identity from later signer state, so concurrent manual resend/contact-correction rotation cannot retarget those audit rows onto a newer token lifecycle. The `/my/sign/<id>/document` route now appends `token_opened` only after the attachment is actually resolved for streaming. Targeted controller token-audit coverage now locks the snapshot-correctness path directly, while `test_portal_race.py` remains focused on business-state and idempotency overlap behavior. Revalidated on a clean database with targeted `/open_sign_portal/tests/test_portal_token_audit.py` and `/open_sign_portal/tests/test_portal_race.py`. |
 | `2026-03-23` | Codex | Completed `T315` as a coverage closeout for the locked external email-only signer strategy without changing the public portal contract. Added a dedicated `test_portal_email_only_flow.py` suite proving end-to-end token use through submit and terminal review, post-terminal replay as review-only, deterministic denial behavior for tampered/expired/rotated/hidden-revoked links, hidden revoked current-token denial on `submit` / `decline` / `otp/verify`, same-email no-token denial, and accepted forwarded-link success for an unrelated authenticated internal user via the token path. Revalidated with targeted `test_portal_email_only_flow.py`, `test_portal_security.py`, `test_portal_email_token.py`, `test_portal_otp.py`, full `/open_sign_portal` (`360 tests, 0 failed`), full `/open_sign` (`111 tests, 0 failed`), and `scripts/review_gate_open_sign.sh --skip-web` (passed). `T317a` was closed separately afterward as a verification-only live-HTTP follow-up. |
 | `2026-03-23` | Codex | Completed `T317a` by adding an explicit developer-run live-HTTP overlap harness in `scripts/verify_portal_live_overlap.py` plus a thin server wrapper in `scripts/run_portal_live_overlap_server.py`. The harness upgrades the target DB, starts a real Odoo HTTP server, deterministically holds `signer_submitted` / `signer_declined` audit emission through file-based IPC, drives isolated overlapping public `submit` and `decline` requests, verifies one `ok` + one `request_locked` + exact replay, and confirms singular business side effects in the database. Live verification exposed and closed a real dispatcher bug: `FOR UPDATE NOWAIT` lock misses on submit/decline were leaving the outer HTTP transaction aborted and producing server-error JSON during session save instead of the intended `request_locked` envelope. `_lock_request_for_update()` now isolates the lock probe inside a savepoint, preserving the public contract under literal live overlap. Revalidated with `scripts/review_gate_open_sign.sh --skip-web` (passed) and the live harness command against `test_open_sign_t317a` on `host.docker.internal:5432` (`submit` passed, `decline` passed). |
+| `2026-03-24` | Codex | Performed a Phase 3 control-document consistency cleanup before moving to `T40`. Normalized stale machine-specific file links to the current workspace path, updated the requirements baseline to distinguish `Covered` / `Partial` / `Open`, refreshed security-control and risk-register status rows to reflect shipped `T313`-`T317a` controls, aligned the audit-taxonomy summary with the current runtime event set and canonical `EVIDENCE_SCHEMA_V1.md`, and marked `M3` complete while leaving `M2` explicitly at implementation-complete/demo-pending. This is a documentation/governance correction only; no runtime contract changed. |
+| `2026-03-25` | Codex | Reopened `M3` as a pre-`T40` follow-up after confirming that the current signer portal is still a detached field-list form with a separate PDF link and explicit portal-side signature/stamp blocker rather than the intended WYSIWYG on-document signing experience. Added `CR-013`, resolved the signer-surface interaction model as an inline `pdf.js` overlay (`D-012` / `ADR-012`), inserted new Phase 3 tasks `T318`-`T322` for inline PDF overlays, guided navigation, portal signature/stamp capture, state-parity integration, and closeout coverage, updated requirement traceability and `M3` exit criteria, and recorded the signer-usability risk that now blocks `T40` until this slice is complete. This is a planning/governance update only; no runtime contract changed yet. |
+| `2026-03-25` | Codex | Completed `T318` by replacing the detached portal field-list signer UI with a PDF-first inline signer surface on `/my/sign/<signer_id>`. `open_sign_portal` now serves structured signer-field geometry/value metadata from the request snapshot, mounts a continuous multi-page `pdf.js` viewer with positioned overlays, keeps the PDF as the primary signing surface with a secondary sidebar, renders signature/stamp boxes as disabled placeholders pending `T320`, and suppresses `token_opened` document-audit noise for the internal viewer fetch path (`viewer=1`) while leaving the raw `/document` route unchanged. Revalidated with targeted scaffold/token-audit/frontend JS suites, `open_sign_web` JS regression, full `/open_sign_portal`, full `/open_sign`, and `scripts/review_gate_open_sign.sh` on fresh database `test_open_sign_t318`. |
+| `2026-03-26` | Codex | Closed the `T318` hardening follow-up without changing the public portal contract. The inline PDF viewer now uses a signed internal `viewer_token` so `viewer=1` is no longer a forgeable document-audit bypass, portal field completion state now derives from backend-authoritative stored values (`has_value`) so explicit `false` checkbox/strikethrough values remain present without rendering checked, and signature/stamp placeholders now expose presence-only metadata instead of raw stored payload dicts before `T320`. Revalidated with targeted scaffold/token-audit suites, portal/frontend HOOT, shared `open_sign_web` JS regression, full `/open_sign_portal` (`366 tests, 0 failed`), full `/open_sign` (`111 tests, 0 failed`), and `scripts/review_gate_open_sign.sh` on `test_open_sign_t318_followup`. |

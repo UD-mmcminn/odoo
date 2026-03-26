@@ -43,12 +43,6 @@
                                 Complete your fields, save progress, then submit when ready.
                             </p>
                         </div>
-                        <a
-                            t-if="document_url"
-                            t-att-href="document_url"
-                            class="btn btn-outline-secondary"
-                            target="_blank"
-                        >View PDF</a>
                     </div>
 
                     <div class="alert alert-info" t-if="preview_mode">
@@ -60,19 +54,6 @@
                     <div class="alert alert-info" t-elif="readonly_message">
                         <t t-esc="readonly_message"/>
                     </div>
-                    <dl class="row mb-3">
-                        <dt class="col-sm-3">Request</dt>
-                        <dd class="col-sm-9" t-esc="sign_request.name"/>
-                        <dt class="col-sm-3">Signer</dt>
-                        <dd class="col-sm-9" t-esc="signer.email"/>
-                        <dt class="col-sm-3">Signer State</dt>
-                        <dd class="col-sm-9" t-esc="signer.state"/>
-                        <dt class="col-sm-3">Request Status</dt>
-                        <dd class="col-sm-9">
-                            <span class="o_open_sign_request_status" t-esc="sign_request.status"/>
-                        </dd>
-                    </dl>
-
                     <div class="alert alert-success" t-if="request.params.get('submitted')">
                         Your submission was recorded.
                     </div>
@@ -98,164 +79,166 @@
                     <div class="alert alert-success d-none o_open_sign_success"/>
 
                     <t t-if="not portal_error_message">
-                        <h5 class="mb-2">Your Fields</h5>
-                        <div class="o_open_sign_fields mb-3">
-                            <t t-if="portal_fields">
-                                <t t-foreach="portal_fields" t-as="field">
-                                    <div
-                                        t-attf-class="mb-3 #{'o_open_sign_field' if field['supported_on_portal'] else ''}"
-                                        t-att-data-field-id="field['id'] if field['supported_on_portal'] else None"
-                                        t-att-data-field-type="field['type'] if field['supported_on_portal'] else None"
-                                    >
-                                        <label class="form-label">
-                                            <span t-esc="field['label']"/>
-                                            <span t-if="field['required']" class="text-danger"> *</span>
-                                        </label>
-                                        <t t-if="field['supported_on_portal'] and field['type'] in ['text', 'name', 'company', 'initials']">
-                                            <input type="text" class="form-control o_open_sign_input" t-att-value="field['value'] or ''" t-att-disabled="'disabled' if readonly_mode else None"/>
-                                        </t>
-                                        <t t-elif="field['supported_on_portal'] and field['type'] == 'email'">
-                                            <input type="email" class="form-control o_open_sign_input" t-att-value="field['value'] or ''" t-att-disabled="'disabled' if readonly_mode else None"/>
-                                        </t>
-                                        <t t-elif="field['supported_on_portal'] and field['type'] == 'phone'">
-                                            <input type="tel" class="form-control o_open_sign_input" t-att-value="field['value'] or ''" t-att-disabled="'disabled' if readonly_mode else None"/>
-                                        </t>
-                                        <t t-elif="field['supported_on_portal'] and field['type'] == 'multiline'">
-                                            <textarea class="form-control o_open_sign_input" rows="3" t-att-disabled="'disabled' if readonly_mode else None" t-esc="field['value'] or ''"/>
-                                        </t>
-                                        <t t-elif="field['supported_on_portal'] and field['type'] == 'selection'">
-                                            <select class="form-select o_open_sign_input" t-att-disabled="'disabled' if readonly_mode else None">
-                                                <option value="">Select...</option>
-                                                <t t-foreach="field['options']" t-as="option">
-                                                    <option
-                                                        t-att-value="option['value']"
-                                                        t-att-selected="'selected' if field['value'] == option['value'] else None"
-                                                        t-esc="option['label']"
-                                                    />
-                                                </t>
-                                            </select>
-                                        </t>
-                                        <t t-elif="field['supported_on_portal'] and field['type'] == 'radio'">
-                                            <div class="d-flex flex-column gap-1">
-                                                <t t-foreach="field['options']" t-as="option">
-                                                    <div class="form-check">
-                                                        <input
-                                                            class="form-check-input o_open_sign_radio"
-                                                            type="radio"
-                                                            t-att-name="'open_sign_radio_%s' % field['id']"
-                                                            t-att-value="option['value']"
-                                                            t-att-checked="'checked' if field['value'] == option['value'] else None"
-                                                            t-att-disabled="'disabled' if readonly_mode else None"
-                                                        />
-                                                        <label class="form-check-label" t-esc="option['label']"/>
+                        <div class="row g-4 o_open_sign_workspace">
+                            <div class="col-12 col-xl-8">
+                                <section class="o_open_sign_surface_panel border rounded p-3 h-100">
+                                    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+                                        <div>
+                                            <h5 class="mb-1">Document Surface</h5>
+                                            <p class="text-muted mb-0">
+                                                Fill fields directly on the PDF preview below.
+                                            </p>
+                                        </div>
+                                        <a
+                                            t-if="document_url"
+                                            t-att-href="document_url"
+                                            class="btn btn-outline-secondary btn-sm"
+                                            target="_blank"
+                                        >View PDF</a>
+                                    </div>
+                                    <div class="o_open_sign_pdf_surface_wrapper">
+                                        <div
+                                            class="o_open_sign_pdf_surface"
+                                            t-att-data-pdf-render-url="pdf_render_url or ''"
+                                        >
+                                            <script type="application/json" class="o_open_sign_fields_payload"><t t-out="portal_fields_json"/></script>
+                                            <div class="o_open_sign_pdf_surface_state text-muted">
+                                                Loading inline PDF preview...
+                                            </div>
+                                        </div>
+                                    </div>
+                                </section>
+                            </div>
+                            <div class="col-12 col-xl-4">
+                                <aside class="o_open_sign_sidebar d-flex flex-column gap-3">
+                                    <section class="border rounded p-3">
+                                        <h5 class="mb-3">Session Details</h5>
+                                        <dl class="row mb-0 small">
+                                            <dt class="col-sm-4">Request</dt>
+                                            <dd class="col-sm-8" t-esc="sign_request.name"/>
+                                            <dt class="col-sm-4">Signer</dt>
+                                            <dd class="col-sm-8" t-esc="signer.email"/>
+                                            <dt class="col-sm-4">Signer State</dt>
+                                            <dd class="col-sm-8" t-esc="signer.state"/>
+                                            <dt class="col-sm-4">Request</dt>
+                                            <dd class="col-sm-8">
+                                                <span class="o_open_sign_request_status" t-esc="sign_request.status"/>
+                                            </dd>
+                                        </dl>
+                                    </section>
+
+                                    <section class="border rounded p-3">
+                                        <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+                                            <h5 class="mb-0">Field Summary</h5>
+                                            <span class="text-muted small">
+                                                <t t-esc="len(portal_fields)"/> field(s)
+                                            </span>
+                                        </div>
+                                        <t t-if="portal_fields">
+                                            <div class="list-group list-group-flush o_open_sign_field_summary">
+                                                <t t-foreach="portal_fields" t-as="field">
+                                                    <div
+                                                        class="list-group-item px-0 o_open_sign_field_summary_item"
+                                                        t-att-data-field-id="field['id']"
+                                                        t-att-data-page="field['page']"
+                                                        t-att-data-required="'true' if field['required'] else 'false'"
+                                                        t-att-data-editable="'true' if field['editable'] else 'false'"
+                                                    >
+                                                        <div class="d-flex justify-content-between gap-2">
+                                                            <strong class="small" t-esc="field['label']"/>
+                                                            <span class="text-muted small">Page <t t-esc="field['page']"/></span>
+                                                        </div>
+                                                        <div class="text-muted small">
+                                                            <span t-esc="field['type']"/>
+                                                            <span t-if="field['required']"> | required</span>
+                                                            <span t-if="field['editable']"> | editable on PDF</span>
+                                                            <span t-elif="field['type'] in ['signature', 'stamp']"> | placeholder until T320</span>
+                                                            <span t-else=""> | read-only</span>
+                                                        </div>
                                                     </div>
                                                 </t>
                                             </div>
                                         </t>
-                                        <t t-elif="field['supported_on_portal'] and field['type'] == 'checkbox'">
-                                            <div class="form-check">
-                                                <input class="form-check-input o_open_sign_checkbox" type="checkbox" t-att-checked="'checked' if field['value'] else None" t-att-disabled="'disabled' if readonly_mode else None"/>
-                                                <label class="form-check-label">
-                                                    Checked
-                                                </label>
-                                            </div>
-                                        </t>
-                                        <t t-elif="field['supported_on_portal'] and field['type'] == 'date'">
-                                            <input type="date" class="form-control o_open_sign_input" t-att-value="field['value'] or ''" t-att-disabled="'disabled' if readonly_mode else None"/>
-                                        </t>
-                                        <t t-elif="field['supported_on_portal'] and field['type'] == 'strikethrough'">
-                                            <div class="form-check">
-                                                <input class="form-check-input o_open_sign_checkbox" type="checkbox" t-att-checked="'checked' if field['value'] else None" t-att-disabled="'disabled' if readonly_mode else None"/>
-                                                <label class="form-check-label">
-                                                    Apply strikethrough
-                                                </label>
-                                            </div>
-                                        </t>
                                         <t t-else="">
-                                            <div class="text-muted">
-                                                This field type is not supported on the portal yet.
+                                            <div class="text-muted small">No fields are assigned to this signer.</div>
+                                        </t>
+                                    </section>
+
+                                    <div class="border rounded p-3" t-if="declined_reason_display">
+                                        <h5 class="mb-2">Decline Reason</h5>
+                                        <pre class="mb-0 text-wrap" t-esc="declined_reason_display"/>
+                                    </div>
+
+                                    <div class="border rounded p-3" t-if="otp_required and not preview_mode and not readonly_mode and not waiting_mode">
+                                        <h5 class="mb-2">Email Verification</h5>
+                                        <p class="text-muted mb-2">Verify the email code before submitting this signing request.</p>
+                                        <p class="mb-3" t-if="otp_email_hint">
+                                            <strong>Code destination:</strong>
+                                            <span t-esc="otp_email_hint"/>
+                                        </p>
+                                        <div class="alert alert-success mb-3" t-if="otp_verified">
+                                            Email verification complete.
+                                        </div>
+                                        <t t-else="">
+                                            <p class="text-muted mb-3" t-if="otp_has_active_challenge">
+                                                A code is active for 10 minutes from request.
+                                            </p>
+                                            <div class="d-flex flex-column gap-2 flex-md-row align-items-md-end">
+                                                <div class="flex-grow-1">
+                                                    <label class="form-label" t-attf-for="o_open_sign_otp_code_#{signer.id}">
+                                                        Verification code
+                                                    </label>
+                                                    <input
+                                                        t-attf-id="o_open_sign_otp_code_#{signer.id}"
+                                                        type="text"
+                                                        inputmode="numeric"
+                                                        maxlength="6"
+                                                        class="form-control o_open_sign_otp_code"
+                                                        placeholder="123456"
+                                                    />
+                                                </div>
+                                                <div class="d-flex gap-2">
+                                                    <button
+                                                        t-if="otp_request_url"
+                                                        type="button"
+                                                        class="btn btn-outline-secondary o_open_sign_otp_request"
+                                                    >Send verification code</button>
+                                                    <button
+                                                        t-if="otp_verify_url"
+                                                        type="button"
+                                                        class="btn btn-outline-success o_open_sign_otp_verify"
+                                                    >Verify code</button>
+                                                </div>
                                             </div>
                                         </t>
                                     </div>
-                                </t>
-                            </t>
-                            <t t-else="">
-                                <div class="text-muted">No fields are assigned to this signer.</div>
-                            </t>
-                        </div>
 
-                        <div class="border rounded p-3 mb-3" t-if="declined_reason_display">
-                            <h5 class="mb-2">Decline Reason</h5>
-                            <pre class="mb-0 text-wrap" t-esc="declined_reason_display"/>
-                        </div>
-
-                        <div class="border rounded p-3 mb-3" t-if="otp_required and not preview_mode and not readonly_mode and not waiting_mode">
-                            <h5 class="mb-2">Email Verification</h5>
-                            <p class="text-muted mb-2">Verify the email code before submitting this signing request.</p>
-                            <p class="mb-3" t-if="otp_email_hint">
-                                <strong>Code destination:</strong>
-                                <span t-esc="otp_email_hint"/>
-                            </p>
-                            <div class="alert alert-success mb-3" t-if="otp_verified">
-                                Email verification complete.
-                            </div>
-                            <t t-else="">
-                                <p class="text-muted mb-3" t-if="otp_has_active_challenge">
-                                    A code is active for 10 minutes from request.
-                                </p>
-                                <div class="d-flex flex-column gap-2 flex-md-row align-items-md-end">
-                                    <div class="flex-grow-1">
-                                        <label class="form-label" t-attf-for="o_open_sign_otp_code_#{signer.id}">
-                                            Verification code
-                                        </label>
-                                        <input
-                                            t-attf-id="o_open_sign_otp_code_#{signer.id}"
-                                            type="text"
-                                            inputmode="numeric"
-                                            maxlength="6"
-                                            class="form-control o_open_sign_otp_code"
-                                            placeholder="123456"
-                                        />
+                                    <div class="border rounded p-3" t-if="not readonly_mode">
+                                        <div class="form-check mb-2">
+                                            <input id="open_sign_consent" class="form-check-input o_open_sign_consent" type="checkbox"/>
+                                            <label class="form-check-label" for="open_sign_consent">
+                                                I consent to electronic signing.
+                                            </label>
+                                        </div>
+                                        <p class="mb-0 text-muted" t-esc="consent_text"/>
                                     </div>
-                                    <div class="d-flex gap-2">
-                                        <button
-                                            t-if="otp_request_url"
-                                            type="button"
-                                            class="btn btn-outline-secondary o_open_sign_otp_request"
-                                        >Send verification code</button>
-                                        <button
-                                            t-if="otp_verify_url"
-                                            type="button"
-                                            class="btn btn-outline-success o_open_sign_otp_verify"
-                                        >Verify code</button>
+
+                                    <div class="d-flex gap-2 flex-wrap" t-if="not readonly_mode">
+                                        <button type="button" class="btn btn-outline-primary o_open_sign_save">Save Draft</button>
+                                        <button type="button" class="btn btn-primary o_open_sign_submit" t-att-disabled="'disabled' if submit_blocked_reason or otp_submit_block_reason else None">Submit</button>
                                     </div>
-                                </div>
-                            </t>
-                        </div>
-
-                        <div class="border rounded p-3 mb-3" t-if="not readonly_mode">
-                            <div class="form-check mb-2">
-                                <input id="open_sign_consent" class="form-check-input o_open_sign_consent" type="checkbox"/>
-                                <label class="form-check-label" for="open_sign_consent">
-                                    I consent to electronic signing.
-                                </label>
+                                    <div class="d-flex gap-2 flex-wrap" t-if="decline_available or (waiting_mode and refresh_url)">
+                                        <button
+                                            t-if="decline_available"
+                                            type="button"
+                                            class="btn btn-outline-danger"
+                                            data-bs-toggle="modal"
+                                            t-attf-data-bs-target="#o_open_sign_decline_modal_#{signer.id}"
+                                        >Decline to Sign</button>
+                                        <a t-if="waiting_mode and refresh_url" t-att-href="refresh_url" class="btn btn-outline-primary">Refresh status</a>
+                                    </div>
+                                </aside>
                             </div>
-                            <p class="mb-0 text-muted" t-esc="consent_text"/>
-                        </div>
-
-                        <div class="d-flex gap-2" t-if="not readonly_mode">
-                            <button type="button" class="btn btn-outline-primary o_open_sign_save">Save Draft</button>
-                            <button type="button" class="btn btn-primary o_open_sign_submit" t-att-disabled="'disabled' if submit_blocked_reason or otp_submit_block_reason else None">Submit</button>
-                        </div>
-                        <div class="d-flex gap-2 flex-wrap mt-3" t-if="decline_available or (waiting_mode and refresh_url)">
-                            <button
-                                t-if="decline_available"
-                                type="button"
-                                class="btn btn-outline-danger"
-                                data-bs-toggle="modal"
-                                t-attf-data-bs-target="#o_open_sign_decline_modal_#{signer.id}"
-                            >Decline to Sign</button>
-                            <a t-if="waiting_mode and refresh_url" t-att-href="refresh_url" class="btn btn-outline-primary">Refresh status</a>
                         </div>
                     </t>
                     <div

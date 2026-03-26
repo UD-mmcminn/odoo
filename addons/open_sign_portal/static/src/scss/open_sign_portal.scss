@@ -1,0 +1,175 @@
+.o_open_sign_workspace {
+    align-items: flex-start;
+}
+
+.o_open_sign_surface_panel {
+    background: linear-gradient(180deg, #fcfdff 0%, #f6f8fc 100%);
+}
+
+.o_open_sign_pdf_surface_wrapper {
+    min-height: 420px;
+}
+
+.o_open_sign_pdf_surface_state {
+    border: 1px dashed #c7d4e4;
+    border-radius: 12px;
+    background: #ffffff;
+    padding: 2rem;
+    text-align: center;
+}
+
+.o_open_sign_pdf_pages {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.o_open_sign_pdf_page_card {
+    border: 1px solid #d5deea;
+    border-radius: 16px;
+    background: #ffffff;
+    box-shadow: 0 12px 30px rgba(15, 42, 74, 0.08);
+    padding: 0.75rem;
+}
+
+.o_open_sign_pdf_page_meta {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 0.5rem;
+    color: #5f6f82;
+    font-size: 0.875rem;
+    font-weight: 600;
+}
+
+.o_open_sign_pdf_page_viewport {
+    position: relative;
+    width: 100%;
+    overflow: hidden;
+    border-radius: 12px;
+    background: #f4f7fb;
+}
+
+.o_open_sign_pdf_page_image {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: top left;
+    user-select: none;
+    pointer-events: none;
+}
+
+.o_open_sign_pdf_page_overlay {
+    position: absolute;
+    inset: 0;
+}
+
+.o_open_sign_field {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    border-radius: 10px;
+    border: 2px solid rgba(15, 106, 200, 0.72);
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 8px 24px rgba(15, 42, 74, 0.08);
+    padding: 0.4rem;
+    overflow: auto;
+}
+
+.o_open_sign_field.o_is_complete {
+    border-color: rgba(27, 135, 84, 0.72);
+}
+
+.o_open_sign_field.o_is_readonly {
+    background: rgba(244, 247, 251, 0.94);
+}
+
+.o_open_sign_field.o_is_placeholder {
+    border-style: dashed;
+    background: rgba(255, 250, 235, 0.94);
+}
+
+.o_open_sign_field_label_row {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    min-height: 1rem;
+}
+
+.o_open_sign_field_label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    line-height: 1.1;
+    color: #17385f;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.o_open_sign_field_required {
+    color: #b42318;
+    font-weight: 700;
+}
+
+.o_open_sign_field_body {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.o_open_sign_field .form-control,
+.o_open_sign_field .form-select {
+    min-height: calc(100% - 0.1rem);
+    font-size: 0.78rem;
+    line-height: 1.2;
+}
+
+.o_open_sign_multiline_input {
+    resize: none;
+}
+
+.o_open_sign_field_choices {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.76rem;
+    overflow: auto;
+}
+
+.o_open_sign_field_choice,
+.o_open_sign_field_toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.76rem;
+}
+
+.o_open_sign_field_placeholder {
+    font-size: 0.76rem;
+    line-height: 1.25;
+    color: #7a5d1e;
+}
+
+.o_open_sign_field_summary .list-group-item {
+    background: transparent;
+}
+
+.o_open_sign_field_summary_item {
+    border-color: #e4e9f1;
+}
+
+@media (max-width: 991.98px) {
+    .o_open_sign_pdf_surface_wrapper {
+        min-height: 320px;
+    }
+
+    .o_open_sign_pdf_page_card {
+        padding: 0.5rem;
+    }
+
+    .o_open_sign_field {
+        padding: 0.3rem;
+    }
+}

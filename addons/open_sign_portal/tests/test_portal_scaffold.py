@@ -1,5 +1,6 @@
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 
+import json
 from datetime import timedelta
 from unittest.mock import patch
 from uuid import uuid4
@@ -13,6 +14,8 @@ from odoo.tests.common import HttpCase, TransactionCase, new_test_user, tagged
 from odoo.addons.open_sign_portal.controllers.portal_sign import OpenSignPortalController
 from odoo.addons.open_sign_portal.tests.common import (
     CONSENT_HASH_RE,
+    PDF_RENDER_URL_RE,
+    PORTAL_FIELDS_JSON_RE,
     REQUEST_REVISION_RE,
     OpenSignPortalTestMixin,
 )
@@ -427,6 +430,16 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
         self.assertTrue(revision_match)
         return hash_match.group(1), int(revision_match.group(1))
 
+    def _extract_pdf_render_url(self, html):
+        url_match = PDF_RENDER_URL_RE.search(html or '')
+        self.assertTrue(url_match)
+        return url_match.group(1)
+
+    def _extract_portal_fields_payload(self, html):
+        payload_match = PORTAL_FIELDS_JSON_RE.search(html or '')
+        self.assertTrue(payload_match)
+        return json.loads(payload_match.group(1))
+
     def _submit_text_signer_successfully(self, bundle, *, value='Signed Value'):
         text_field = bundle['request'].template_id.field_ids.filtered(lambda field: field.type == 'text')[:1]
         self.assertTrue(text_field)
@@ -572,9 +585,10 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
         self.assertIn('Decline to Sign', response.text)
         self.assertIn('Refresh status', response.text)
         self.assertIn('View PDF', response.text)
+        self.assertIn('o_open_sign_pdf_surface', response.text)
         self.assertRegex(
             response.text,
-            rf'(?s)data-field-id="{bundle["field_second"].id}".*?<input[^>]*o_open_sign_input[^>]*disabled',
+            rf'data-field-id="{bundle["field_second"].id}"[^>]*data-editable="false"',
         )
 
         signer.invalidate_recordset(['last_opened_at', 'ip_last', 'state'])
@@ -1907,8 +1921,15 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
             allow_redirects=False,
         )
         self.assertEqual(page_response.status_code, 200)
-        self.assertNotIn(f'data-field-id="{signature_field.id}"', page_response.text)
-        self.assertIn('This field type is not supported on the portal yet.', page_response.text)
+        self.assertIn(f'data-field-id="{signature_field.id}"', page_response.text)
+        self.assertIn('placeholder until T320', page_response.text)
+        fields_payload = self._extract_portal_fields_payload(page_response.text)
+        signature_payload = next(
+            field for field in fields_payload if field['id'] == signature_field.id
+        )
+        self.assertFalse(signature_payload['editable'])
+        self.assertTrue(signature_payload['has_value'])
+        self.assertFalse(signature_payload['value'])
 
         consent_hash, revision = self._extract_consent_hash_and_revision(page_response.text)
         save_response = self.make_jsonrpc_request(
@@ -1928,6 +1949,139 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
         ], limit=1)
         self.assertTrue(signature_value)
         self.assertEqual(signature_value.value_json, {'signature': 'existing'})
+
+    def test_portal_page_embeds_snapshot_geometry_payload_and_viewer_url(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Geometry Payload',
+            owner=self.open_sign_user,
+        )
+        signer = bundle['signer']
+        token = signer.access_token
+        text_field = bundle['request'].template_id.field_ids.filtered(lambda field: field.type == 'text')[:1]
+        self.assertTrue(text_field)
+
+        self.authenticate(None, None)
+        response = self.url_open(
+            f"/my/sign/{signer.id}?access_token={token}",
+            allow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        pdf_render_url = self._extract_pdf_render_url(response.text)
+        self.assertIn(f"/my/sign/{signer.id}/document?viewer=1", pdf_render_url)
+        self.assertRegex(pdf_render_url, r'viewer_token=[^&]+')
+        self.assertIn(f"access_token={token}", pdf_render_url)
+
+        portal_fields = self._extract_portal_fields_payload(response.text)
+        field_payload = next(field for field in portal_fields if field['id'] == text_field.id)
+        self.assertEqual(field_payload['page'], text_field.page)
+        self.assertEqual(field_payload['x'], text_field.x)
+        self.assertEqual(field_payload['y'], text_field.y)
+        self.assertEqual(field_payload['width'], text_field.width)
+        self.assertEqual(field_payload['height'], text_field.height)
+        self.assertTrue(field_payload['editable'])
+        self.assertTrue(field_payload['supported_on_portal'])
+
+    def test_portal_page_payload_marks_explicit_false_toggle_values_as_present(self):
+        template = self._create_template(self.env, 'Portal Toggle Presence Payload')
+        role = self._create_role(self.env, template, 'Toggle Presence Signer', 10)
+        self._create_field(
+            self.env,
+            template,
+            role,
+            type='text',
+            label='Visible Text',
+            required=True,
+            sequence=10,
+        )
+        checkbox_field = self._create_field(
+            self.env,
+            template,
+            role,
+            type='checkbox',
+            label='Explicit Checkbox',
+            required=False,
+            sequence=20,
+        )
+        strikethrough_field = self._create_field(
+            self.env,
+            template,
+            role,
+            type='strikethrough',
+            label='Explicit Strike',
+            required=False,
+            sequence=30,
+        )
+        sign_request = self._create_request(self.env, template, owner=self.open_sign_user)
+        signer = self._create_signer(
+            self.env,
+            sign_request,
+            role,
+            email='portal.toggle.presence@example.com',
+            sequence=10,
+        )
+        self._prepare_request_for_portal(sign_request)
+        token = signer._portal_ensure_token()
+
+        value_model = self.env['open.sign.request.value'].sudo().with_context(
+            open_sign_trusted_portal_value_payload=True
+        )
+        value_model.create({
+            'request_id': sign_request.id,
+            'template_field_id': checkbox_field.id,
+            'signer_id': signer.id,
+            'value_text': False,
+            'value_json': False,
+            'signed_payload_attachment_id': False,
+            'is_valid': True,
+        })
+        value_model.create({
+            'request_id': sign_request.id,
+            'template_field_id': strikethrough_field.id,
+            'signer_id': signer.id,
+            'value_text': False,
+            'value_json': {'applied': False},
+            'signed_payload_attachment_id': False,
+            'is_valid': True,
+        })
+
+        self.authenticate(None, None)
+        response = self.url_open(
+            f"/my/sign/{signer.id}?access_token={token}",
+            allow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        portal_fields = self._extract_portal_fields_payload(response.text)
+        checkbox_payload = next(field for field in portal_fields if field['id'] == checkbox_field.id)
+        strikethrough_payload = next(field for field in portal_fields if field['id'] == strikethrough_field.id)
+
+        self.assertFalse(checkbox_payload['value'])
+        self.assertTrue(checkbox_payload['has_value'])
+        self.assertFalse(strikethrough_payload['value'])
+        self.assertTrue(strikethrough_payload['has_value'])
+
+    def test_portal_page_payload_only_exposes_active_signer_fields(self):
+        bundle = self._create_ordered_two_signer_session(
+            self.env,
+            name='Portal Signer Scoped Payload',
+            owner=self.open_sign_user,
+            ordered_signing=False,
+        )
+        signer = bundle['signer_first']
+        token = bundle['token_first']
+
+        self.authenticate(None, None)
+        response = self.url_open(
+            f"/my/sign/{signer.id}?access_token={token}",
+            allow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        portal_fields = self._extract_portal_fields_payload(response.text)
+        field_ids = {field['id'] for field in portal_fields}
+        self.assertEqual(field_ids, {bundle['field_first'].id})
 
     def test_multiple_initials_fields_remain_editable_before_submit_and_lock_after_submit(self):
         template = self._create_template(self.env, 'Portal Initials Lock')

@@ -5,6 +5,8 @@ import { rpc } from "@web/core/network/rpc";
 import { Interaction } from "@web/public/interaction";
 import { redirect } from "@web/core/utils/urls";
 
+import { OpenSignPortalPdfSurface } from "@open_sign_portal/interactions/portal_pdf_surface";
+
 export class OpenSignPortalSession extends Interaction {
     static selector = ".o_open_sign_session";
 
@@ -34,6 +36,16 @@ export class OpenSignPortalSession extends Interaction {
         this.declineReasonInput = this.el.parentElement?.querySelector(".o_open_sign_decline_reason")
             || this.el.querySelector(".o_open_sign_decline_reason");
         this.otpCodeInput = this.el.querySelector(".o_open_sign_otp_code");
+        this.pdfSurface = new OpenSignPortalPdfSurface(this);
+    }
+
+    async willStart() {
+        await super.willStart();
+        await this.pdfSurface.willStart();
+    }
+
+    start() {
+        this.pdfSurface.start();
     }
 
     _pendingIdempotencyStorageKey(endpoint) {
@@ -141,7 +153,7 @@ export class OpenSignPortalSession extends Interaction {
         const values = [];
         for (const fieldNode of this.el.querySelectorAll(".o_open_sign_field")) {
             const fieldId = Number.parseInt(fieldNode.dataset.fieldId || "0", 10);
-            if (!fieldId) {
+            if (!fieldId || fieldNode.dataset.editable !== "true") {
                 continue;
             }
             values.push({

@@ -3,15 +3,20 @@
 from contextlib import contextmanager
 from datetime import timedelta
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
 import odoo.sql_db
 from psycopg2.extensions import ISOLATION_LEVEL_READ_COMMITTED
 from odoo import SUPERUSER_ID, api, fields
 from odoo.addons.open_sign.services import notification_service
-from odoo.addons.open_sign_portal.controllers.portal_sign import OpenSignPortalController
+from odoo.addons.open_sign_portal.controllers.portal_sign import (
+    INLINE_PDF_VIEWER_SCOPE,
+    OpenSignPortalController,
+)
 from odoo.exceptions import ValidationError
 from odoo.orm.environments import Transaction
+from odoo.tools.misc import hash_sign
 from odoo.tests.common import HttpCase, TransactionCase, new_test_user, tagged
 
 from odoo.addons.open_sign_portal.tests.common import (
@@ -254,22 +259,23 @@ class TestOpenSignPortalTokenAuditController(TransactionCase, OpenSignPortalCont
                 order='event_sequence asc, id asc',
             )
 
-    def _call_public_http_controller(self, *, method_name, signer_id, access_token, path):
+    def _call_public_http_controller(self, *, method_name, signer_id, access_token, path, extra_args=None):
         with self._fresh_read_committed_test_env(uid=self.public_user_id) as env:
             controller = OpenSignPortalController()
             with self._portal_request_context(env, path=path, user_agent='python-requests/2.31.0') as mocked_request:
                 mocked_request.type = 'http'
-                mocked_request.httprequest.args = {'access_token': access_token}
+                mocked_request.httprequest.args = {'access_token': access_token, **(extra_args or {})}
                 result = getattr(controller, method_name)(signer_id, access_token=access_token)
                 env.cr.commit()
         return result
 
-    def _call_public_document_controller(self, signer_id, *, access_token):
+    def _call_public_document_controller(self, signer_id, *, access_token, extra_args=None):
         return self._call_public_http_controller(
             method_name='portal_sign_document',
             signer_id=signer_id,
             access_token=access_token,
             path=f'/my/sign/{signer_id}/document',
+            extra_args=extra_args,
         )
 
     def _call_public_page_controller(self, signer_id, *, access_token):
@@ -278,6 +284,29 @@ class TestOpenSignPortalTokenAuditController(TransactionCase, OpenSignPortalCont
             signer_id=signer_id,
             access_token=access_token,
             path=f'/my/sign/{signer_id}',
+        )
+
+    def _get_page_pdf_render_args(self, signer_id, *, access_token):
+        with self._fresh_read_committed_test_env(uid=self.public_user_id) as env:
+            controller = OpenSignPortalController()
+            with self._portal_request_context(env, path=f'/my/sign/{signer_id}') as mocked_request:
+                mocked_request.type = 'http'
+                mocked_request.httprequest.args = {'access_token': access_token}
+                auth_context = controller._check_signer_read_access(
+                    signer_id,
+                    access_token=access_token,
+                    entrypoint='page',
+                )
+                values = controller._build_portal_page_values(auth_context)
+        query_params = parse_qs(urlparse(values['pdf_render_url']).query)
+        return {key: items[-1] for key, items in query_params.items()}
+
+    def _get_signer_document_attachment_id(self, signer_id):
+        return self._run_committed(
+            lambda env: (
+                env['open.sign.request.signer'].browse(signer_id).request_id.template_version_id.source_attachment_id
+                or env['open.sign.request.signer'].browse(signer_id).request_id.template_id.source_attachment_id
+            ).id
         )
 
     def _call_token_opened_after_auth_capture(self, signer_id, *, access_token, entrypoint='page', before_append=None):
@@ -346,6 +375,86 @@ class TestOpenSignPortalTokenAuditController(TransactionCase, OpenSignPortalCont
         )
         self.assertEqual(len(audit_logs), 1)
         self.assertEqual(audit_logs[0]['metadata_json']['entrypoint'], 'document')
+
+    def test_inline_viewer_document_fetch_does_not_append_document_token_opened(self):
+        bundle = self._create_committed_portal_bundle(name='Portal Token Audit Viewer Fetch')
+        viewer_args = self._get_page_pdf_render_args(bundle['signer'], access_token=bundle['token'])
+
+        response = self._call_public_document_controller(
+            bundle['signer'],
+            access_token=bundle['token'],
+            extra_args=viewer_args,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(self._get_token_event_logs_committed(
+            request_id=bundle['request'],
+            signer_id=bundle['signer'],
+            event_type='token_opened',
+        ))
+
+    def test_viewer_flag_without_signed_token_still_appends_document_token_opened(self):
+        bundle = self._create_committed_portal_bundle(name='Portal Token Audit Bare Viewer Flag')
+
+        response = self._call_public_document_controller(
+            bundle['signer'],
+            access_token=bundle['token'],
+            extra_args={'viewer': '1'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        audit_logs = self._get_token_event_logs_committed(
+            request_id=bundle['request'],
+            signer_id=bundle['signer'],
+            event_type='token_opened',
+        )
+        self.assertEqual(len(audit_logs), 1)
+        self.assertEqual(audit_logs[0]['metadata_json']['entrypoint'], 'document')
+
+    def test_invalid_or_expired_or_mismatched_viewer_token_falls_back_to_document_open_audit(self):
+        other_bundle = self._create_committed_portal_bundle(name='Portal Token Audit Viewer Mismatch Other')
+        mismatched_viewer_args = self._get_page_pdf_render_args(other_bundle['signer'], access_token=other_bundle['token'])
+
+        def build_expired_viewer_token(signer_id):
+            attachment_id = self._get_signer_document_attachment_id(signer_id)
+            return hash_sign(
+                self.env['ir.config_parameter'].sudo().env,
+                INLINE_PDF_VIEWER_SCOPE,
+                {
+                    'signer_id': signer_id,
+                    'attachment_id': attachment_id,
+                    'viewer_context': 'token',
+                },
+                expiration=timedelta(seconds=-1),
+            )
+
+        for label, extra_args in (
+            ('invalid', {'viewer': '1', 'viewer_token': 'broken-viewer-token'}),
+            ('expired', None),
+            ('mismatched', {'viewer': '1', 'viewer_token': mismatched_viewer_args['viewer_token']}),
+        ):
+            with self.subTest(case=label):
+                bundle = self._create_committed_portal_bundle(name=f'Portal Token Audit Viewer {label.title()}')
+                if label == 'expired':
+                    extra_args = {
+                        'viewer': '1',
+                        'viewer_token': build_expired_viewer_token(bundle['signer']),
+                    }
+
+                response = self._call_public_document_controller(
+                    bundle['signer'],
+                    access_token=bundle['token'],
+                    extra_args=extra_args,
+                )
+
+                self.assertEqual(response.status_code, 200)
+                audit_logs = self._get_token_event_logs_committed(
+                    request_id=bundle['request'],
+                    signer_id=bundle['signer'],
+                    event_type='token_opened',
+                )
+                self.assertEqual(len(audit_logs), 1)
+                self.assertEqual(audit_logs[0]['metadata_json']['entrypoint'], 'document')
 
     def test_document_missing_attachment_does_not_append_token_opened(self):
         bundle = self._create_committed_portal_bundle(name='Portal Token Audit Missing Document')

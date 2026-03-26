@@ -693,13 +693,83 @@ Test Plan: Completed with a dedicated `test_portal_email_only_flow.py` suite plu
 Security Notes: Completed. The suite locks the current no-leak and deterministic denial contract for the email-only signer track while explicitly proving the accepted baseline risk model: possession of a live external token is sufficient even for a forwarded/shared link, but email-based ACL fallback does not exist for external signers.
 Rollback/Migration Impact: No schema, data, ACL, cron, or public-contract changes. This was a coverage-only closeout on top of `T310`-`T314`.
 
+## T318
+
+Task ID: T318
+Goal: Replace the detached field-list-first portal page with an inline PDF viewer plus positioned signer-field overlays on `/my/sign/<signer_id>`.
+Phase: Phase 3
+Requirements: `R-001`, `R-009`
+Dependencies: `T32`-`T39`, `T310`-`T315`, and the current secure portal baseline complete
+Target Files: addons/open_sign_portal/controllers/*, addons/open_sign_portal/views/*, addons/open_sign_portal/static/src/*, addons/open_sign_web/static/src/* if reuse hooks are needed, addons/open_sign_portal/tests/*
+Implementation Notes: Completed. `open_sign_portal` now mounts a PDF-first signer surface on `/my/sign/<id>` using a new shared `open_sign_web` helper for `pdf.js` page loading/rasterization plus normalized overlay geometry. The page payload now exposes structured signer-field metadata from the request snapshot for the active signer only, including page, geometry, type, label, required, options, value, `supported_on_portal`, and `editable`. `/my/sign/<id>/document` remains the raw document stream/view route, while `/my/sign/<id>/document?viewer=1` is used internally for inline rasterization without creating document-open audit noise.
+Acceptance Criteria: Completed. The signer now sees the PDF inline on the page, supported fields render in the correct position on the correct page, signature/stamp fields render as disabled placeholders pending `T320`, and existing portal auth/order/readonly behavior remains intact.
+Test Plan: Completed with targeted scaffold/controller coverage for payload geometry and viewer routing, targeted token-audit regression for the `viewer=1` fetch path, portal frontend HOOT coverage for stacked-page rendering and overlay serialization, shared `open_sign_web` JS regression for the extracted PDF helper, full `/open_sign_portal`, full `/open_sign`, and `scripts/review_gate_open_sign.sh` on fresh database `test_open_sign_t318`.
+Security Notes: Completed. UI rendering remains convenience only; server-side signer authority, token scope, and field validation stay authoritative. The new inline surface does not expose hidden fields or other signers' fields, and the viewer-mode PDF fetch does not widen token audit semantics beyond the existing page-open contract.
+Rollback/Migration Impact: No schema or ACL changes expected. If new page payload fields are added, keep them backward-compatible within the portal page only.
+
+## T319
+
+Task ID: T319
+Goal: Add guided field navigation and keyboard flow to the portal signing surface.
+Phase: Phase 3
+Requirements: `R-026`, `R-029`
+Dependencies: `T318` in progress or complete
+Target Files: addons/open_sign_portal/static/src/*, addons/open_sign_portal/views/*, addons/open_sign_portal/tests/*
+Implementation Notes: Add active-field state, `Next field`, `Tab`, and `Shift+Tab` navigation across pages and field types. Auto-scroll/focus the target field, show current/completed/incomplete state, and on save/submit validation failure move focus to the first invalid actionable field. Disable guided editing appropriately in waiting, preview, and readonly review states.
+Acceptance Criteria: `Next field` always lands on the next incomplete actionable field when one exists, keyboard navigation works across pages, and non-editable states stay non-editable.
+Test Plan: Add frontend tests for focus flow, cross-page navigation, and first-invalid targeting; rerun portal contract/security suites to confirm route behavior is unchanged.
+Security Notes: Navigation logic must not create hidden mutating paths in waiting/readonly/preview states. Server validation remains the authority for required fields and order gating.
+Rollback/Migration Impact: No schema or migration impact expected.
+
+## T320
+
+Task ID: T320
+Goal: Implement portal signature and stamp capture on the WYSIWYG signing surface.
+Phase: Phase 3
+Requirements: `R-002`, `R-005`, `R-026`
+Dependencies: `T318` complete enough to host overlay editing; reuse decisions from `T25`
+Target Files: addons/open_sign_portal/controllers/*, addons/open_sign_portal/static/src/*, addons/open_sign_portal/views/*, addons/open_sign_portal/tests/*, shared capture helpers if reuse is required
+Implementation Notes: Remove the current portal-side signature/stamp unsupported blocker by reusing the existing capture/adoption strategy from `T25`. Keep the current server-authoritative attachment-backed payload contract and support mixed text/checkbox/date/signature/stamp completion on the same surface.
+Acceptance Criteria: Required signature/stamp fields no longer block portal completion as unsupported, captured payloads persist through the existing model rules, and save/submit work with mixed field types.
+Test Plan: Add targeted portal tests for signature/stamp capture, save, submit, and readonly review; rerun `/open_sign_portal`, `/open_sign`, and existing signature-adoption regressions.
+Security Notes: Signature/stamp payloads remain signer-scoped and server-validated. No client-only trust may be introduced for evidence-bearing values.
+Rollback/Migration Impact: No schema or ACL change is expected; if shared helpers are touched, verify non-portal adoption flows remain intact.
+
+## T321
+
+Task ID: T321
+Goal: Integrate the WYSIWYG signer surface with the existing portal route contract and state parity rules.
+Phase: Phase 3
+Requirements: `R-009`, `R-021`, `R-029`
+Dependencies: `T318`-`T320` complete enough for end-to-end interaction
+Target Files: addons/open_sign_portal/controllers/*, addons/open_sign_portal/static/src/*, addons/open_sign_portal/views/*, addons/open_sign_portal/tests/*
+Implementation Notes: Keep `save`, `submit`, `decline`, `otp/request`, and `otp/verify` route shapes and JSON envelopes unchanged unless a real blocker is discovered. Preserve idempotency, locking, OTP, token, waiting-order, readonly-review, preview, and terminal review behavior while serializing overlay values back into the existing server contract.
+Acceptance Criteria: No public route or JSONRPC envelope changes, existing contract/error-code tests still pass, and review-only states show the same document inline with non-editable overlays.
+Test Plan: Extend controller/HTTP tests for waiting, readonly, preview, terminal review, OTP, and idempotent mutation behavior with the new surface active; rerun the review gate.
+Security Notes: Do not redesign token, OTP, idempotency, or denial semantics in this slice. The UI integration must respect existing signer authority boundaries.
+Rollback/Migration Impact: No migration expected. Keep route compatibility intact so this remains a UI/workflow change rather than a contract version change.
+
+## T322
+
+Task ID: T322
+Goal: Add regression coverage and closeout validation for the portal WYSIWYG signer surface, then reclose `M3`.
+Phase: Phase 3
+Requirements: `R-005`, `R-009`, `R-021`, `R-026`
+Dependencies: `T318`-`T321` complete
+Target Files: addons/open_sign_portal/tests/*, frontend test assets if needed, FEATURE.md, CONTINUE.md, doc/open_sign/task_cards/TASK_CARDS.md
+Implementation Notes: Do not ship the new signer surface based on visual inspection alone. Add focused frontend tests for overlay rendering, geometry alignment, active-field navigation, keyboard flow, and signature/stamp capture; extend portal HTTP/controller tests for waiting/readonly/preview parity, non-mutating terminal review, and removal of the portal-side unsupported signature/stamp blocker; rerun `/open_sign_portal`, `/open_sign`, and `scripts/review_gate_open_sign.sh --skip-web` before reclosing `M3`.
+Acceptance Criteria: The new signer surface is covered by real regression tests, all existing portal security/contract/idempotency guarantees remain green, and `M3` is only reclosed after the validation gate passes.
+Test Plan: Run targeted portal frontend/controller suites, full `/open_sign_portal`, full `/open_sign`, `scripts/review_gate_open_sign.sh --skip-web`, and the mandatory review checklist.
+Security Notes: Closeout must explicitly confirm no regression in token scope, OTP, idempotency, readonly states, or public denial envelopes.
+Rollback/Migration Impact: No schema changes expected. This is a closeout and verification slice on top of `T318`-`T321`.
+
 ## T40
 
 Task ID: T40
 Goal: Implement value-to-PDF rendering/flattening.
 Phase: Phase 4
 Requirements: `R-001`, `R-008`, `R-028`
-Dependencies: Phases 1 and 3 ready for end-to-end flow
+Dependencies: `T318`-`T322` complete; Phases 1 and reopened 3 ready for end-to-end flow
 Target Files: addons/open_sign/services/*, addons/open_sign/report/*, addons/open_sign/tests/*
 Implementation Notes: Follow schema/API/security contracts defined in FEATURE.md and M0 deliverables.
 Acceptance Criteria: Behavior matches task goal, related tests pass, traceability references updated.

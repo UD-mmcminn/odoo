@@ -3,10 +3,21 @@
 import { registry } from "@web/core/registry";
 import { _t } from "@web/core/l10n/translation";
 import { useService } from "@web/core/utils/hooks";
-import { loadPDFJSAssets } from "@web/core/utils/pdfjs";
 import { url } from "@web/core/utils/urls";
 import { standardActionServiceProps } from "@web/webclient/actions/action_service";
 
+import {
+    DEFAULT_PAGE_SIZE,
+    MIN_FIELD_SIZE,
+    asNumber,
+    clamp,
+    coerceRenderableGeometry,
+    formatOverlayFieldStyle,
+    formatPdfPageStyle,
+    loadPdfPagesFromUrl,
+    roundGeometryNumber,
+    serializeFieldGeometry,
+} from "@open_sign_web/js/pdf_surface_utils";
 import {
     getFieldPaletteEntries,
     getPaletteEntryByType,
@@ -28,8 +39,6 @@ import {
     useState,
 } from "@odoo/owl";
 
-const MIN_FIELD_SIZE = 0.02;
-const DEFAULT_PAGE_SIZE = Object.freeze({ width: 800, height: 1132 });
 const DEFAULT_FIELD_TYPE = "text";
 const TEMPLATE_MODEL = "open.sign.template";
 const ROLE_MODEL = "open.sign.role";
@@ -42,19 +51,6 @@ const DEFAULT_SIGNATURE_DISPLAY_NAME = _t("Signer");
 
 function getDefaultOptionList() {
     return `${_t("Option 1")}\n${_t("Option 2")}`;
-}
-
-function asNumber(value, fallback = 0) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function clamp(value, min, max) {
-    return Math.min(Math.max(value, min), max);
-}
-
-function roundGeometryNumber(value) {
-    return Math.round(value * 10000) / 10000;
 }
 
 function asPositiveInteger(value) {
@@ -106,14 +102,7 @@ export function supportsSignatureAdoption(fieldType) {
     return SIGNATURE_ADOPTION_FIELD_TYPES.has(fieldType);
 }
 
-export function serializeFieldGeometry(geometry = {}) {
-    const page = Math.max(1, Math.trunc(asNumber(geometry.page, 1)));
-    const x = Math.max(0, asNumber(geometry.x));
-    const y = Math.max(0, asNumber(geometry.y));
-    const width = Math.max(0, asNumber(geometry.width));
-    const height = Math.max(0, asNumber(geometry.height));
-    return { page, x, y, width, height };
-}
+export { serializeFieldGeometry };
 
 export function normalizePageNumber(pageNumber, pages = [], fallback = 1) {
     const normalizedFallback = Math.max(1, Math.trunc(asNumber(fallback, 1)));
@@ -151,22 +140,6 @@ export function normalizeCanvasToPdfCoordinates(geometry = {}, canvasSize = {}, 
         y: clamp(normalized.y * yRatio, 0, pdfHeight),
         width: clamp(normalized.width * xRatio, 0, pdfWidth),
         height: clamp(normalized.height * yRatio, 0, pdfHeight),
-    };
-}
-
-function coerceRenderableGeometry(geometry = {}) {
-    const normalized = serializeFieldGeometry(geometry);
-    const width = clamp(normalized.width || MIN_FIELD_SIZE, MIN_FIELD_SIZE, 1);
-    const height = clamp(normalized.height || MIN_FIELD_SIZE, MIN_FIELD_SIZE, 1);
-    const x = clamp(normalized.x, 0, 1 - width);
-    const y = clamp(normalized.y, 0, 1 - height);
-
-    return {
-        page: normalized.page,
-        x: roundGeometryNumber(x),
-        y: roundGeometryNumber(y),
-        width: roundGeometryNumber(width),
-        height: roundGeometryNumber(height),
     };
 }
 
@@ -485,14 +458,11 @@ export class TemplateCanvas extends Component {
     }
 
     getFieldStyle(field) {
-        const geometry = coerceRenderableGeometry(field);
-        return `left:${geometry.x * 100}%;top:${geometry.y * 100}%;width:${geometry.width * 100}%;height:${geometry.height * 100}%;`;
+        return formatOverlayFieldStyle(field);
     }
 
     getPageStyle(page) {
-        const width = Math.max(1, asNumber(page.width, this.state.pageSize.width));
-        const height = Math.max(1, asNumber(page.height, this.state.pageSize.height));
-        return `aspect-ratio: ${width} / ${height};`;
+        return formatPdfPageStyle(page, this.state.pageSize);
     }
 
     getFieldsForPage(pageNumber) {
@@ -814,37 +784,8 @@ export class TemplateCanvas extends Component {
         }
 
         const pdfUrl = url(`/web/content/${attachmentId}`);
-        let initialWorkerSrc = null;
         try {
-            await loadPDFJSAssets();
-            initialWorkerSrc = globalThis.pdfjsLib.GlobalWorkerOptions.workerSrc;
-            globalThis.pdfjsLib.GlobalWorkerOptions.workerSrc =
-                "/web/static/lib/pdfjs/build/pdf.worker.js";
-            const pdf = await globalThis.pdfjsLib.getDocument(pdfUrl).promise;
-            if (loadToken !== this._pdfLoadToken) {
-                return;
-            }
-            const pages = [];
-            for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
-                const page = await pdf.getPage(pageNumber);
-                if (loadToken !== this._pdfLoadToken) {
-                    return;
-                }
-                const baseViewport = page.getViewport({ scale: 1 });
-                const renderScale = Math.max(1, Math.min(1.5, 1100 / Math.max(1, baseViewport.width)));
-                const viewport = page.getViewport({ scale: renderScale });
-                const canvas = document.createElement("canvas");
-                canvas.width = Math.max(1, Math.floor(viewport.width));
-                canvas.height = Math.max(1, Math.floor(viewport.height));
-                const canvasContext = canvas.getContext("2d");
-                await page.render({ canvasContext, viewport }).promise;
-                pages.push({
-                    number: pageNumber,
-                    width: viewport.width,
-                    height: viewport.height,
-                    imageDataUrl: canvas.toDataURL("image/png"),
-                });
-            }
+            const pages = await loadPdfPagesFromUrl(pdfUrl);
             if (loadToken !== this._pdfLoadToken) {
                 return;
             }
@@ -863,10 +804,6 @@ export class TemplateCanvas extends Component {
             this.state.activePage = 1;
             this.state.pageSize = { ...DEFAULT_PAGE_SIZE };
             this.notification.add(_t("Could not display the selected pdf"), { type: "danger" });
-        } finally {
-            if (globalThis.pdfjsLib && initialWorkerSrc !== null) {
-                globalThis.pdfjsLib.GlobalWorkerOptions.workerSrc = initialWorkerSrc;
-            }
         }
     }
 
