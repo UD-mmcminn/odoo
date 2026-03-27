@@ -1,7 +1,7 @@
 # Open Sign Continuation Notes
 
 Last updated: 2026-03-26
-Scope checkpoint: M3 WYSIWYG signer UX follow-up is in progress; `T318` is complete and `T319`-`T322` remain before `T40`
+Scope checkpoint: M3 WYSIWYG signer UX follow-up is in progress; `T318`-`T319` are complete and `T320`-`T322` remain before `T40`
 
 ## Why This Exists
 
@@ -641,16 +641,15 @@ Use this before marking any task complete (especially model/state/security work)
    - `./odoo-bin -d <db> -i open_sign_portal --stop-after-init`
    - `./odoo-bin -d <db> --test-enable --test-tags /open_sign_portal --stop-after-init`
    - `scripts/review_gate_open_sign.sh --skip-web -d <db>`
-2. If tests pass, continue the reopened Phase 3 signer-UX follow-up on top of the now-closed `T32`/`T33`/`T34`/`T35`/`T36`/`T37`/`T38`/`T39`/`T316`/`T317`/`T317a`/`T310`/`T311`/`T312`/`T313`/`T314`/`T315`/`T318` portal security baseline; the next implementation task is `T319`, not `T40`.
+2. If tests pass, continue the reopened Phase 3 signer-UX follow-up on top of the now-closed `T32`/`T33`/`T34`/`T35`/`T36`/`T37`/`T38`/`T39`/`T316`/`T317`/`T317a`/`T310`/`T311`/`T312`/`T313`/`T314`/`T315`/`T318`/`T319` portal security baseline; the next implementation task is `T320`, not `T40`.
 3. Re-run recurring hardening re-audit (`T610`) after each major phase slice and after every 3 completed implementation tasks.
 
 ## Next Tasks (Planned Order)
 
-1. `T319` Add guided field navigation, `Next field`, and `Tab` / `Shift+Tab` keyboard flow.
-2. `T320` Implement portal signature/stamp capture on the overlay surface.
-3. `T321` Integrate the WYSIWYG surface with existing portal contracts and readonly/waiting/preview parity.
-4. `T322` Add frontend/controller/E2E coverage and reclose `M3`.
-5. `T40` Implement value-to-PDF rendering/flattening.
+1. `T320` Implement portal signature/stamp capture on the overlay surface.
+2. `T321` Integrate the WYSIWYG surface with existing portal contracts and readonly/waiting/preview parity.
+3. `T322` Add frontend/controller/E2E coverage and reclose `M3`.
+4. `T40` Implement value-to-PDF rendering/flattening.
 
 ## Notes For Next Chat
 
@@ -664,14 +663,16 @@ Use this before marking any task complete (especially model/state/security work)
   - request-version snapshot-backed portal rendering/validation, including legacy snapshot fallback and fail-closed contract errors
   - unsupported portal fields excluded from serialization so existing stored values are preserved
   - active-request field role/delete guards to prevent live template drift from breaking in-flight contracts
-  - tokenized document access aligned with read-only review states, while `/document` still serves the raw source PDF and the new inline signer surface now lives on `/my/sign/<id>` pending guided-navigation/capture follow-ups in `T319`-`T321` and later artifact work in `T40`/`T41`
+  - tokenized document access aligned with read-only review states, while `/document` still serves the raw source PDF and the new inline signer surface now lives on `/my/sign/<id>` pending signature-capture/parity follow-ups in `T320`-`T321` and later artifact work in `T40`/`T41`
   - explicit regression coverage proving terminal preview remains non-mutating and scaffold action endpoints stay immutable on terminal requests
 - Current signer UX gap reopened under `M3`:
   - `T318` is complete: `/my/sign/<id>` now renders a split-view PDF-first signer surface with continuous stacked pages, positioned signer-field overlays, sidebar summary/actions, and snapshot-backed geometry/value payloads
   - the inline viewer now uses `viewer=1` plus a signed `viewer_token`, so PDF rasterization does not create document-level `token_opened` audit noise but bare or invalid `viewer=1` requests still fall back to normal raw `/document` auditing
   - signature/stamp fields now appear in-place as disabled placeholders, but actual portal capture is still deferred to `T320`
   - portal completion state now follows backend-authored `has_value`, so explicit stored `false` checkbox/strikethrough values remain present without rendering checked, and signature/stamp placeholders no longer expose raw stored payload dicts before `T320`
-  - `T319`-`T322` must still deliver guided navigation, actual signature/stamp capture, parity/coverage closeout, and `M3` reclose before `T40`
+  - `T319` is complete: the inline signer surface now exposes active/complete/incomplete/invalid field state, a PDF-header `Next field` control, `Tab` / `Shift+Tab` traversal across actionable fields in snapshot order, clickable sidebar summary jump targets, and first-invalid client-side focus before save/submit RPC while preserving server-authoritative validation
+  - the `T319` hardening follow-up is also complete: `Next field` now walks relative to the current active field in the full actionable cursor even when the active field is already complete, and guided-navigation affordances now disable themselves when the inline PDF surface is unavailable or fails to load
+  - `T320`-`T322` must still deliver actual signature/stamp capture, parity/coverage closeout, and `M3` reclose before `T40`
 - `T33` is now closed. Additional portal ordering guarantees now include:
   - sequential out-of-turn signers render as read-only waiting sessions instead of failing only at submit time
   - sequential out-of-turn `save` and `submit` both return `signing_order_blocked`
@@ -837,3 +838,13 @@ Use this before marking any task complete (especially model/state/security work)
   - signature/stamp fields now render in-place as disabled placeholders until `T320`; they are excluded from editable payload collection in `T318`, and the page now exposes presence-only metadata rather than raw stored signature/stamp payload dicts
   - portal field completion state now follows backend-authoritative `has_value`, so stored `false` checkbox/strikethrough values remain present without rendering checked
   - validation passed for targeted scaffold, token-audit, portal JS, and shared `open_sign_web` JS suites, plus full `/open_sign_portal` (`366 tests, 0 failed`), full `/open_sign` (`111 tests, 0 failed`), and `scripts/review_gate_open_sign.sh` on database `test_open_sign_t318_followup`
+- `T319` is now closed as the guided navigation and keyboard-flow slice on top of the inline signer surface:
+  - portal page payloads now include the minimal snapshot-backed ordering and validation metadata needed for deterministic traversal: `sequence`, `min_length`, `max_length`, and `validation_regex`
+  - the inline PDF surface now owns active/complete/incomplete/invalid field state, clickable summary mirroring, and a PDF-header `Next field` control that advances across incomplete actionable fields without changing the public route contract
+  - `Tab` / `Shift+Tab` now move across actionable overlay fields in snapshot order without wrapping, summary items now jump to the linked field in all modes, and the first invalid field is focused client-side before save/submit RPC when shared `open_sign_web` validation fails
+  - waiting, preview, and readonly review modes still render the inline viewer but keep guided editing affordances disabled
+  - validation passed for targeted portal scaffold and HOOT suites, plus full `/open_sign_portal` (`367 tests, 0 failed`), full `/open_sign` (`111 tests, 0 failed`), and `scripts/review_gate_open_sign.sh` on fresh database `test_open_sign_t319`
+- `T319` hardening follow-up is also closed:
+  - `Next field` now walks the full actionable ordering cursor relative to the current active field instead of searching only inside the incomplete-field subset, so completed active fields no longer jump backward to the earliest incomplete field
+  - when the inline PDF surface is unavailable or fails to load, guided-navigation affordances now disable themselves instead of leaving dead controls on screen: the page suppresses `Next field` when `pdf_render_url` is unavailable, and the client disables both `Next field` and summary jump buttons until the viewer becomes interactive
+  - validation passed for targeted portal HOOT, targeted `test_portal_scaffold.py` (`103 tests, 0 failed`), full `/open_sign_portal` (`368 tests, 0 failed`), full `/open_sign` (`111 tests, 0 failed`), and `scripts/review_gate_open_sign.sh` on `test_open_sign_t319_followup`

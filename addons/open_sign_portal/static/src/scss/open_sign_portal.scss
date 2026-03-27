@@ -10,6 +10,10 @@
     min-height: 420px;
 }
 
+.o_open_sign_surface_actions {
+    justify-content: flex-end;
+}
+
 .o_open_sign_pdf_surface_state {
     border: 1px dashed #c7d4e4;
     border-radius: 12px;
@@ -80,6 +84,20 @@
 
 .o_open_sign_field.o_is_complete {
     border-color: rgba(27, 135, 84, 0.72);
+}
+
+.o_open_sign_field.o_is_incomplete {
+    border-color: rgba(15, 106, 200, 0.72);
+}
+
+.o_open_sign_field.o_is_active {
+    border-color: #0b66c2;
+    box-shadow: 0 0 0 4px rgba(11, 102, 194, 0.16), 0 14px 28px rgba(15, 42, 74, 0.14);
+}
+
+.o_open_sign_field.o_is_invalid {
+    border-color: rgba(180, 35, 24, 0.9);
+    background: rgba(255, 244, 242, 0.96);
 }
 
 .o_open_sign_field.o_is_readonly {
@@ -158,6 +176,29 @@
 
 .o_open_sign_field_summary_item {
     border-color: #e4e9f1;
+    text-align: left;
+    width: 100%;
+    color: inherit;
+}
+
+.o_open_sign_field_summary_item.o_is_active {
+    border-color: #0b66c2;
+    background: rgba(232, 243, 255, 0.9);
+}
+
+.o_open_sign_field_summary_item.o_is_complete {
+    border-left: 3px solid #1b8754;
+}
+
+.o_open_sign_field_summary_item.o_is_invalid {
+    border-left: 3px solid #b42318;
+    background: rgba(255, 244, 242, 0.85);
+}
+
+.o_open_sign_field_summary_item:disabled,
+.o_open_sign_field_summary_item.o_is_disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
 }
 
 @media (max-width: 991.98px) {

@@ -513,6 +513,7 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
         self.assertNotIn('o_open_sign_save', response.text)
         self.assertNotIn('o_open_sign_submit', response.text)
         self.assertNotIn('open_sign_consent', response.text)
+        self.assertNotIn('o_open_sign_next_field', response.text)
 
         signer.invalidate_recordset(['last_opened_at', 'ip_last'])
         sign_request.invalidate_recordset(['lock_version'])
@@ -582,6 +583,7 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
         self.assertNotIn('o_open_sign_save', response.text)
         self.assertNotIn('o_open_sign_submit', response.text)
         self.assertNotIn('open_sign_consent', response.text)
+        self.assertNotIn('o_open_sign_next_field', response.text)
         self.assertIn('Decline to Sign', response.text)
         self.assertIn('Refresh status', response.text)
         self.assertIn('View PDF', response.text)
@@ -620,6 +622,7 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
         response = self.url_open(f"/my/sign/{signer.id}/preview", allow_redirects=False)
         self.assertEqual(response.status_code, 200)
         self.assertIn('Preview Mode', response.text)
+        self.assertNotIn('o_open_sign_next_field', response.text)
 
         signer.invalidate_recordset(['last_opened_at', 'ip_last'])
         sign_request.invalidate_recordset(['lock_version'])
@@ -2082,6 +2085,86 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
         portal_fields = self._extract_portal_fields_payload(response.text)
         field_ids = {field['id'] for field in portal_fields}
         self.assertEqual(field_ids, {bundle['field_first'].id})
+
+    def test_portal_page_payload_includes_guided_navigation_validation_metadata(self):
+        template = self._create_template(self.env, 'Portal Guided Metadata')
+        role = self._create_role(self.env, template, 'Guided Metadata Signer', 10)
+        text_field = self._create_field(
+            self.env,
+            template,
+            role,
+            type='text',
+            label='Validated Text',
+            required=True,
+            sequence=25,
+            min_length=3,
+            max_length=12,
+            validation_regex='^[A-Z0-9]+$',
+        )
+        sign_request = self._create_request(self.env, template, owner=self.open_sign_user)
+        signer = self._create_signer(
+            self.env,
+            sign_request,
+            role,
+            email='portal.guided.metadata@example.com',
+            sequence=10,
+        )
+        self._prepare_request_for_portal(sign_request)
+        token = signer._portal_ensure_token()
+
+        self.authenticate(None, None)
+        response = self.url_open(
+            f"/my/sign/{signer.id}?access_token={token}",
+            allow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('o_open_sign_next_field', response.text)
+
+        portal_fields = self._extract_portal_fields_payload(response.text)
+        field_payload = next(field for field in portal_fields if field['id'] == text_field.id)
+        self.assertEqual(field_payload['sequence'], 25)
+        self.assertEqual(field_payload['min_length'], 3)
+        self.assertEqual(field_payload['max_length'], 12)
+        self.assertEqual(field_payload['validation_regex'], '^[A-Z0-9]+$')
+
+    def test_portal_page_hides_next_field_when_pdf_render_url_is_unavailable(self):
+        template = self._create_template(self.env, 'Portal Guided No Viewer')
+        role = self._create_role(self.env, template, 'Guided No Viewer Signer', 10)
+        text_field = self._create_field(
+            self.env,
+            template,
+            role,
+            type='text',
+            label='Editable Without Viewer',
+            required=True,
+            sequence=15,
+        )
+        sign_request = self._create_request(self.env, template, owner=self.open_sign_user)
+        signer = self._create_signer(
+            self.env,
+            sign_request,
+            role,
+            email='portal.guided.no.viewer@example.com',
+            sequence=10,
+        )
+        self._prepare_request_for_portal(sign_request)
+        token = signer._portal_ensure_token()
+
+        self.authenticate(None, None)
+        with patch(
+            'odoo.addons.open_sign_portal.controllers.portal_sign.OpenSignPortalController._build_pdf_render_url',
+            return_value=False,
+        ):
+            response = self.url_open(
+                f"/my/sign/{signer.id}?access_token={token}",
+                allow_redirects=False,
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('o_open_sign_next_field', response.text)
+
+        portal_fields = self._extract_portal_fields_payload(response.text)
+        field_payload = next(field for field in portal_fields if field['id'] == text_field.id)
+        self.assertTrue(field_payload['editable'])
 
     def test_multiple_initials_fields_remain_editable_before_submit_and_lock_after_submit(self):
         template = self._create_template(self.env, 'Portal Initials Lock')

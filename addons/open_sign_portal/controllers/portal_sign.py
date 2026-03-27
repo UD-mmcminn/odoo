@@ -1178,10 +1178,14 @@ class OpenSignPortalController(CustomerPortal):
                 'y': field['y'],
                 'width': field['width'],
                 'height': field['height'],
+                'sequence': field['sequence'],
                 'supported_on_portal': field['supported_on_portal'],
                 'editable': bool(field['supported_on_portal'] and not readonly_mode),
                 'value': normalized_value,
                 'has_value': self._portal_field_has_value(field, field_value),
+                'min_length': field.get('min_length'),
+                'max_length': field.get('max_length'),
+                'validation_regex': field.get('validation_regex') or False,
                 'options': field['options'],
             })
         return portal_fields, unsupported_required_fields
@@ -1247,8 +1251,13 @@ class OpenSignPortalController(CustomerPortal):
                 document_url = f'{document_url}?access_token={access_token}'
             elif preview_mode:
                 document_url = f'{document_url}?preview=1'
+        pdf_render_url = self._build_pdf_render_url(
+            auth_context,
+            preview_mode=preview_mode,
+        )
 
         portal_fields = []
+        guided_navigation_available = False
         submit_blocked_reason = False
         otp_required = self._is_otp_required_for_signer(signer_sudo)
         otp_verified = bool(otp_required and signer_sudo.otp_verified_at)
@@ -1274,15 +1283,12 @@ class OpenSignPortalController(CustomerPortal):
                 signer_sudo,
                 readonly_mode=readonly_mode,
             )
+            guided_navigation_available = bool(pdf_render_url) and any(field['editable'] for field in portal_fields)
             if unsupported_required_fields:
                 submit_blocked_reason = _(
                     "Submitting is blocked until portal signature/stamp capture is implemented for: %(labels)s",
                     labels=', '.join(unsupported_required_fields),
                 )
-        pdf_render_url = self._build_pdf_render_url(
-            auth_context,
-            preview_mode=preview_mode,
-        )
         portal_fields_json = Markup(
             json.dumps(portal_fields, separators=(',', ':')).replace('</', '<\\/')
         )
@@ -1309,6 +1315,7 @@ class OpenSignPortalController(CustomerPortal):
                 'refresh_url': refresh_url,
                 'request_revision': sign_request.lock_version,
                 'submit_blocked_reason': submit_blocked_reason,
+                'guided_navigation_available': guided_navigation_available,
                 'access_token': access_token,
                 'save_route': False if readonly_mode else f'/my/sign/{signer_sudo.id}/save',
                 'submit_route': False if readonly_mode else f'/my/sign/{signer_sudo.id}/submit',

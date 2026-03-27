@@ -48,6 +48,10 @@ export class OpenSignPortalSession extends Interaction {
         this.pdfSurface.start();
     }
 
+    _validateBeforeMutation({ enforceRequired }) {
+        return this.pdfSurface.validateActionableFields({ enforceRequired });
+    }
+
     _pendingIdempotencyStorageKey(endpoint) {
         if (!this.signerId || !endpoint) {
             return false;
@@ -246,6 +250,11 @@ export class OpenSignPortalSession extends Interaction {
 
     async onClickSave() {
         this._resetAlerts();
+        const validation = this._validateBeforeMutation({ enforceRequired: false });
+        if (!validation.valid) {
+            this._showError(validation.message);
+            return;
+        }
         const payload = this._buildPayload();
         const response = await rpc(this.saveUrl, payload);
         if (!response?.ok) {
@@ -258,6 +267,11 @@ export class OpenSignPortalSession extends Interaction {
 
     async onClickSubmit() {
         this._resetAlerts();
+        const validation = this._validateBeforeMutation({ enforceRequired: true });
+        if (!validation.valid) {
+            this._showError(validation.message);
+            return;
+        }
         const payload = this._buildPayload({ endpoint: "submit" });
         payload.consent = {
             accepted: Boolean(this.consentCheckbox?.checked),

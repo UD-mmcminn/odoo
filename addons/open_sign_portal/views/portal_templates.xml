@@ -89,12 +89,19 @@
                                                 Fill fields directly on the PDF preview below.
                                             </p>
                                         </div>
-                                        <a
-                                            t-if="document_url"
-                                            t-att-href="document_url"
-                                            class="btn btn-outline-secondary btn-sm"
-                                            target="_blank"
-                                        >View PDF</a>
+                                        <div class="d-flex flex-wrap align-items-center gap-2 o_open_sign_surface_actions">
+                                            <button
+                                                t-if="guided_navigation_available"
+                                                type="button"
+                                                class="btn btn-primary btn-sm o_open_sign_next_field"
+                                            >Next field</button>
+                                            <a
+                                                t-if="document_url"
+                                                t-att-href="document_url"
+                                                class="btn btn-outline-secondary btn-sm"
+                                                target="_blank"
+                                            >View PDF</a>
+                                        </div>
                                     </div>
                                     <div class="o_open_sign_pdf_surface_wrapper">
                                         <div
@@ -137,8 +144,9 @@
                                         <t t-if="portal_fields">
                                             <div class="list-group list-group-flush o_open_sign_field_summary">
                                                 <t t-foreach="portal_fields" t-as="field">
-                                                    <div
-                                                        class="list-group-item px-0 o_open_sign_field_summary_item"
+                                                    <button
+                                                        type="button"
+                                                        class="list-group-item list-group-item-action px-0 o_open_sign_field_summary_item"
                                                         t-att-data-field-id="field['id']"
                                                         t-att-data-page="field['page']"
                                                         t-att-data-required="'true' if field['required'] else 'false'"
@@ -155,7 +163,7 @@
                                                             <span t-elif="field['type'] in ['signature', 'stamp']"> | placeholder until T320</span>
                                                             <span t-else=""> | read-only</span>
                                                         </div>
-                                                    </div>
+                                                    </button>
                                                 </t>
                                             </div>
                                         </t>
