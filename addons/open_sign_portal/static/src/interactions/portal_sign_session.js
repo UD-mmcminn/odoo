@@ -150,6 +150,10 @@ export class OpenSignPortalSession extends Interaction {
             const checkbox = fieldNode.querySelector(".o_open_sign_checkbox");
             return Boolean(checkbox?.checked);
         }
+        if (["signature", "stamp"].includes(fieldType)) {
+            const fieldId = Number.parseInt(fieldNode.dataset.fieldId || "0", 10);
+            return fieldId ? this.pdfSurface.getFieldValuePayload(fieldId) : false;
+        }
         return false;
     }
 

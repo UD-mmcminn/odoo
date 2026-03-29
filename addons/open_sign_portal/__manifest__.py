@@ -16,6 +16,9 @@
     'assets': {
         'web.assets_frontend': [
             'open_sign_web/static/src/js/pdf_surface_utils.js',
+            'open_sign_web/static/src/js/signature_adoption_dialog.js',
+            'open_sign_web/static/src/xml/signature_adoption_dialog.xml',
+            'open_sign_web/static/src/scss/signature_adoption_dialog.scss',
             'open_sign_portal/static/src/interactions/portal_pdf_surface.js',
             'open_sign_portal/static/src/interactions/portal_sign_session.js',
             'open_sign_portal/static/src/scss/open_sign_portal.scss',
@@ -25,6 +28,8 @@
         ],
         'web.assets_unit_tests': [
             'open_sign_web/static/src/js/pdf_surface_utils.js',
+            'open_sign_web/static/src/js/signature_adoption_dialog.js',
+            'open_sign_web/static/src/xml/signature_adoption_dialog.xml',
             'open_sign_portal/static/src/interactions/portal_pdf_surface.js',
             'open_sign_portal/static/src/interactions/portal_sign_session.js',
             'open_sign_portal/static/tests/**/*.test.js',

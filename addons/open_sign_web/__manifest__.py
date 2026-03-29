@@ -14,6 +14,7 @@
             'open_sign_web/static/src/js/**/*',
             'open_sign_web/static/src/xml/**/*',
             'open_sign_web/static/src/scss/open_sign.scss',
+            'open_sign_web/static/src/scss/signature_adoption_dialog.scss',
         ],
         'web.assets_tests': [
             'open_sign_web/static/tests/**/*',

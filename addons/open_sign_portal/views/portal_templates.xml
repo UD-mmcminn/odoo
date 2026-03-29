@@ -160,7 +160,6 @@
                                                             <span t-esc="field['type']"/>
                                                             <span t-if="field['required']"> | required</span>
                                                             <span t-if="field['editable']"> | editable on PDF</span>
-                                                            <span t-elif="field['type'] in ['signature', 'stamp']"> | placeholder until T320</span>
                                                             <span t-else=""> | read-only</span>
                                                         </div>
                                                     </button>

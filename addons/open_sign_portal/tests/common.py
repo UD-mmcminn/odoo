@@ -44,6 +44,77 @@ class OpenSignPortalTestMixin:
         })
 
     @classmethod
+    def _create_image_attachment_static(
+        cls,
+        env,
+        name='portal_signature.png',
+        *,
+        res_model='open.sign.request.value',
+        res_id=False,
+        mimetype='image/png',
+        public=False,
+        description=False,
+        raw_payload=False,
+    ):
+        attachment_vals = {
+            'name': name,
+            'datas': base64.b64encode(
+                raw_payload or (
+                b'\x89PNG\r\n\x1a\n'
+                b'\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89'
+                b'\x00\x00\x00\rIDATx\x9cc\xf8\xff\xff?\x03\x00\x08\xfc\x02\xfe_aH7\x00\x00\x00\x00IEND\xaeB`\x82'
+                )
+            ),
+            'mimetype': mimetype,
+            'res_model': res_model,
+            'public': public,
+            'company_id': env.company.id,
+        }
+        if res_id:
+            attachment_vals['res_id'] = res_id
+        if description is not False:
+            attachment_vals['description'] = description
+        return env['ir.attachment'].create(attachment_vals)
+
+    @classmethod
+    def _build_portal_capture_attachment_description(cls, signer, template_field):
+        return json.dumps({
+            'kind': 'open_sign_portal_capture',
+            'request_id': signer.request_id.id,
+            'signer_id': signer.id,
+            'field_id': template_field.id,
+            'field_type': template_field.type,
+        }, separators=(',', ':'))
+
+    @classmethod
+    def _create_portal_capture_attachment_static(
+        cls,
+        env,
+        signer,
+        template_field,
+        *,
+        name='portal_signature.png',
+        mimetype='image/png',
+        public=False,
+        description=False,
+        raw_payload=False,
+    ):
+        return cls._create_image_attachment_static(
+            env,
+            name=name,
+            res_model='open.sign.request.signer',
+            res_id=signer.id,
+            mimetype=mimetype,
+            public=public,
+            description=(
+                cls._build_portal_capture_attachment_description(signer, template_field)
+                if description is False
+                else description
+            ),
+            raw_payload=raw_payload,
+        )
+
+    @classmethod
     def _create_template(cls, env, name):
         template = env['open.sign.template'].create({
             'name': name,

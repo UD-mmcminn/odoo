@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <templates xml:space="preserve">
     <t t-name="open_sign_web.SignatureAdoptionDialog">
-        <Dialog title.translate="Adopt Signature">
+        <Dialog t-att-title="dialogTitle">
             <div class="o_open_sign_web_signature_dialog d-flex flex-column gap-2">
                 <div class="o_open_sign_web_signature_dialog_hint text-muted small">
                     <span class="fw-semibold">
                         <t t-esc="selectedMethodLabel"/>
                     </span>
-                    mode selected. You can draw, type, or upload a signature.
+                    mode selected. You can draw, type, or upload a <t t-esc="signatureTypeCopy.noun"/>.
                 </div>
                 <NameAndSignature t-props="nameAndSignatureProps"/>
                 <div t-if="state.errorCode" class="alert alert-danger py-2 mb-0" role="status">
@@ -24,7 +24,7 @@
                     t-att-disabled="adoptButtonDisabled"
                     t-on-click="onClickAdopt"
                 >
-                    Adopt Signature
+                    <t t-esc="adoptButtonLabel"/>
                 </button>
                 <button class="btn btn-secondary" type="button" t-on-click="props.close">
                     Cancel

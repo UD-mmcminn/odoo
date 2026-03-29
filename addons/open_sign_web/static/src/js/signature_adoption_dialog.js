@@ -42,6 +42,20 @@ const METHOD_LABELS = Object.freeze({
     type: _t("Type"),
     upload: _t("Upload"),
 });
+const SIGNATURE_TYPE_COPY = Object.freeze({
+    signature: Object.freeze({
+        title: _t("Adopt Signature"),
+        actionLabel: _t("Adopt Signature"),
+        noun: _t("signature"),
+        namePrefix: "open_sign_signature",
+    }),
+    stamp: Object.freeze({
+        title: _t("Adopt Stamp"),
+        actionLabel: _t("Adopt Stamp"),
+        noun: _t("stamp"),
+        namePrefix: "open_sign_stamp",
+    }),
+});
 
 function normalizeMethodInput(method) {
     return String(method || "").trim().toLowerCase();
@@ -90,6 +104,10 @@ function parseDataUrl(signatureImage) {
 
 export function getSignatureAdoptionMethods() {
     return [...SIGNATURE_ADOPTION_METHODS];
+}
+
+export function getSignatureAdoptionCopy(signatureType = "signature") {
+    return SIGNATURE_TYPE_COPY[normalizeMethodInput(signatureType)] || SIGNATURE_TYPE_COPY.signature;
 }
 
 export function normalizeSignatureAdoptionMethod(method, fallback = "draw") {
@@ -253,12 +271,26 @@ export async function createSignedPayloadAttachment(orm, payload = {}, options =
 
 export function getSignatureAdoptionErrorMessage(errorCode) {
     switch (errorCode) {
+        case "invalid_capture_field":
+            return _t("This signature field is no longer available. Refresh the page and try again.");
         case "missing_display_name":
             return _t("Please provide the signer name before adopting a signature.");
+        case "invalid_signature_payload":
+            return _t("This field value is invalid.");
         case "unsupported_signature_image_type":
             return _t("Uploaded signature image type is not supported.");
         case "signature_image_too_large":
             return _t("Uploaded signature image exceeds the allowed size limit.");
+        case "readonly_session":
+            return _t("This signing session is read-only.");
+        case "request_locked":
+            return _t("The signing request is currently locked. Try again.");
+        case "signing_order_blocked":
+            return _t("Another signer must complete before your turn begins.");
+        case "invalid_token":
+            return _t("Invalid or expired signing link.");
+        case "expired_token":
+            return _t("This signing link has expired. Request a new link.");
         case "attachment_create_failed":
             return _t("Unable to store the signature attachment.");
         case "invalid_signature_image_data_url":
@@ -284,6 +316,7 @@ export class SignatureAdoptionDialog extends Component {
         attachmentNamePrefix: { type: String, optional: true },
         attachmentContext: { type: Object, optional: true },
         companyId: { type: Number, optional: true },
+        createAttachment: { type: Function, optional: true },
         adoptSignature: Function,
         close: Function,
     };
@@ -320,11 +353,27 @@ export class SignatureAdoptionDialog extends Component {
         return METHOD_LABELS[this.state.method] || METHOD_LABELS.draw;
     }
 
+    get signatureTypeCopy() {
+        return getSignatureAdoptionCopy(this.props.signatureType);
+    }
+
+    get dialogTitle() {
+        return this.signatureTypeCopy.title;
+    }
+
+    get adoptButtonLabel() {
+        return this.signatureTypeCopy.actionLabel;
+    }
+
     get consentMessage() {
         return (
             this.props.consentText ||
             _t(
-                "By clicking Adopt Signature, I agree this electronic signature may represent my handwritten signature for legally binding documents."
+                "By clicking %(action)s, I agree this electronic %(noun)s may represent my handwritten %(noun)s for legally binding documents.",
+                {
+                    action: this.adoptButtonLabel,
+                    noun: this.signatureTypeCopy.noun,
+                }
             )
         );
     }
@@ -376,15 +425,25 @@ export class SignatureAdoptionDialog extends Component {
         }
         this.state.isSubmitting = true;
         this.state.errorCode = null;
-        const attachmentResult = await createSignedPayloadAttachment(this.orm, payloadResult.value, {
-            allowedMimeTypes: this.props.allowedMimeTypes,
-            maxUploadBytes: this.props.maxUploadBytes,
-            attachmentResModel: this.props.attachmentResModel,
-            attachmentResId: this.props.attachmentResId,
-            attachmentNamePrefix: this.props.attachmentNamePrefix,
-            attachmentContext: this.props.attachmentContext,
-            companyId: this.props.companyId,
-        });
+        const attachmentResult = this.props.createAttachment
+            ? await this.props.createAttachment(payloadResult.value, {
+                allowedMimeTypes: this.props.allowedMimeTypes,
+                maxUploadBytes: this.props.maxUploadBytes,
+                attachmentResModel: this.props.attachmentResModel,
+                attachmentResId: this.props.attachmentResId,
+                attachmentNamePrefix: this.props.attachmentNamePrefix,
+                attachmentContext: this.props.attachmentContext,
+                companyId: this.props.companyId,
+            })
+            : await createSignedPayloadAttachment(this.orm, payloadResult.value, {
+                allowedMimeTypes: this.props.allowedMimeTypes,
+                maxUploadBytes: this.props.maxUploadBytes,
+                attachmentResModel: this.props.attachmentResModel,
+                attachmentResId: this.props.attachmentResId,
+                attachmentNamePrefix: this.props.attachmentNamePrefix,
+                attachmentContext: this.props.attachmentContext,
+                companyId: this.props.companyId,
+            });
         if (!attachmentResult.valid) {
             this.state.errorCode = attachmentResult.errorCode;
             this.state.isSubmitting = false;
@@ -396,6 +455,7 @@ export class SignatureAdoptionDialog extends Component {
             signature_image_mime_type: attachmentResult.mimeType,
             signature_image_byte_size: attachmentResult.byteSize,
             signed_payload_attachment_id: attachmentResult.attachmentId,
+            preview_data_url: payloadResult.value.signature_image,
         };
         try {
             await this.props.adoptSignature(normalizedPayload);

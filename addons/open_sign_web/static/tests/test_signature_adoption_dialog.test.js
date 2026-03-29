@@ -4,6 +4,8 @@ import {
     buildSignatureAdoptionPayload,
     buildSignatureAttachmentCreateVals,
     createSignedPayloadAttachment,
+    getSignatureAdoptionCopy,
+    getSignatureAdoptionErrorMessage,
     getNameAndSignatureMode,
     getSignatureAdoptionMethodFromMode,
     getSignatureAdoptionMethods,
@@ -12,6 +14,15 @@ import {
 } from "@open_sign_web/js/signature_adoption_dialog";
 
 describe.current.tags("headless", "open_sign_web");
+
+function toPlainCopy(copy) {
+    return {
+        title: String.prototype.valueOf.call(copy.title),
+        actionLabel: String.prototype.valueOf.call(copy.actionLabel),
+        noun: String.prototype.valueOf.call(copy.noun),
+        namePrefix: copy.namePrefix,
+    };
+}
 
 const VALID_SIGNATURE_DATA_URL =
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4//8/AwAI/AL+X2VINwAAAABJRU5ErkJggg==";
@@ -36,6 +47,42 @@ test("method normalization and mode mapping remain deterministic", () => {
     expect(getSignatureAdoptionMethodFromMode("auto")).toBe("type");
     expect(getSignatureAdoptionMethodFromMode("load")).toBe("upload");
     expect(getSignatureAdoptionMethodFromMode("other", "type")).toBe("type");
+});
+
+test("signature adoption copy switches cleanly for stamp capture", () => {
+    expect(toPlainCopy(getSignatureAdoptionCopy("signature"))).toEqual({
+        title: "Adopt Signature",
+        actionLabel: "Adopt Signature",
+        noun: "signature",
+        namePrefix: "open_sign_signature",
+    });
+    expect(toPlainCopy(getSignatureAdoptionCopy("stamp"))).toEqual({
+        title: "Adopt Stamp",
+        actionLabel: "Adopt Stamp",
+        noun: "stamp",
+        namePrefix: "open_sign_stamp",
+    });
+});
+
+test("signature adoption error messages stay deterministic for portal capture codes", () => {
+    expect(String.prototype.valueOf.call(getSignatureAdoptionErrorMessage("invalid_capture_field"))).toBe(
+        "This signature field is no longer available. Refresh the page and try again."
+    );
+    expect(String.prototype.valueOf.call(getSignatureAdoptionErrorMessage("readonly_session"))).toBe(
+        "This signing session is read-only."
+    );
+    expect(String.prototype.valueOf.call(getSignatureAdoptionErrorMessage("request_locked"))).toBe(
+        "The signing request is currently locked. Try again."
+    );
+    expect(String.prototype.valueOf.call(getSignatureAdoptionErrorMessage("signing_order_blocked"))).toBe(
+        "Another signer must complete before your turn begins."
+    );
+    expect(String.prototype.valueOf.call(getSignatureAdoptionErrorMessage("invalid_token"))).toBe(
+        "Invalid or expired signing link."
+    );
+    expect(String.prototype.valueOf.call(getSignatureAdoptionErrorMessage("expired_token"))).toBe(
+        "This signing link has expired. Request a new link."
+    );
 });
 
 test("validateSignatureImageDataUrl validates mime type and size", () => {

@@ -1,5 +1,6 @@
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 
+import base64
 import json
 from datetime import timedelta
 from unittest.mock import patch
@@ -18,6 +19,11 @@ from odoo.addons.open_sign_portal.tests.common import (
     PORTAL_FIELDS_JSON_RE,
     REQUEST_REVISION_RE,
     OpenSignPortalTestMixin,
+)
+
+VALID_SIGNATURE_DATA_URL = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4//8/AwAI/AL+X2VINwAAAABJRU5ErkJggg=="
 )
 
 
@@ -412,6 +418,23 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
         if access_token:
             payload['access_token'] = access_token
         return payload
+
+    @staticmethod
+    def _build_signature_capture_value(
+        *,
+        attachment_id,
+        method='draw',
+        display_name='Alice Signer',
+        mime_type='image/png',
+        byte_size=70,
+    ):
+        return {
+            'method': method,
+            'display_name': display_name,
+            'signed_payload_attachment_id': attachment_id,
+            'signature_image_mime_type': mime_type,
+            'signature_image_byte_size': byte_size,
+        }
 
     def _build_decline_payload(self, *, revision, reason, access_token=False, idempotency_key=None):
         payload = {
@@ -1563,13 +1586,21 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
         self.assertEqual(response.status_code, 200)
         self.assertIn('application/pdf', response.headers.get('content-type'))
 
-    def test_jsonrpc_submit_blocks_required_signature_field(self):
+    def test_jsonrpc_submit_allows_required_signature_field_with_valid_payload(self):
         bundle = self._create_portal_session(
             self.env,
-            name='Portal Signature Block',
+            name='Portal Signature Submit',
             owner=self.open_sign_user,
             signer_partner=self.open_sign_user.partner_id,
             with_required_signature=True,
+        )
+        signature_field = bundle['request'].template_id.field_ids.filtered(lambda field: field.type == 'signature')[:1]
+        self.assertTrue(signature_field)
+        payload_attachment = self._create_portal_capture_attachment_static(
+            self.env,
+            bundle['signer'],
+            signature_field,
+            name='portal_submit_signature.png',
         )
 
         self.authenticate(self.open_sign_user.login, self.open_sign_user.login)
@@ -1577,19 +1608,36 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
             f"/my/sign/{bundle['signer'].id}?access_token={bundle['token']}",
             allow_redirects=False,
         )
+        self.assertNotIn('Submitting is blocked until portal signature/stamp capture is implemented', page_response.text)
         consent_hash, revision = self._extract_consent_hash_and_revision(page_response.text)
 
         response = self.make_jsonrpc_request(
             f"/my/sign/{bundle['signer'].id}/submit",
             self._build_payload(
                 revision=revision,
-                values=[],
+                values=[{
+                    'field_id': signature_field.id,
+                    'value': self._build_signature_capture_value(attachment_id=payload_attachment.id),
+                }],
                 consent={'accepted': True, 'text_hash': consent_hash, 'timezone': 'UTC'},
                 access_token=bundle['token'],
             ),
         )
-        self.assertFalse(response['ok'])
-        self.assertEqual(response['error_code'], 'validation_error')
+        self.assertTrue(response['ok'])
+
+        request_value = self.env['open.sign.request.value'].search([
+            ('request_id', '=', bundle['request'].id),
+            ('signer_id', '=', bundle['signer'].id),
+            ('template_field_id', '=', signature_field.id),
+        ], limit=1)
+        self.assertTrue(request_value)
+        self.assertEqual(request_value.value_json, {
+            'method': 'draw',
+            'display_name': 'Alice Signer',
+            'signature_image_mime_type': 'image/png',
+            'signature_image_byte_size': 70,
+        })
+        self.assertEqual(request_value.signed_payload_attachment_id.id, payload_attachment.id)
 
     def test_document_route_returns_pdf_and_denies_invalid_token(self):
         bundle = self._create_portal_session(
@@ -1875,33 +1923,24 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
         self.assertEqual(sign_request.status, 'sent')
         self.assertEqual(sign_request.lock_version, 0)
 
-    def test_optional_unsupported_field_value_is_preserved_across_save(self):
-        template = self._create_template(self.env, 'Portal Unsupported Preserve')
-        role = self._create_role(self.env, template, 'Unsupported Signer', 10)
-        text_field = self._create_field(
-            self.env,
-            template,
-            role,
-            type='text',
-            label='Visible Text',
-            required=True,
-            sequence=10,
-        )
+    def test_portal_signature_field_payload_marks_missing_attachment_as_incomplete(self):
+        template = self._create_template(self.env, 'Portal Signature Incomplete')
+        role = self._create_role(self.env, template, 'Signature Incomplete Signer', 10)
         signature_field = self._create_field(
             self.env,
             template,
             role,
             type='signature',
-            label='Optional Signature',
-            required=False,
-            sequence=20,
+            label='Required Signature',
+            required=True,
+            sequence=10,
         )
         sign_request = self._create_request(self.env, template, owner=self.open_sign_user)
         signer = self._create_signer(
             self.env,
             sign_request,
             role,
-            email='unsupported.signer@example.com',
+            email='signature.incomplete@example.com',
             sequence=10,
         )
         self._prepare_request_for_portal(sign_request)
@@ -1913,7 +1952,12 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
             'template_field_id': signature_field.id,
             'signer_id': signer.id,
             'value_text': False,
-            'value_json': {'signature': 'existing'},
+            'value_json': {
+                'method': 'draw',
+                'display_name': 'Broken Payload',
+                'signature_image_mime_type': 'image/png',
+                'signature_image_byte_size': 70,
+            },
             'signed_payload_attachment_id': False,
             'is_valid': True,
         })
@@ -1924,34 +1968,518 @@ class TestOpenSignPortalHttp(HttpCase, OpenSignPortalTestMixin):
             allow_redirects=False,
         )
         self.assertEqual(page_response.status_code, 200)
-        self.assertIn(f'data-field-id="{signature_field.id}"', page_response.text)
-        self.assertIn('placeholder until T320', page_response.text)
         fields_payload = self._extract_portal_fields_payload(page_response.text)
         signature_payload = next(
             field for field in fields_payload if field['id'] == signature_field.id
         )
-        self.assertFalse(signature_payload['editable'])
-        self.assertTrue(signature_payload['has_value'])
+        self.assertTrue(signature_payload['editable'])
+        self.assertFalse(signature_payload['has_value'])
         self.assertFalse(signature_payload['value'])
+        self.assertFalse(signature_payload['preview_url'])
 
         consent_hash, revision = self._extract_consent_hash_and_revision(page_response.text)
-        save_response = self.make_jsonrpc_request(
-            f"/my/sign/{signer.id}/save",
+        submit_response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/submit",
             self._build_payload(
                 revision=revision,
-                values=[{'field_id': text_field.id, 'value': 'Preserved'}],
+                values=[],
+                consent={'accepted': True, 'text_hash': consent_hash, 'timezone': 'UTC'},
                 access_token=token,
+            ),
+        )
+        self.assertFalse(submit_response['ok'])
+        self.assertEqual(submit_response['error_code'], 'validation_error')
+
+    def test_portal_signature_field_payload_includes_preview_url_for_saved_value(self):
+        template = self._create_template(self.env, 'Portal Signature Preview Payload')
+        role = self._create_role(self.env, template, 'Signature Preview Signer', 10)
+        signature_field = self._create_field(
+            self.env,
+            template,
+            role,
+            type='signature',
+            label='Saved Signature',
+            required=True,
+            sequence=10,
+        )
+        sign_request = self._create_request(self.env, template, owner=self.open_sign_user)
+        signer = self._create_signer(
+            self.env,
+            sign_request,
+            role,
+            email='signature.preview@example.com',
+            sequence=10,
+        )
+        self._prepare_request_for_portal(sign_request)
+        token = signer._portal_ensure_token()
+        payload_attachment = self._create_portal_capture_attachment_static(
+            self.env,
+            signer,
+            signature_field,
+            name='portal_signature_preview.png',
+        )
+        self.env['open.sign.request.value'].sudo().with_context(
+            open_sign_trusted_portal_value_payload=True
+        ).create({
+            'request_id': sign_request.id,
+            'template_field_id': signature_field.id,
+            'signer_id': signer.id,
+            'value_text': False,
+            'value_json': {
+                'method': 'draw',
+                'display_name': 'Preview Signer',
+                'signature_image_mime_type': 'image/png',
+                'signature_image_byte_size': 70,
+            },
+            'signed_payload_attachment_id': payload_attachment.id,
+            'is_valid': True,
+        })
+
+        self.authenticate(None, None)
+        response = self.url_open(
+            f"/my/sign/{signer.id}?access_token={token}",
+            allow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        portal_fields = self._extract_portal_fields_payload(response.text)
+        signature_payload = next(field for field in portal_fields if field['id'] == signature_field.id)
+        self.assertTrue(signature_payload['supported_on_portal'])
+        self.assertTrue(signature_payload['editable'])
+        self.assertTrue(signature_payload['has_value'])
+        self.assertEqual(signature_payload['value'], self._build_signature_capture_value(
+            attachment_id=payload_attachment.id,
+            display_name='Preview Signer',
+        ))
+        self.assertEqual(
+            signature_payload['preview_url'],
+            f"/my/sign/{signer.id}/field/{signature_field.id}/payload?access_token={token}",
+        )
+
+    def test_portal_save_persists_signature_value_metadata_and_attachment(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Signature Save',
+            owner=self.open_sign_user,
+            with_required_signature=True,
+        )
+        signature_field = bundle['request'].template_id.field_ids.filtered(lambda field: field.type == 'signature')[:1]
+        payload_attachment = self._create_portal_capture_attachment_static(
+            self.env,
+            bundle['signer'],
+            signature_field,
+            name='portal_signature_save.png',
+        )
+
+        self.authenticate(None, None)
+        page_response = self.url_open(
+            f"/my/sign/{bundle['signer'].id}?access_token={bundle['token']}",
+            allow_redirects=False,
+        )
+        consent_hash, revision = self._extract_consent_hash_and_revision(page_response.text)
+        self.assertTrue(consent_hash)
+
+        save_response = self.make_jsonrpc_request(
+            f"/my/sign/{bundle['signer'].id}/save",
+            self._build_payload(
+                revision=revision,
+                values=[{
+                    'field_id': signature_field.id,
+                    'value': self._build_signature_capture_value(attachment_id=payload_attachment.id),
+                }],
+                access_token=bundle['token'],
             ),
         )
         self.assertTrue(save_response['ok'])
 
-        signature_value = self.env['open.sign.request.value'].search([
-            ('request_id', '=', sign_request.id),
-            ('signer_id', '=', signer.id),
+        request_value = self.env['open.sign.request.value'].search([
+            ('request_id', '=', bundle['request'].id),
+            ('signer_id', '=', bundle['signer'].id),
             ('template_field_id', '=', signature_field.id),
         ], limit=1)
+        self.assertEqual(request_value.value_json, {
+            'method': 'draw',
+            'display_name': 'Alice Signer',
+            'signature_image_mime_type': 'image/png',
+            'signature_image_byte_size': 70,
+        })
+        self.assertEqual(request_value.signed_payload_attachment_id.id, payload_attachment.id)
+
+    def test_portal_capture_attachment_create_route_returns_attachment_metadata(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Signature Capture Route',
+            owner=self.open_sign_user,
+            with_required_signature=True,
+        )
+        signature_field = bundle['request'].template_id.field_ids.filtered(lambda field: field.type == 'signature')[:1]
+
+        self.authenticate(None, None)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{bundle['signer'].id}/field/{signature_field.id}/payload/create",
+            {
+                'value': {
+                    'method': 'draw',
+                    'display_name': 'Captured Signer',
+                    'signature_image': VALID_SIGNATURE_DATA_URL,
+                    'signature_image_mime_type': 'image/png',
+                    'signature_image_byte_size': 70,
+                },
+                'access_token': bundle['token'],
+            },
+        )
+        self.assertTrue(response['valid'])
+        self.assertEqual(response['mimeType'], 'image/png')
+        self.assertGreater(response['byteSize'], 0)
+
+        attachment = self.env['ir.attachment'].browse(response['attachmentId'])
+        self.assertTrue(attachment.exists())
+        self.assertEqual(attachment.res_model, 'open.sign.request.signer')
+        self.assertEqual(attachment.res_id, bundle['signer'].id)
+        self.assertFalse(attachment.public)
+        self.assertEqual(attachment.mimetype, 'image/png')
+        self.assertEqual(response['byteSize'], attachment.file_size)
+        self.assertEqual(json.loads(attachment.description), {
+            'kind': 'open_sign_portal_capture',
+            'request_id': bundle['request'].id,
+            'signer_id': bundle['signer'].id,
+            'field_id': signature_field.id,
+            'field_type': 'signature',
+        })
+
+    def test_portal_capture_attachment_create_route_returns_invalid_capture_field_for_text_field(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Capture Invalid Field',
+            owner=self.open_sign_user,
+        )
+        text_field = bundle['request'].template_id.field_ids.filtered(lambda field: field.type == 'text')[:1]
+
+        self.authenticate(None, None)
+        response = self.make_jsonrpc_request(
+            f"/my/sign/{bundle['signer'].id}/field/{text_field.id}/payload/create",
+            {
+                'value': {
+                    'method': 'draw',
+                    'display_name': 'Captured Signer',
+                    'signature_image': VALID_SIGNATURE_DATA_URL,
+                },
+                'access_token': bundle['token'],
+            },
+        )
+        self.assertFalse(response['valid'])
+        self.assertEqual(response['errorCode'], 'invalid_capture_field')
+
+    def test_portal_submit_succeeds_with_mixed_text_and_signature_fields(self):
+        template = self._create_template(self.env, 'Portal Mixed Signature Submit')
+        role = self._create_role(self.env, template, 'Mixed Signature Signer', 10)
+        text_field = self._create_field(
+            self.env,
+            template,
+            role,
+            type='text',
+            label='Full Name',
+            required=True,
+            sequence=10,
+        )
+        signature_field = self._create_field(
+            self.env,
+            template,
+            role,
+            type='signature',
+            label='Signer Signature',
+            required=True,
+            sequence=20,
+        )
+        sign_request = self._create_request(self.env, template, owner=self.open_sign_user)
+        signer = self._create_signer(
+            self.env,
+            sign_request,
+            role,
+            email='mixed.signature.submit@example.com',
+            sequence=10,
+        )
+        self._prepare_request_for_portal(sign_request)
+        token = signer._portal_ensure_token()
+        payload_attachment = self._create_portal_capture_attachment_static(
+            self.env,
+            signer,
+            signature_field,
+            name='portal_mixed_signature_submit.png',
+        )
+
+        self.authenticate(None, None)
+        page_response = self.url_open(
+            f"/my/sign/{signer.id}?access_token={token}",
+            allow_redirects=False,
+        )
+        consent_hash, revision = self._extract_consent_hash_and_revision(page_response.text)
+
+        submit_response = self.make_jsonrpc_request(
+            f"/my/sign/{signer.id}/submit",
+            self._build_payload(
+                revision=revision,
+                values=[
+                    {'field_id': text_field.id, 'value': 'Alice Signer'},
+                    {
+                        'field_id': signature_field.id,
+                        'value': self._build_signature_capture_value(attachment_id=payload_attachment.id),
+                    },
+                ],
+                consent={'accepted': True, 'text_hash': consent_hash, 'timezone': 'UTC'},
+                access_token=token,
+            ),
+        )
+        self.assertTrue(submit_response['ok'])
+
+        signer.invalidate_recordset(['state'])
+        sign_request.invalidate_recordset(['status'])
+        self.assertEqual(signer.state, 'signed')
+        self.assertEqual(sign_request.status, 'partially_signed')
+        self.assertTrue(sign_request.value_ids.filtered(lambda value: value.template_field_id == text_field))
+        signature_value = sign_request.value_ids.filtered(lambda value: value.template_field_id == signature_field)[:1]
         self.assertTrue(signature_value)
-        self.assertEqual(signature_value.value_json, {'signature': 'existing'})
+        self.assertEqual(signature_value.signed_payload_attachment_id.id, payload_attachment.id)
+
+    def test_portal_signature_preview_route_returns_image_for_token_and_preview_modes(self):
+        template = self._create_template(self.env, 'Portal Signature Preview Route')
+        role = self._create_role(self.env, template, 'Signature Preview Route Signer', 10)
+        signature_field = self._create_field(
+            self.env,
+            template,
+            role,
+            type='signature',
+            label='Route Signature',
+            required=True,
+            sequence=10,
+        )
+        sign_request = self._create_request(self.env, template, owner=self.open_sign_user)
+        signer = self._create_signer(
+            self.env,
+            sign_request,
+            role,
+            email='signature.preview.route@example.com',
+            sequence=10,
+            partner=self.open_sign_user.partner_id,
+        )
+        self._prepare_request_for_portal(sign_request)
+        token = signer._portal_ensure_token()
+        payload_attachment = self._create_portal_capture_attachment_static(
+            self.env,
+            signer,
+            signature_field,
+            name='portal_signature_preview_route.png',
+        )
+        self.env['open.sign.request.value'].sudo().with_context(
+            open_sign_trusted_portal_value_payload=True
+        ).create({
+            'request_id': sign_request.id,
+            'template_field_id': signature_field.id,
+            'signer_id': signer.id,
+            'value_text': False,
+            'value_json': {
+                'method': 'draw',
+                'display_name': 'Preview Route Signer',
+                'signature_image_mime_type': 'image/png',
+                'signature_image_byte_size': 70,
+            },
+            'signed_payload_attachment_id': payload_attachment.id,
+            'is_valid': True,
+        })
+
+        self.authenticate(None, None)
+        audit_domain = [
+            ('request_id', '=', sign_request.id),
+            ('signer_id', '=', signer.id),
+            ('event_type', '=', 'token_opened'),
+        ]
+        before_count = self.env['open.sign.audit.log'].search_count(audit_domain)
+        token_response = self.url_open(
+            f"/my/sign/{signer.id}/field/{signature_field.id}/payload?access_token={token}",
+            allow_redirects=False,
+        )
+        self.assertEqual(token_response.status_code, 200)
+        self.assertEqual(token_response.content, base64.b64decode(payload_attachment.datas))
+        self.assertEqual(self.env['open.sign.audit.log'].search_count(audit_domain), before_count)
+
+        self.authenticate(self.open_sign_user.login, self.open_sign_user.login)
+        preview_response = self.url_open(
+            f"/my/sign/{signer.id}/field/{signature_field.id}/payload?preview=1",
+            allow_redirects=False,
+        )
+        self.assertEqual(preview_response.status_code, 200)
+        self.assertEqual(preview_response.content, base64.b64decode(payload_attachment.datas))
+
+    def test_portal_signature_preview_route_returns_404_for_missing_attachment_or_denial(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Signature Preview Denial',
+            owner=self.open_sign_user,
+            with_required_signature=True,
+        )
+        signature_field = bundle['request'].template_id.field_ids.filtered(lambda field: field.type == 'signature')[:1]
+
+        self.authenticate(None, None)
+        missing_response = self.url_open(
+            f"/my/sign/{bundle['signer'].id}/field/{signature_field.id}/payload?access_token={bundle['token']}",
+            allow_redirects=False,
+        )
+        self.assertEqual(missing_response.status_code, 404)
+
+        denied_response = self.url_open(
+            f"/my/sign/{bundle['signer'].id}/field/{signature_field.id}/payload?access_token=bad-token",
+            allow_redirects=False,
+        )
+        self.assertEqual(denied_response.status_code, 404)
+
+    def test_portal_save_rejects_forged_signature_attachment_from_unrelated_record(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Signature Forged Save',
+            owner=self.open_sign_user,
+            with_required_signature=True,
+        )
+        signature_field = bundle['request'].template_id.field_ids.filtered(lambda field: field.type == 'signature')[:1]
+        forged_attachment = self._create_image_attachment_static(
+            self.env,
+            'forged_signature_save.png',
+        )
+
+        self.authenticate(None, None)
+        page_response = self.url_open(
+            f"/my/sign/{bundle['signer'].id}?access_token={bundle['token']}",
+            allow_redirects=False,
+        )
+        consent_hash, revision = self._extract_consent_hash_and_revision(page_response.text)
+        self.assertTrue(consent_hash)
+
+        save_response = self.make_jsonrpc_request(
+            f"/my/sign/{bundle['signer'].id}/save",
+            self._build_payload(
+                revision=revision,
+                values=[{
+                    'field_id': signature_field.id,
+                    'value': self._build_signature_capture_value(attachment_id=forged_attachment.id),
+                }],
+                access_token=bundle['token'],
+            ),
+        )
+        self.assertFalse(save_response['ok'])
+        self.assertEqual(save_response['error_code'], 'validation_error')
+        self.assertFalse(self.env['open.sign.request.value'].search([
+            ('request_id', '=', bundle['request'].id),
+            ('signer_id', '=', bundle['signer'].id),
+            ('template_field_id', '=', signature_field.id),
+        ]))
+
+    def test_portal_submit_rejects_forged_signature_attachment_from_unrelated_record(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Signature Forged Submit',
+            owner=self.open_sign_user,
+            with_required_signature=True,
+        )
+        signature_field = bundle['request'].template_id.field_ids.filtered(lambda field: field.type == 'signature')[:1]
+        forged_attachment = self._create_image_attachment_static(
+            self.env,
+            'forged_signature_submit.png',
+        )
+
+        self.authenticate(None, None)
+        page_response = self.url_open(
+            f"/my/sign/{bundle['signer'].id}?access_token={bundle['token']}",
+            allow_redirects=False,
+        )
+        consent_hash, revision = self._extract_consent_hash_and_revision(page_response.text)
+
+        submit_response = self.make_jsonrpc_request(
+            f"/my/sign/{bundle['signer'].id}/submit",
+            self._build_payload(
+                revision=revision,
+                values=[{
+                    'field_id': signature_field.id,
+                    'value': self._build_signature_capture_value(attachment_id=forged_attachment.id),
+                }],
+                consent={'accepted': True, 'text_hash': consent_hash, 'timezone': 'UTC'},
+                access_token=bundle['token'],
+            ),
+        )
+        self.assertFalse(submit_response['ok'])
+        self.assertEqual(submit_response['error_code'], 'validation_error')
+
+    def test_portal_signature_preview_route_returns_404_for_mismatched_provenance(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Signature Preview Provenance',
+            owner=self.open_sign_user,
+            with_required_signature=True,
+        )
+        signature_field = bundle['request'].template_id.field_ids.filtered(lambda field: field.type == 'signature')[:1]
+        mismatched_attachment = self._create_image_attachment_static(
+            self.env,
+            'portal_signature_preview_wrong_owner.png',
+        )
+        self.env['open.sign.request.value'].sudo().with_context(
+            open_sign_trusted_portal_value_payload=True
+        ).create({
+            'request_id': bundle['request'].id,
+            'template_field_id': signature_field.id,
+            'signer_id': bundle['signer'].id,
+            'value_text': False,
+            'value_json': {
+                'method': 'draw',
+                'display_name': 'Preview Signer',
+                'signature_image_mime_type': 'image/png',
+                'signature_image_byte_size': 70,
+            },
+            'signed_payload_attachment_id': mismatched_attachment.id,
+            'is_valid': True,
+        })
+
+        self.authenticate(None, None)
+        response = self.url_open(
+            f"/my/sign/{bundle['signer'].id}/field/{signature_field.id}/payload?access_token={bundle['token']}",
+            allow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_portal_signature_preview_route_returns_404_for_attachment_metadata_mismatch(self):
+        bundle = self._create_portal_session(
+            self.env,
+            name='Portal Signature Preview Metadata',
+            owner=self.open_sign_user,
+            with_required_signature=True,
+        )
+        signature_field = bundle['request'].template_id.field_ids.filtered(lambda field: field.type == 'signature')[:1]
+        payload_attachment = self._create_portal_capture_attachment_static(
+            self.env,
+            bundle['signer'],
+            signature_field,
+            name='portal_signature_preview_mismatch.png',
+        )
+        self.env['open.sign.request.value'].sudo().with_context(
+            open_sign_trusted_portal_value_payload=True
+        ).create({
+            'request_id': bundle['request'].id,
+            'template_field_id': signature_field.id,
+            'signer_id': bundle['signer'].id,
+            'value_text': False,
+            'value_json': {
+                'method': 'draw',
+                'display_name': 'Preview Signer',
+                'signature_image_mime_type': 'image/jpeg',
+                'signature_image_byte_size': 70,
+            },
+            'signed_payload_attachment_id': payload_attachment.id,
+            'is_valid': True,
+        })
+
+        self.authenticate(None, None)
+        response = self.url_open(
+            f"/my/sign/{bundle['signer'].id}/field/{signature_field.id}/payload?access_token={bundle['token']}",
+            allow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 404)
 
     def test_portal_page_embeds_snapshot_geometry_payload_and_viewer_url(self):
         bundle = self._create_portal_session(

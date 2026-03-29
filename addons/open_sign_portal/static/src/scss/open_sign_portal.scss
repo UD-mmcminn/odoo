@@ -104,9 +104,9 @@
     background: rgba(244, 247, 251, 0.94);
 }
 
-.o_open_sign_field.o_is_placeholder {
+.o_open_sign_field.o_is_capture {
     border-style: dashed;
-    background: rgba(255, 250, 235, 0.94);
+    background: rgba(251, 253, 255, 0.96);
 }
 
 .o_open_sign_field_label_row {
@@ -168,6 +168,72 @@
     font-size: 0.76rem;
     line-height: 1.25;
     color: #7a5d1e;
+}
+
+.o_open_sign_capture_shell {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.o_open_sign_capture_button {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    min-height: 100%;
+    border: 1px dashed #8fb4da;
+    background: rgba(246, 250, 255, 0.96);
+    color: #17385f;
+    text-align: left;
+    padding: 0.4rem;
+}
+
+.o_open_sign_capture_button:disabled {
+    opacity: 0.85;
+    cursor: default;
+}
+
+.o_open_sign_capture_preview {
+    display: block;
+    max-width: 52%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 6px;
+    background: #ffffff;
+}
+
+.o_open_sign_capture_empty {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 3.5rem;
+    min-height: 2.5rem;
+    border-radius: 6px;
+    background: rgba(11, 102, 194, 0.08);
+    color: #0b66c2;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.o_open_sign_capture_copy {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+}
+
+.o_open_sign_capture_prompt {
+    font-size: 0.78rem;
+    font-weight: 700;
+    line-height: 1.15;
+}
+
+.o_open_sign_capture_hint {
+    font-size: 0.7rem;
+    line-height: 1.2;
+    color: #5f6f82;
 }
 
 .o_open_sign_field_summary .list-group-item {

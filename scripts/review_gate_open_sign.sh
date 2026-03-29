@@ -6,6 +6,7 @@ CONF_FILE=".devcontainer/odoo.conf"
 SKIP_WEB=0
 SKIP_PORTAL=0
 HTTP_PORT_BASE=8070
+FRESH_DB=0
 
 usage() {
     cat <<'EOF'
@@ -16,6 +17,7 @@ Options:
   -c, --config <path>     Odoo config file path (default: .devcontainer/odoo.conf)
       --http-port-base <n>
                           Base HTTP port for sequential Odoo runs (default: 8070)
+      --fresh-db          Drop/recreate the target DB before running the gate
       --skip-web          Skip /open_sign_web test run
       --skip-portal       Skip /open_sign_portal test run
   -h, --help              Show this help message
@@ -35,6 +37,10 @@ while [[ $# -gt 0 ]]; do
         --http-port-base)
             HTTP_PORT_BASE="$2"
             shift 2
+            ;;
+        --fresh-db)
+            FRESH_DB=1
+            shift
             ;;
         --skip-web)
             SKIP_WEB=1
@@ -64,8 +70,18 @@ if [[ ! -f "$CONF_FILE" ]]; then
     exit 2
 fi
 
-echo "[1/6] Upgrade open_sign modules..."
-./odoo-bin -c "$CONF_FILE" -d "$DB_NAME" --http-port="$HTTP_PORT_BASE" -u open_sign,open_sign_web,open_sign_portal --stop-after-init
+if [[ "$FRESH_DB" -eq 1 ]]; then
+    echo "[0/6] Reset test database..."
+    /bin/bash scripts/reset_test_db.sh --db "$DB_NAME" --config "$CONF_FILE"
+    MODULE_ACTION="-i"
+    MODULE_VERB="Install"
+else
+    MODULE_ACTION="-u"
+    MODULE_VERB="Upgrade"
+fi
+
+echo "[1/6] ${MODULE_VERB} open_sign modules..."
+./odoo-bin -c "$CONF_FILE" -d "$DB_NAME" --http-port="$HTTP_PORT_BASE" "$MODULE_ACTION" open_sign,open_sign_web,open_sign_portal --stop-after-init
 
 echo "[2/6] Run backend test scope (/open_sign)..."
 ./odoo-bin -c "$CONF_FILE" -d "$DB_NAME" --http-port="$((HTTP_PORT_BASE + 1))" --test-enable --test-tags /open_sign --stop-after-init

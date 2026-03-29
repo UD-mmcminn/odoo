@@ -9,6 +9,9 @@ import { OpenSignPortalSession } from "@open_sign_portal/interactions/portal_sig
 
 describe.current.tags("headless", "open_sign_portal");
 
+const VALID_SIGNATURE_DATA_URL =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4//8/AwAI/AL+X2VINwAAAABJRU5ErkJggg==";
+
 function makeSessionHtml({ extraContent = "", includeBaseField = true } = {}) {
     return `
         <div
@@ -61,7 +64,7 @@ function makeSurfaceHtml(
     pdfRenderUrl = "/my/sign/42/document?viewer=1&viewer_token=viewer-proof&access_token=token-123"
 ) {
     const hasActionableFields = fields.some(
-        (field) => field.editable && field.supported_on_portal && !["signature", "stamp"].includes(field.type)
+        (field) => field.editable && field.supported_on_portal
     );
     return `
         <div class="o_open_sign_surface_actions">
@@ -72,6 +75,18 @@ function makeSurfaceHtml(
         </div>
         ${makeFieldSummaryMarkup(fields)}
     `;
+}
+
+function makeCapturePayload(overrides = {}) {
+    return {
+        method: "draw",
+        display_name: "Alice Signer",
+        signed_payload_attachment_id: 81,
+        signature_image_mime_type: "image/png",
+        signature_image_byte_size: 70,
+        preview_data_url: VALID_SIGNATURE_DATA_URL,
+        ...overrides,
+    };
 }
 
 async function startPortalInteraction(options = {}) {
@@ -191,27 +206,17 @@ test("pdf surface renders continuous page stack with overlay fields", async () =
     expect(fieldNode.getAttribute("style").includes("top:20%")).toBe(true);
 });
 
-test("collector skips disabled signature placeholder fields", async () => {
+test("clicking a signature field opens the capture dialog", async () => {
     mockPdfPages();
+    let openedFieldId = false;
+    patchWithCleanup(OpenSignPortalPdfSurface.prototype, {
+        _openCaptureDialog(field) {
+            openedFieldId = field.id;
+        },
+    });
     const interaction = await startPortalInteraction({
         includeBaseField: false,
         extraContent: makeSurfaceHtml([
-            {
-                id: 10,
-                label: "Full Name",
-                type: "text",
-                required: true,
-                page: 1,
-                x: 0.1,
-                y: 0.1,
-                width: 0.3,
-                height: 0.08,
-                supported_on_portal: true,
-                editable: true,
-                value: "Field value",
-                has_value: true,
-                options: [],
-            },
             {
                 id: 11,
                 label: "Signer Signature",
@@ -222,46 +227,75 @@ test("collector skips disabled signature placeholder fields", async () => {
                 y: 0.3,
                 width: 0.35,
                 height: 0.1,
-                supported_on_portal: false,
-                editable: false,
+                sequence: 10,
+                supported_on_portal: true,
+                editable: true,
                 value: false,
                 has_value: false,
+                preview_url: false,
                 options: [],
             },
         ]),
     });
 
-    expect(interaction.el.textContent.includes("Signature capture arrives in T320.")).toBe(true);
-    expect(interaction._collectValuesPayload()).toEqual([
-        { field_id: 10, value: "Field value" },
-    ]);
+    interaction.el.querySelector("#o_open_sign_field_11").click();
+
+    expect(openedFieldId).toBe(11);
 });
 
-test("placeholder copy uses has_value instead of raw signature payload value", async () => {
+test("successful signature adopt updates preview, marks complete, and auto-advances", async () => {
     mockPdfPages();
     const interaction = await startPortalInteraction({
         includeBaseField: false,
         extraContent: makeSurfaceHtml([
             {
                 id: 21,
-                label: "Stored Signature",
+                label: "Signer Signature",
                 type: "signature",
-                required: false,
+                required: true,
                 page: 1,
-                x: 0.2,
-                y: 0.3,
+                x: 0.1,
+                y: 0.2,
                 width: 0.35,
                 height: 0.1,
-                supported_on_portal: false,
-                editable: false,
+                sequence: 10,
+                supported_on_portal: true,
+                editable: true,
                 value: false,
-                has_value: true,
+                has_value: false,
+                preview_url: false,
+                options: [],
+            },
+            {
+                id: 22,
+                label: "Next Missing Field",
+                type: "text",
+                required: true,
+                page: 1,
+                x: 0.1,
+                y: 0.4,
+                width: 0.3,
+                height: 0.08,
+                sequence: 20,
+                supported_on_portal: true,
+                editable: true,
+                value: "",
+                has_value: false,
+                min_length: false,
+                max_length: false,
+                validation_regex: false,
                 options: [],
             },
         ]),
     });
 
-    expect(interaction.el.textContent.includes("Signature on file. Portal capture arrives in T320.")).toBe(true);
+    interaction.pdfSurface._applyCapturePayload(21, makeCapturePayload());
+
+    expect(interaction.el.querySelector("#o_open_sign_field_21").classList.contains("o_is_complete")).toBe(true);
+    expect(
+        interaction.el.querySelector("#o_open_sign_field_21 .o_open_sign_capture_preview").getAttribute("src")
+    ).toBe(VALID_SIGNATURE_DATA_URL);
+    expect(interaction.el.querySelector("#o_open_sign_field_22").classList.contains("o_is_active")).toBe(true);
 });
 
 test("toggle fields use has_value for completion state even when visually unchecked", async () => {
@@ -717,6 +751,72 @@ test("tab and shift-tab move across actionable fields without wrapping", async (
     expect(document.activeElement).toBe(firstInput);
 });
 
+test("next field and tab traversal include signature trigger fields", async () => {
+    mockPdfPages();
+    const interaction = await startPortalInteraction({
+        includeBaseField: false,
+        extraContent: makeSurfaceHtml([
+            {
+                id: 53,
+                label: "Signature Step",
+                type: "signature",
+                required: true,
+                page: 1,
+                x: 0.1,
+                y: 0.15,
+                width: 0.35,
+                height: 0.1,
+                sequence: 10,
+                supported_on_portal: true,
+                editable: true,
+                value: false,
+                has_value: false,
+                preview_url: false,
+                options: [],
+            },
+            {
+                id: 54,
+                label: "Following Text Field",
+                type: "text",
+                required: false,
+                page: 1,
+                x: 0.1,
+                y: 0.35,
+                width: 0.3,
+                height: 0.08,
+                sequence: 20,
+                supported_on_portal: true,
+                editable: true,
+                value: "",
+                has_value: false,
+                min_length: false,
+                max_length: false,
+                validation_regex: false,
+                options: [],
+            },
+        ]),
+    });
+
+    expect(interaction.el.querySelector("#o_open_sign_field_53").classList.contains("o_is_active")).toBe(true);
+    expect(document.activeElement).not.toBe(interaction.el.querySelector("#o_open_sign_field_53 .o_open_sign_capture_button"));
+
+    interaction.el.querySelector(".o_open_sign_next_field").click();
+    expect(interaction.el.querySelector("#o_open_sign_field_54").classList.contains("o_is_active")).toBe(true);
+
+    const textInput = interaction.el.querySelector("#o_open_sign_field_54 .o_open_sign_input");
+    textInput.focus();
+    const backwardEvent = new KeyboardEvent("keydown", {
+        key: "Tab",
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+    });
+    textInput.dispatchEvent(backwardEvent);
+    expect(backwardEvent.defaultPrevented).toBe(true);
+    expect(interaction.el.querySelector("#o_open_sign_field_53").classList.contains("o_is_active")).toBe(true);
+    expect(document.activeElement).toBe(interaction.el.querySelector("#o_open_sign_field_53 .o_open_sign_capture_button"));
+});
+
 test("summary click scrolls to and activates the linked field", async () => {
     mockPdfPages();
     const scrollCalls = [];
@@ -816,6 +916,68 @@ test("save allows blank required fields without client blocking", async () => {
     await blankRequiredInteraction.onClickSave();
     expect(rpcCalls).toBe(1);
     expect(blankRequiredInteraction.el.querySelector("#o_open_sign_field_71").classList.contains("o_is_invalid")).toBe(false);
+});
+
+test("collector includes signature payloads under value and recapture replaces the local payload", async () => {
+    mockPdfPages();
+    const interaction = await startPortalInteraction({
+        includeBaseField: false,
+        extraContent: makeSurfaceHtml([
+            {
+                id: 73,
+                label: "Signature Value",
+                type: "signature",
+                required: true,
+                page: 1,
+                x: 0.1,
+                y: 0.2,
+                width: 0.35,
+                height: 0.1,
+                sequence: 10,
+                supported_on_portal: true,
+                editable: true,
+                value: false,
+                has_value: false,
+                preview_url: false,
+                options: [],
+            },
+        ]),
+    });
+
+    interaction.pdfSurface._applyCapturePayload(73, makeCapturePayload());
+    expect(interaction._collectValuesPayload()).toEqual([
+        {
+            field_id: 73,
+            value: {
+                method: "draw",
+                display_name: "Alice Signer",
+                signature_image_mime_type: "image/png",
+                signature_image_byte_size: 70,
+                signed_payload_attachment_id: 81,
+            },
+        },
+    ]);
+
+    interaction.pdfSurface._applyCapturePayload(
+        73,
+        makeCapturePayload({
+            method: "upload",
+            display_name: "Alice Replacement",
+            signed_payload_attachment_id: 82,
+        })
+    );
+    expect(interaction._collectValuesPayload()).toEqual([
+        {
+            field_id: 73,
+            value: {
+                method: "upload",
+                display_name: "Alice Replacement",
+                signature_image_mime_type: "image/png",
+                signature_image_byte_size: 70,
+                signed_payload_attachment_id: 82,
+            },
+        },
+    ]);
 });
 
 test("save blocks invalid format before rpc", async () => {
@@ -972,6 +1134,49 @@ test("readonly surface disables guided editing but keeps summary jump targeting"
     expect(interaction.el.querySelector("#o_open_sign_field_91").classList.contains("o_is_active")).toBe(true);
     expect(scrollCalls.includes("91")).toBe(true);
     expect(document.activeElement).not.toBe(interaction.el.querySelector("#o_open_sign_field_91 .o_open_sign_input"));
+});
+
+test("readonly signature fields do not open capture", async () => {
+    mockPdfPages();
+    let openCount = 0;
+    patchWithCleanup(OpenSignPortalPdfSurface.prototype, {
+        _openCaptureDialog() {
+            openCount += 1;
+        },
+    });
+    const interaction = await startPortalInteraction({
+        includeBaseField: false,
+        extraContent: makeSurfaceHtml([
+            {
+                id: 92,
+                label: "Readonly Signature",
+                type: "signature",
+                required: false,
+                page: 1,
+                x: 0.1,
+                y: 0.2,
+                width: 0.35,
+                height: 0.1,
+                sequence: 10,
+                supported_on_portal: true,
+                editable: false,
+                value: {
+                    method: "draw",
+                    display_name: "Alice",
+                    signature_image_mime_type: "image/png",
+                    signature_image_byte_size: 70,
+                    signed_payload_attachment_id: 91,
+                },
+                has_value: true,
+                preview_url: "/my/sign/42/field/92/payload",
+                options: [],
+            },
+        ]),
+    });
+
+    interaction.el.querySelector("#o_open_sign_field_92").click();
+    expect(openCount).toBe(0);
+    expect(interaction.el.querySelector("#o_open_sign_field_92 .o_open_sign_capture_button").disabled).toBe(true);
 });
 
 test("missing pdf render url disables guided navigation affordances", async () => {

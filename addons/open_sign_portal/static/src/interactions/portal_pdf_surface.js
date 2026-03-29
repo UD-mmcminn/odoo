@@ -1,6 +1,8 @@
 /** @odoo-module **/
 
+import { rpc } from "@web/core/network/rpc";
 import { normalizeClientFieldValue } from "@open_sign_web/js/signing_form";
+import { openSignatureAdoptionDialog } from "@open_sign_web/js/signature_adoption_dialog";
 import {
     DEFAULT_PAGE_SIZE,
     formatOverlayFieldStyle,
@@ -19,8 +21,8 @@ const SINGLE_LINE_FIELD_TYPES = new Set([
 ]);
 const TEXTAREA_FIELD_TYPES = new Set(["multiline"]);
 const TOGGLE_FIELD_TYPES = new Set(["checkbox", "strikethrough"]);
-const PLACEHOLDER_FIELD_TYPES = new Set(["signature", "stamp"]);
-const CONTROL_SELECTOR = "input, select, textarea";
+const CAPTURE_FIELD_TYPES = new Set(["signature", "stamp"]);
+const CONTROL_SELECTOR = "input, select, textarea, button.o_open_sign_capture_button";
 
 function escapeAttr(value) {
     return String(value ?? "")
@@ -42,7 +44,7 @@ function asBool(value) {
 }
 
 function isDirectControlTarget(target) {
-    return Boolean(target?.closest?.("input, select, textarea, label"));
+    return Boolean(target?.closest?.("input, select, textarea, button, label"));
 }
 
 function buildFieldClasses(field) {
@@ -50,8 +52,8 @@ function buildFieldClasses(field) {
     if (!field.editable) {
         classes.push("o_is_readonly");
     }
-    if (PLACEHOLDER_FIELD_TYPES.has(field.type)) {
-        classes.push("o_is_placeholder");
+    if (CAPTURE_FIELD_TYPES.has(field.type)) {
+        classes.push("o_is_capture");
     }
     if (field.has_value) {
         classes.push("o_is_complete");
@@ -61,11 +63,43 @@ function buildFieldClasses(field) {
     return classes.join(" ");
 }
 
-function buildPlaceholderMessage(field) {
+function buildCapturePrompt(field) {
     const typeLabel = field.type === "stamp" ? "Stamp" : "Signature";
     return field.has_value
-        ? `${typeLabel} on file. Portal capture arrives in T320.`
-        : `${typeLabel} capture arrives in T320.`;
+        ? `Recapture ${typeLabel}`
+        : `Add ${typeLabel}`;
+}
+
+function getCapturePreviewSrc(field) {
+    return field.preview_data_url || field.preview_url || "";
+}
+
+function buildCaptureMarkup(field) {
+    const previewSrc = getCapturePreviewSrc(field);
+    const typeLabel = field.type === "stamp" ? "Stamp" : "Signature";
+    const prompt = buildCapturePrompt(field);
+    const hint = field.has_value
+        ? `${typeLabel} is ready for save or submit.`
+        : `Draw, type, or upload your ${typeLabel.toLowerCase()}.`;
+    return `
+        <div class="o_open_sign_capture_shell">
+            <button
+                type="button"
+                class="btn btn-light btn-sm o_open_sign_capture_button"
+                ${field.editable ? "" : "disabled"}
+                aria-label="${escapeAttr(prompt)}"
+            >
+                ${previewSrc
+                    ? `<img class="o_open_sign_capture_preview" src="${escapeAttr(previewSrc)}" alt="${escapeAttr(typeLabel)} preview" />`
+                    : `<span class="o_open_sign_capture_empty">${escapeHtml(typeLabel)}</span>`
+                }
+                <span class="o_open_sign_capture_copy">
+                    <span class="o_open_sign_capture_prompt">${escapeHtml(prompt)}</span>
+                    <span class="o_open_sign_capture_hint">${escapeHtml(hint)}</span>
+                </span>
+            </button>
+        </div>
+    `;
 }
 
 function buildOptionsMarkup(field) {
@@ -155,8 +189,8 @@ function buildFieldControlMarkup(field) {
             </label>
         `;
     }
-    if (PLACEHOLDER_FIELD_TYPES.has(field.type)) {
-        return `<div class="o_open_sign_field_placeholder">${escapeHtml(buildPlaceholderMessage(field))}</div>`;
+    if (CAPTURE_FIELD_TYPES.has(field.type)) {
+        return buildCaptureMarkup(field);
     }
     return `<div class="o_open_sign_field_placeholder">This field type is not supported on the portal yet.</div>`;
 }
@@ -373,7 +407,6 @@ export class OpenSignPortalPdfSurface {
             field
             && field.editable
             && field.supported_on_portal
-            && !PLACEHOLDER_FIELD_TYPES.has(field.type)
         );
     }
 
@@ -405,6 +438,11 @@ export class OpenSignPortalPdfSurface {
         return fieldNode ? this.session._collectValueForField(fieldNode) : false;
     }
 
+    getFieldValuePayload(fieldId) {
+        const field = this._getField(fieldId);
+        return field?.value || false;
+    }
+
     _validateField(field, { enforceRequired }) {
         return normalizeClientFieldValue(
             this._normalizeFieldForValidation(field, { enforceRequired }),
@@ -415,9 +453,6 @@ export class OpenSignPortalPdfSurface {
     _hasNormalizedClientValue(field, result) {
         if (!result?.valid) {
             return false;
-        }
-        if (PLACEHOLDER_FIELD_TYPES.has(field.type)) {
-            return Boolean(field.has_value);
         }
         if (TOGGLE_FIELD_TYPES.has(field.type)) {
             return Boolean(field.has_value || this.touchedFieldIds.has(field.id));
@@ -437,9 +472,6 @@ export class OpenSignPortalPdfSurface {
     }
 
     _isFieldComplete(field) {
-        if (PLACEHOLDER_FIELD_TYPES.has(field.type)) {
-            return Boolean(field.has_value);
-        }
         const validation = this._validateField(field, { enforceRequired: false });
         if (TOGGLE_FIELD_TYPES.has(field.type)) {
             return Boolean(field.has_value || this.touchedFieldIds.has(field.id));
@@ -502,6 +534,16 @@ export class OpenSignPortalPdfSurface {
                 control.removeAttribute("aria-invalid");
             }
         }
+    }
+
+    _renderFieldBody(fieldId) {
+        const field = this._getField(fieldId);
+        const fieldNode = this._getFieldNode(fieldId);
+        const bodyNode = fieldNode?.querySelector(".o_open_sign_field_body");
+        if (!field || !bodyNode) {
+            return;
+        }
+        bodyNode.innerHTML = buildFieldControlMarkup(field);
     }
 
     _syncAllFieldStates() {
@@ -572,6 +614,68 @@ export class OpenSignPortalPdfSurface {
         }
     }
 
+    async _createCaptureAttachment(field, payload) {
+        const route = `/my/sign/${this.session.signerId}/field/${field.id}/payload/create`;
+        const requestPayload = {
+            value: payload,
+        };
+        if (this.session.accessToken) {
+            requestPayload.access_token = this.session.accessToken;
+        }
+        try {
+            return await rpc(route, requestPayload);
+        } catch {
+            return {
+                valid: false,
+                errorCode: "attachment_create_failed",
+            };
+        }
+    }
+
+    _applyCapturePayload(fieldId, payload) {
+        const field = this._getField(fieldId);
+        if (!field || !payload) {
+            return;
+        }
+        field.value = {
+            method: payload.method || "draw",
+            display_name: payload.display_name || "",
+            signature_image_mime_type: payload.signature_image_mime_type || "",
+            signature_image_byte_size: Number.parseInt(payload.signature_image_byte_size, 10) || 0,
+            signed_payload_attachment_id:
+                Number.parseInt(payload.signed_payload_attachment_id, 10) || false,
+        };
+        field.preview_data_url = payload.preview_data_url || "";
+        field.has_value = Boolean(field.value.signed_payload_attachment_id);
+        this.touchedFieldIds.add(field.id);
+        this.invalidFieldIds.delete(field.id);
+        this._renderFieldBody(field.id);
+        this._syncFieldState(field.id);
+        this._updateNextFieldButtonState();
+        const nextField = this._getNextIncompleteActionableField(field.id);
+        if (nextField && nextField.id !== field.id) {
+            this._setActiveField(nextField.id, { focus: true, scroll: true });
+            return;
+        }
+        this._setActiveField(field.id, { focus: true, scroll: false });
+    }
+
+    _openCaptureDialog(field) {
+        if (!field || !this._isActionableField(field)) {
+            return;
+        }
+        openSignatureAdoptionDialog(this.session.services.dialog, {
+            defaultMethod: field.value?.method || "draw",
+            defaultName: field.value?.display_name || "",
+            signatureType: field.type,
+            attachmentNamePrefix: field.type === "stamp" ? "open_sign_stamp" : "open_sign_signature",
+            createAttachment: async (payload) => this._createCaptureAttachment(field, payload),
+            adoptSignature: async (payload) => {
+                this._applyCapturePayload(field.id, payload);
+            },
+        });
+    }
+
     _setActiveField(fieldId, { focus = false, scroll = true } = {}) {
         const field = this._getField(fieldId);
         if (!field) {
@@ -625,6 +729,13 @@ export class OpenSignPortalPdfSurface {
         const fieldId = Number(fieldNode.dataset.fieldId || 0);
         const field = this._getField(fieldId);
         if (!field) {
+            return;
+        }
+        if (CAPTURE_FIELD_TYPES.has(field.type) && this._isActionableField(field)) {
+            event.preventDefault();
+            this._setActiveField(fieldId, { focus: false, scroll: false });
+            this._focusFieldControl(fieldId);
+            this._openCaptureDialog(field);
             return;
         }
         const focus = this._isActionableField(field) && !isDirectControlTarget(event.target);

@@ -21,10 +21,22 @@ from odoo.tools.misc import hash_sign, verify_hash_signed
 
 
 UUID_RE = re.compile(r'^[0-9a-fA-F-]{36}$')
+SIGNED_PAYLOAD_DATA_URL_RE = re.compile(r'^data:([^;,]+);base64,([A-Za-z0-9+/]+={0,2})$')
 TERMINAL_REQUEST_STATUSES = {'completed', 'cancelled', 'voided', 'declined', 'expired'}
 TEXTUAL_FIELD_TYPES = {'initials', 'name', 'email', 'phone', 'company', 'text', 'multiline', 'radio', 'selection'}
-SUPPORTED_PORTAL_FIELD_TYPES = TEXTUAL_FIELD_TYPES | {'checkbox', 'date', 'strikethrough'}
-UNSUPPORTED_CAPTURE_TYPES = {'signature', 'stamp'}
+PORTAL_CAPTURE_FIELD_TYPES = {'signature', 'stamp'}
+SUPPORTED_PORTAL_FIELD_TYPES = TEXTUAL_FIELD_TYPES | {'checkbox', 'date', 'strikethrough'} | PORTAL_CAPTURE_FIELD_TYPES
+SIGNED_PAYLOAD_METHODS = {'draw', 'type', 'upload'}
+SIGNED_PAYLOAD_ALLOWED_MIME_TYPES = {'image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/svg+xml'}
+SIGNED_PAYLOAD_MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+SIGNED_PAYLOAD_MIME_EXTENSIONS = {
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/jpg': 'jpg',
+    'image/webp': 'webp',
+    'image/svg+xml': 'svg',
+}
+CAPTURE_ATTACHMENT_PROVENANCE_KIND = 'open_sign_portal_capture'
 SIGNER_MUTATION_REQUEST_STATUSES = {'sent', 'opened', 'in_progress', 'partially_signed'}
 SIGNER_REVIEW_REQUEST_STATUSES = SIGNER_MUTATION_REQUEST_STATUSES | {'completed', 'declined', 'expired'}
 PREVIEW_REQUEST_STATUSES = SIGNER_REVIEW_REQUEST_STATUSES | {'versioned'}
@@ -651,15 +663,15 @@ class OpenSignPortalController(CustomerPortal):
             )
 
     @staticmethod
-    def _is_value_present(field_type, value_text, value_json):
+    def _is_value_present(field_type, value_text, value_json, *, signed_payload_attachment=False):
         if field_type == 'checkbox' and isinstance(value_json, bool):
             return True
         if field_type == 'strikethrough' and isinstance(value_json, dict):
             return isinstance(value_json.get('applied'), bool)
         if field_type == 'date' and isinstance(value_json, dict):
             return bool((value_json.get('iso_date') or '').strip())
-        if field_type in UNSUPPORTED_CAPTURE_TYPES and isinstance(value_json, dict):
-            return bool(value_json)
+        if field_type in PORTAL_CAPTURE_FIELD_TYPES and isinstance(value_json, dict):
+            return bool(value_json) and bool(signed_payload_attachment)
         if isinstance(value_text, str):
             return bool(value_text.strip())
         if value_text not in (False, None):
@@ -670,14 +682,248 @@ class OpenSignPortalController(CustomerPortal):
             return True
         return False
 
+    @staticmethod
+    def _normalize_signed_payload_attachment_id(value):
+        try:
+            normalized_value = int(value)
+        except (TypeError, ValueError):
+            return False
+        return normalized_value if normalized_value > 0 else False
+
+    def _sanitize_signed_payload_metadata(self, value_json):
+        if not isinstance(value_json, dict):
+            raise ValidationError(_("Signature and stamp values must be JSON objects."))
+        method = str(value_json.get('method') or '').strip().lower()
+        if method not in SIGNED_PAYLOAD_METHODS:
+            raise ValidationError(_("Signature and stamp payload method is invalid."))
+        display_name = str(value_json.get('display_name') or '').strip()
+        if not display_name:
+            raise ValidationError(_("Signature and stamp payload display_name is required."))
+        mime_type = str(value_json.get('signature_image_mime_type') or '').strip().lower()
+        if mime_type not in SIGNED_PAYLOAD_ALLOWED_MIME_TYPES:
+            raise ValidationError(_("Signature and stamp payload image type is invalid."))
+        try:
+            byte_size = int(value_json.get('signature_image_byte_size') or 0)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(_("Signature and stamp payload image size is invalid.")) from exc
+        if byte_size <= 0:
+            raise ValidationError(_("Signature and stamp payload image size is invalid."))
+        return {
+            'method': method,
+            'display_name': display_name,
+            'signature_image_mime_type': mime_type,
+            'signature_image_byte_size': byte_size,
+        }
+
+    def _build_capture_attachment_description(self, signer_sudo, contract_field):
+        return json.dumps({
+            'kind': CAPTURE_ATTACHMENT_PROVENANCE_KIND,
+            'request_id': signer_sudo.request_id.id,
+            'signer_id': signer_sudo.id,
+            'field_id': contract_field['template_field_id'],
+            'field_type': contract_field['type'],
+        }, separators=(',', ':'))
+
+    @staticmethod
+    def _parse_capture_attachment_description(description):
+        try:
+            payload = json.loads(description or '')
+        except (TypeError, ValueError):
+            return False
+        return payload if isinstance(payload, dict) else False
+
+    def _resolve_valid_capture_attachment(self, signer_sudo, contract_field, attachment_id, *, expected_metadata=False):
+        normalized_attachment_id = self._normalize_signed_payload_attachment_id(attachment_id)
+        if not normalized_attachment_id:
+            return False
+        attachment = request.env['ir.attachment'].sudo().browse(normalized_attachment_id).exists()
+        if not attachment:
+            return False
+        if (
+            attachment.res_model != 'open.sign.request.signer'
+            or attachment.res_id != signer_sudo.id
+            or attachment.public
+        ):
+            return False
+        provenance = self._parse_capture_attachment_description(attachment.description)
+        if not provenance:
+            return False
+        if (
+            provenance.get('kind') != CAPTURE_ATTACHMENT_PROVENANCE_KIND
+            or provenance.get('request_id') != signer_sudo.request_id.id
+            or provenance.get('signer_id') != signer_sudo.id
+            or provenance.get('field_id') != contract_field['template_field_id']
+            or provenance.get('field_type') != contract_field['type']
+        ):
+            return False
+        attachment_mime_type = str(attachment.mimetype or '').strip().lower()
+        if attachment_mime_type not in SIGNED_PAYLOAD_ALLOWED_MIME_TYPES:
+            return False
+        if expected_metadata:
+            try:
+                sanitized_metadata = self._sanitize_signed_payload_metadata(expected_metadata)
+            except ValidationError:
+                return False
+            if sanitized_metadata['signature_image_mime_type'] != attachment_mime_type:
+                return False
+            if int(attachment.file_size or 0) != sanitized_metadata['signature_image_byte_size']:
+                return False
+        return attachment
+
+    def _build_signed_payload_value(self, contract_field, request_value):
+        if not request_value or not request_value.signed_payload_attachment_id:
+            return False
+        try:
+            metadata = self._sanitize_signed_payload_metadata(request_value.value_json)
+        except ValidationError:
+            return False
+        attachment = self._resolve_valid_capture_attachment(
+            request_value.signer_id.sudo(),
+            contract_field,
+            request_value.signed_payload_attachment_id.id,
+            expected_metadata=metadata,
+        )
+        if not attachment:
+            return False
+        return {
+            **metadata,
+            'signed_payload_attachment_id': attachment.id,
+        }
+
+    def _has_valid_saved_value(self, contract_field, request_value, *, enforce_required=False):
+        if not request_value:
+            return False
+        signed_payload_attachment = request_value.signed_payload_attachment_id.id
+        value_json = request_value.value_json
+        if contract_field['type'] in PORTAL_CAPTURE_FIELD_TYPES:
+            try:
+                value_json = self._sanitize_signed_payload_metadata(value_json)
+            except ValidationError:
+                return False
+            attachment = self._resolve_valid_capture_attachment(
+                request_value.signer_id.sudo(),
+                contract_field,
+                signed_payload_attachment,
+                expected_metadata=value_json,
+            )
+            if not attachment:
+                return False
+            signed_payload_attachment = attachment.id
+        try:
+            normalized_text, normalized_json = validation_service.normalize_and_validate_field_value(
+                template_field=contract_field['descriptor'],
+                value_text=request_value.value_text,
+                value_json=value_json,
+                signed_payload_attachment=signed_payload_attachment,
+                enforce_required=enforce_required,
+            )
+        except ValidationError:
+            return False
+        return self._is_value_present(
+            contract_field['type'],
+            normalized_text,
+            normalized_json,
+            signed_payload_attachment=signed_payload_attachment,
+        )
+
+    def _build_signed_payload_preview_url(self, auth_context, field_id):
+        preview_url = f'/my/sign/{auth_context.signer.id}/field/{field_id}/payload'
+        if auth_context.auth_mode == 'token' and auth_context.effective_access_token:
+            return f'{preview_url}?access_token={auth_context.effective_access_token}'
+        if auth_context.auth_mode == 'preview':
+            return f'{preview_url}?preview=1'
+        return preview_url
+
+    @staticmethod
+    def _prepare_capture_attachment_payload(payload):
+        if not isinstance(payload, dict):
+            return {'valid': False, 'errorCode': 'invalid_signature_payload'}
+        method = str(payload.get('method') or '').strip().lower()
+        if method not in SIGNED_PAYLOAD_METHODS:
+            return {'valid': False, 'errorCode': 'invalid_signature_payload'}
+        display_name = str(payload.get('display_name') or '').strip()
+        if not display_name:
+            return {'valid': False, 'errorCode': 'missing_display_name'}
+        matches = SIGNED_PAYLOAD_DATA_URL_RE.fullmatch(str(payload.get('signature_image') or '').strip())
+        if not matches:
+            return {'valid': False, 'errorCode': 'invalid_signature_image_data_url'}
+        mime_type = matches.group(1).lower()
+        if mime_type not in SIGNED_PAYLOAD_ALLOWED_MIME_TYPES:
+            return {'valid': False, 'errorCode': 'unsupported_signature_image_type'}
+        base64_data = matches.group(2)
+        padding = 2 if base64_data.endswith('==') else 1 if base64_data.endswith('=') else 0
+        byte_size = max(0, (len(base64_data) * 3) // 4 - padding)
+        if byte_size > SIGNED_PAYLOAD_MAX_UPLOAD_BYTES:
+            return {'valid': False, 'errorCode': 'signature_image_too_large'}
+        return {
+            'valid': True,
+            'errorCode': None,
+            'metadata': {
+                'method': method,
+                'display_name': display_name,
+                'signature_image_mime_type': mime_type,
+                'signature_image_byte_size': byte_size,
+            },
+            'mimeType': mime_type,
+            'base64Data': base64_data,
+            'byteSize': byte_size,
+        }
+
+    def _create_capture_attachment(self, signer_sudo, field_descriptor, payload):
+        prepared_payload = self._prepare_capture_attachment_payload(payload)
+        if not prepared_payload['valid']:
+            return prepared_payload
+        metadata = prepared_payload['metadata']
+        mime_type = prepared_payload['mimeType']
+        base64_data = prepared_payload['base64Data']
+        filename_prefix = 'open_sign_stamp' if field_descriptor['type'] == 'stamp' else 'open_sign_signature'
+        extension = SIGNED_PAYLOAD_MIME_EXTENSIONS[mime_type]
+        attachment = request.env['ir.attachment'].sudo().create({
+            'name': f"{filename_prefix}_{metadata['method']}_{fields.Datetime.now().strftime('%Y%m%d%H%M%S%f')}.{extension}",
+            'datas': base64_data,
+            'mimetype': mime_type,
+            'res_model': 'open.sign.request.signer',
+            'res_id': signer_sudo.id,
+            'public': False,
+            'description': self._build_capture_attachment_description(signer_sudo, field_descriptor),
+            'company_id': signer_sudo.request_id.company_id.id or request.env.company.id,
+        })
+        verified_attachment = self._resolve_valid_capture_attachment(
+            signer_sudo,
+            field_descriptor,
+            attachment.id,
+            expected_metadata=metadata,
+        )
+        if not verified_attachment:
+            return {
+                'valid': False,
+                'errorCode': 'attachment_create_failed',
+            }
+        return {
+            'valid': True,
+            'errorCode': None,
+            'attachmentId': verified_attachment.id,
+            'mimeType': verified_attachment.mimetype,
+            'byteSize': int(verified_attachment.file_size or 0),
+        }
+
     def _extract_value_payload(self, field_descriptor, payload_item):
         if 'value_text' in payload_item or 'value_json' in payload_item:
-            return payload_item.get('value_text'), payload_item.get('value_json')
+            value_json = payload_item.get('value_json')
+            signed_payload_attachment = payload_item.get('signed_payload_attachment_id')
+            if field_descriptor.type in PORTAL_CAPTURE_FIELD_TYPES and isinstance(value_json, dict):
+                signed_payload_attachment = (
+                    signed_payload_attachment or value_json.get('signed_payload_attachment_id')
+                )
+            return payload_item.get('value_text'), value_json, signed_payload_attachment
 
         raw_value = payload_item.get('value', False)
         if field_descriptor.type in TEXTUAL_FIELD_TYPES:
-            return raw_value, False
-        return False, raw_value
+            return raw_value, False, False
+        signed_payload_attachment = False
+        if field_descriptor.type in PORTAL_CAPTURE_FIELD_TYPES and isinstance(raw_value, dict):
+            signed_payload_attachment = raw_value.get('signed_payload_attachment_id')
+        return False, raw_value, signed_payload_attachment
 
     def _build_snapshot_field_descriptor(self, contract_field):
         return SimpleNamespace(
@@ -815,35 +1061,36 @@ class OpenSignPortalController(CustomerPortal):
             if field['role_id'] == signer.role_id.id
         ]
 
-    def _normalize_field_value(self, field_descriptor, payload_item, *, enforce_required):
-        value_text, value_json = self._extract_value_payload(field_descriptor, payload_item)
-        if field_descriptor.type in UNSUPPORTED_CAPTURE_TYPES and self._is_value_present(
-            field_descriptor.type, value_text, value_json
-        ):
-            raise ValidationError(_("Signature and stamp field capture is not available yet on the portal."))
+    def _normalize_field_value(self, signer_sudo, contract_field, payload_item, *, enforce_required):
+        field_descriptor = contract_field['descriptor']
+        value_text, value_json, signed_payload_attachment = self._extract_value_payload(field_descriptor, payload_item)
+        normalized_attachment_id = self._normalize_signed_payload_attachment_id(signed_payload_attachment)
+        if field_descriptor.type in PORTAL_CAPTURE_FIELD_TYPES and isinstance(value_json, dict):
+            value_json = self._sanitize_signed_payload_metadata(value_json)
+            attachment = self._resolve_valid_capture_attachment(
+                signer_sudo,
+                contract_field,
+                normalized_attachment_id,
+                expected_metadata=value_json,
+            )
+            normalized_attachment_id = attachment.id if attachment else False
 
         normalized_text, normalized_json = validation_service.normalize_and_validate_field_value(
             template_field=field_descriptor,
             value_text=value_text,
             value_json=value_json,
-            signed_payload_attachment=False,
+            signed_payload_attachment=normalized_attachment_id,
             enforce_required=enforce_required,
         )
-        has_value = self._is_value_present(field_descriptor.type, normalized_text, normalized_json)
-        return normalized_text, normalized_json, has_value
+        has_value = self._is_value_present(
+            field_descriptor.type,
+            normalized_text,
+            normalized_json,
+            signed_payload_attachment=normalized_attachment_id,
+        )
+        return normalized_text, normalized_json, normalized_attachment_id, has_value
 
     def _ensure_supported_required_fields(self, signer, signer_fields):
-        unsupported_required = [
-            field['label']
-            for field in signer_fields
-            if field['required'] and field['type'] in UNSUPPORTED_CAPTURE_TYPES
-        ]
-        if unsupported_required:
-            raise ValidationError(_(
-                "Required signature/stamp fields are not supported in the portal yet: %(labels)s",
-                labels=', '.join(unsupported_required),
-            ))
-
         signer_field_ids = {field['template_field_id'] for field in signer_fields}
         signer_values = signer.request_id.value_ids.filtered(
             lambda value: value.signer_id == signer and value.template_field_id.id in signer_field_ids
@@ -851,9 +1098,7 @@ class OpenSignPortalController(CustomerPortal):
         values_by_field_id = {value.template_field_id.id: value for value in signer_values}
         for field in [field for field in signer_fields if field['required'] and field['supported_on_portal']]:
             value = values_by_field_id.get(field['template_field_id'])
-            if not value:
-                raise ValidationError(_("Required field %(label)s is missing.", label=field['label']))
-            if not self._is_value_present(field['type'], value.value_text, value.value_json):
+            if not self._has_valid_saved_value(field, value, enforce_required=True):
                 raise ValidationError(_("Required field %(label)s is missing.", label=field['label']))
 
     def _upsert_signer_values(self, signer, parsed_values, *, enforce_required):
@@ -875,8 +1120,9 @@ class OpenSignPortalController(CustomerPortal):
                 raise ValidationError(_("Field %(field_id)s does not belong to this signer session.", field_id=field_id))
             if not field['supported_on_portal']:
                 raise ValidationError(_("Field %(field_id)s is not supported on the portal.", field_id=field_id))
-            normalized_text, normalized_json, has_value = self._normalize_field_value(
-                field['descriptor'],
+            normalized_text, normalized_json, normalized_attachment_id, has_value = self._normalize_field_value(
+                signer,
+                field,
                 payload_item,
                 enforce_required=enforce_required,
             )
@@ -894,13 +1140,14 @@ class OpenSignPortalController(CustomerPortal):
                 'signer_id': signer.id,
                 'value_text': normalized_text,
                 'value_json': normalized_json,
-                'signed_payload_attachment_id': False,
+                'signed_payload_attachment_id': normalized_attachment_id,
                 'is_valid': True,
             }
             if current_value:
                 if (
                     current_value.value_text != normalized_text
                     or current_value.value_json != normalized_json
+                    or current_value.signed_payload_attachment_id.id != normalized_attachment_id
                     or not current_value.is_valid
                 ):
                     current_value.sudo().with_context(
@@ -908,7 +1155,7 @@ class OpenSignPortalController(CustomerPortal):
                     ).write({
                         'value_text': normalized_text,
                         'value_json': normalized_json,
-                        'signed_payload_attachment_id': False,
+                        'signed_payload_attachment_id': normalized_attachment_id,
                         'is_valid': True,
                     })
                     changed = True
@@ -1054,9 +1301,14 @@ class OpenSignPortalController(CustomerPortal):
         )
 
     @staticmethod
-    def _canonicalize_idempotency_value(normalized_text, normalized_json, has_value):
+    def _canonicalize_idempotency_value(field_type, normalized_text, normalized_json, has_value, signed_payload_attachment=False):
         if not has_value:
             return False
+        if field_type in PORTAL_CAPTURE_FIELD_TYPES:
+            return {
+                **(normalized_json or {}),
+                'signed_payload_attachment_id': signed_payload_attachment,
+            }
         if normalized_json not in (False, None):
             return normalized_json
         return normalized_text
@@ -1071,14 +1323,21 @@ class OpenSignPortalController(CustomerPortal):
                 raise ValidationError(_("Field %(field_id)s does not belong to this signer session.", field_id=field_id))
             if not field['supported_on_portal']:
                 raise ValidationError(_("Field %(field_id)s is not supported on the portal.", field_id=field_id))
-            normalized_text, normalized_json, has_value = self._normalize_field_value(
-                field['descriptor'],
+            normalized_text, normalized_json, normalized_attachment_id, has_value = self._normalize_field_value(
+                signer,
+                field,
                 payload_item,
                 enforce_required=False,
             )
             normalized_values.append({
                 'field_id': field_id,
-                'value': self._canonicalize_idempotency_value(normalized_text, normalized_json, has_value),
+                'value': self._canonicalize_idempotency_value(
+                    field['type'],
+                    normalized_text,
+                    normalized_json,
+                    has_value,
+                    signed_payload_attachment=normalized_attachment_id,
+                ),
             })
         return normalized_values
 
@@ -1139,20 +1398,15 @@ class OpenSignPortalController(CustomerPortal):
             if isinstance(request_value.value_json, dict):
                 return bool(request_value.value_json.get('applied'))
             return False
-        if contract_field['type'] in UNSUPPORTED_CAPTURE_TYPES:
-            return False
+        if contract_field['type'] in PORTAL_CAPTURE_FIELD_TYPES:
+            return self._build_signed_payload_value(contract_field, request_value)
         return ''
 
     def _portal_field_has_value(self, contract_field, request_value):
-        if not request_value:
-            return False
-        return self._is_value_present(
-            contract_field['type'],
-            request_value.value_text,
-            request_value.value_json,
-        )
+        return self._has_valid_saved_value(contract_field, request_value, enforce_required=False)
 
-    def _build_portal_fields(self, signer, *, readonly_mode=False):
+    def _build_portal_fields(self, auth_context, *, readonly_mode=False):
+        signer = auth_context.signer
         signer_fields = self._get_signer_contract_fields(signer)
         signer_values = signer.request_id.value_ids.filtered(
             lambda value: value.signer_id == signer and value.template_field_id.id in {
@@ -1162,12 +1416,9 @@ class OpenSignPortalController(CustomerPortal):
         values_by_field_id = {value.template_field_id.id: value for value in signer_values}
 
         portal_fields = []
-        unsupported_required_fields = []
         for field in signer_fields:
             field_value = values_by_field_id.get(field['template_field_id'])
             normalized_value = self._build_portal_field_value(field, field_value)
-            if field['required'] and field['type'] in UNSUPPORTED_CAPTURE_TYPES:
-                unsupported_required_fields.append(field['label'])
             portal_fields.append({
                 'id': field['template_field_id'],
                 'label': field['label'],
@@ -1187,8 +1438,11 @@ class OpenSignPortalController(CustomerPortal):
                 'max_length': field.get('max_length'),
                 'validation_regex': field.get('validation_regex') or False,
                 'options': field['options'],
+                'preview_url': self._build_signed_payload_preview_url(auth_context, field['template_field_id'])
+                if field['type'] in PORTAL_CAPTURE_FIELD_TYPES and self._portal_field_has_value(field, field_value)
+                else False,
             })
-        return portal_fields, unsupported_required_fields
+        return portal_fields
 
     def _build_pdf_render_url(self, auth_context, *, preview_mode=False):
         signer_sudo = auth_context.signer
@@ -1279,16 +1533,11 @@ class OpenSignPortalController(CustomerPortal):
         decline_route = f'/my/sign/{signer_sudo.id}/decline' if decline_available else False
         declined_reason_display = signer_sudo.declined_reason if signer_sudo.state == 'declined' else False
         if not portal_error_message:
-            portal_fields, unsupported_required_fields = self._build_portal_fields(
-                signer_sudo,
+            portal_fields = self._build_portal_fields(
+                auth_context,
                 readonly_mode=readonly_mode,
             )
             guided_navigation_available = bool(pdf_render_url) and any(field['editable'] for field in portal_fields)
-            if unsupported_required_fields:
-                submit_blocked_reason = _(
-                    "Submitting is blocked until portal signature/stamp capture is implemented for: %(labels)s",
-                    labels=', '.join(unsupported_required_fields),
-                )
         portal_fields_json = Markup(
             json.dumps(portal_fields, separators=(',', ':')).replace('</', '<\\/')
         )
@@ -1412,6 +1661,105 @@ class OpenSignPortalController(CustomerPortal):
                 return request.render('open_sign_portal.portal_sign_page', values)
             return request.redirect('/my')
         return request.render('open_sign_portal.portal_sign_page', values)
+
+    @http.route(['/my/sign/<int:signer_id>/field/<int:field_id>/payload'], type='http', auth='public', website=True, readonly=True)
+    def portal_sign_field_payload(self, signer_id, field_id, access_token=None, **kwargs):
+        access_token = self._resolve_access_token(access_token)
+        allow_preview = request.httprequest.args.get('preview') == '1'
+        try:
+            auth_context = self._check_signer_document_access(
+                signer_id,
+                access_token=access_token,
+                allow_preview=allow_preview,
+            )
+        except (AccessError, MissingError, ValidationError):
+            return request.not_found()
+        signer_sudo = auth_context.signer
+        contract_field = next(
+            (field for field in self._get_signer_contract_fields(signer_sudo) if field['template_field_id'] == field_id),
+            False,
+        )
+        if not contract_field or contract_field['type'] not in PORTAL_CAPTURE_FIELD_TYPES:
+            return request.not_found()
+        request_value = signer_sudo.request_id.value_ids.filtered(
+            lambda value: value.signer_id == signer_sudo and value.template_field_id.id == field_id
+        )[:1]
+        if not self._portal_field_has_value(contract_field, request_value) or not request_value.signed_payload_attachment_id:
+            return request.not_found()
+        attachment = self._resolve_valid_capture_attachment(
+            signer_sudo,
+            contract_field,
+            request_value.signed_payload_attachment_id.id,
+            expected_metadata=request_value.value_json,
+        )
+        if not attachment:
+            return request.not_found()
+        return request.env['ir.binary']._get_stream_from(
+            attachment
+        ).get_response(as_attachment=False)
+
+    @http.route(['/my/sign/<int:signer_id>/field/<int:field_id>/payload/create'], type='jsonrpc', auth='public')
+    def portal_sign_field_payload_create(self, signer_id, field_id, access_token=None, **payload):
+        access_token = self._resolve_access_token(access_token, payload=payload)
+        try:
+            signer_sudo = self._get_signer_sudo(signer_id)
+        except MissingError:
+            return {
+                'valid': False,
+                'errorCode': 'invalid_token',
+            }
+        token_state = signer_sudo._classify_current_email_token_access(access_token)
+        try:
+            auth_context = self._check_signer_identity_access(
+                signer_id,
+                access_token=access_token,
+                entrypoint='save',
+            )
+            signer_sudo = auth_context.signer
+        except AccessError:
+            return {
+                'valid': False,
+                'errorCode': 'expired_token' if access_token and token_state == 'expired' else 'invalid_token',
+            }
+        try:
+            self._assert_request_action_access_allowed(signer_sudo.request_id)
+        except ValidationError:
+            return {
+                'valid': False,
+                'errorCode': 'readonly_session',
+            }
+        sign_request = signer_sudo.request_id.sudo()
+        try:
+            with request.env.cr.savepoint():
+                self._lock_request_for_update(sign_request)
+                try:
+                    self._assert_signer_mutation_allowed(signer_sudo)
+                except ValidationError:
+                    return {
+                        'valid': False,
+                        'errorCode': 'readonly_session',
+                    }
+                if self._is_signer_waiting_for_turn(signer_sudo):
+                    return {
+                        'valid': False,
+                        'errorCode': 'signing_order_blocked',
+                    }
+                contract_field = next(
+                    (field for field in self._get_signer_contract_fields(signer_sudo) if field['template_field_id'] == field_id),
+                    False,
+                )
+                if not contract_field or contract_field['type'] not in PORTAL_CAPTURE_FIELD_TYPES:
+                    return {
+                        'valid': False,
+                        'errorCode': 'invalid_capture_field',
+                    }
+                capture_payload = payload.get('value')
+                return self._create_capture_attachment(signer_sudo, contract_field, capture_payload)
+        except LockNotAvailable:
+            return {
+                'valid': False,
+                'errorCode': 'request_locked',
+            }
 
     @http.route(['/my/sign/<int:signer_id>/document'], type='http', auth='public', website=True, readonly=True)
     def portal_sign_document(self, signer_id, access_token=None, **kwargs):
